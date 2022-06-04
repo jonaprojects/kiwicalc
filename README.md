@@ -13,7 +13,7 @@ use them in a more intuitive "math-like" syntax?
   
 * <a href="https://www.kiwicalc.com/documentation">Official Documentation </a>
 
-* <a href="#">Google Colab.</a>
+* <a href="https://colab.research.google.com/drive/1x411iW1nczAp67YBfp55Erd-72Nd7k7Z?usp=sharing">Google Colab.</a>
 <h2>Installation</h2>
 You can install the library with <code>pip</code>, by executing the command <code>pip install kiwicalc</code> in your command prompt.
   
