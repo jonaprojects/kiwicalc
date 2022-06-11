@@ -31,7 +31,7 @@ class LinearEquation_Examples:
 
     @staticmethod
     def linearEquation_simplify_example():
-        my_equation = LinearEquation("4 + 3x + 2y + 5x + 6 = 2 + x - y", variables=('x',))
+        my_equation = LinearEquation("4 + 3x + 2y + 5x + 6 = 2 + x - y", variables=('x','y'))
         my_equation.simplify()
         print(my_equation)
 
