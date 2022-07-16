@@ -1,5 +1,9 @@
 <h1>KiwiCalc</h1>
+
+
 ![An example of using kiwicalc](kiwicalc_vscode_functions1.gif)
+
+
 <h2>Abstract</h2>
 The project is intended to help integrating mathematical
 expressions in python with greater ease and provide powerful
