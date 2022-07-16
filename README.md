@@ -1,7 +1,7 @@
 <h1>KiwiCalc</h1>
 
 
-![An example of using kiwicalc](kiwicalc_vscode_functions1.gif =628x520)
+<img src="kiwicalc_vscode_functions1.gif" width="628" height="520"/>
 
 
 <h2>Abstract</h2>
