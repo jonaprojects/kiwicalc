@@ -1,7 +1,7 @@
 <h1>KiwiCalc</h1>
 
 
-<img src="kiwicalc_functions16x9.gif" width="628" height="520"/>
+<img src="kiwicalc_functions16x9.gif"/>
 
 
 <h2>Abstract</h2>
