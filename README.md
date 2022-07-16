@@ -9,6 +9,7 @@ use them in a more intuitive "math-like" syntax?
 
 <h2>Sources</h2>
 
+![An example of using kiwicalc](kiwicalc_vscode_functions1.gif)
 * Official website: <a href="https://www.kiwicalc.com">kiwicalc.com</a>
   
 * <a href="https://www.kiwicalc.com/documentation">Official Documentation </a>
