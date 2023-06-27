@@ -12,7 +12,7 @@ Python's syntax can be cumbersome when it comes to
 more sophisticated mathematical notations, so wouldn't it be easier to
 use them in a more intuitive "math-like" syntax?
 
-<h2>Sources</h2>
+<h2>Resources</h2>
 
 * Official website: <a href="https://www.kiwicalc.com">kiwicalc.com</a>
   
