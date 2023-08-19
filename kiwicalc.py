@@ -6531,8 +6531,7 @@ class TrigoExpr(IExpression, IPlottable, IScatterable):
         return TrigoExpr(coefficient=create_from_dict(given_dict['data']['coefficient']),
                          expressions=expressions_objects)
 
-    def __simple_derivative(self, expression_info: "List[Optional[Any],Optional[Union[Mono,Poly,Var,TrigoExpr,"
-                                                   "PolyLog]],float]"):
+    def __simple_derivative(self, expression_info: "List[Optional[Any],Optional[Union[Mono,Poly,Var,TrigoExpr,PolyLog]],float]"):
         copied_expression = self._expressions[0]
         if copied_expression[0] == TrigoMethods.SIN:
             copied_expression[0] = TrigoMethods.COS
@@ -10569,7 +10568,7 @@ class Function(IPlottable, IScatterable):
     def incline_and_decline(self):
         return NotImplementedError
 
-    def chain(self, other_func: "Optional[Function,str]"):
+    def chain(self, other_func: "Optional[Union[Function,str]]"):
         if isinstance(other_func, Function):
             return FunctionChain(self, other_func)
         else:
@@ -12871,8 +12870,7 @@ class VectorCollection:
                 f".\nExpected types VectorCollection, Vector, tuple, list, set")
 
     def append(self,
-               vector: "Union[Vector, Iterable[Union[Vector, IExpression, VectorCollection, int, float, Iterable]], "
-                       "VectorCollection]"):
+               vector: "Union[Vector, Iterable[Union[Vector, IExpression, VectorCollection, int, float, Iterable]], VectorCollection]"):
         """ Append vectors to the collection of vectors """
         if isinstance(vector, Vector):  # if the parameter is a vector
             self.__vectors.append(vector)
@@ -13948,7 +13946,7 @@ class Matrix:
         else:
             raise TypeError(f"Invalid type '{type(other)}' for subtracting matrcices")
 
-    def __sub__(self, other: "Union[IExpression, int, float, Matrix,np.array"):
+    def __sub__(self, other: "Union[IExpression, int, float, Matrix,np.array]"):
         return self.__copy__().__isub__(other)
 
     def __imatmul__(self, other: "Union[list, Matrix]"):
