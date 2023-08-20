@@ -11,7 +11,7 @@ from plot.models import IExpression, IPlottable
 import mono
 import var
 from ....kiwicalc.plot.plot import plot_function, plot_functions_3d 
-from ....kiwicalc.equations.numerical import * 
+from ...numerical.numerical import * 
 from ....kiwicalc.string_analysis import to_lambda 
 
 # TODO: try not to use the "from" syntax for circular imports

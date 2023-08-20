@@ -363,8 +363,56 @@ def bisection_method(f: Callable, a: float, b: float, epsilon: float = 0.00001, 
     return None
 
 
-
-
 def bairstow_method():  # TODO: implement this already ...
     pass
 
+
+def gradient_descent(f_tag: Callable, initial_value,
+                     learning_rate: float = 0.01, precision: float = 0.000001,
+                     nmax=10000):
+    previous_step_size = 1
+    for i in range(nmax):
+        if previous_step_size <= precision:
+            return initial_value
+        new_value = initial_value - learning_rate * f_tag(initial_value)
+        previous_step_size = abs(new_value - initial_value)
+        initial_value = new_value
+    warnings.warn(
+        "Reached maximum limit of iterations! Result might be inaccurate!")
+    return initial_value
+
+
+def gradient_ascent(f_tag: Callable, initial_value, learning_rate: float = 0.01, precision: float = 0.000001,
+                    nmax=10000):
+    previous_step_size = 1
+    for i in range(nmax):
+        if previous_step_size <= precision:
+            return initial_value
+        new_value = initial_value + learning_rate * f_tag(initial_value)
+        previous_step_size = abs(new_value - initial_value)
+        initial_value = new_value
+    warnings.warn(
+        "Reached maximum limit of iterations! Result might be inaccurate!")
+    return initial_value
+
+
+def broyden(functions, initial_values, h: float = 0.0001, epsilon: float = 0.00001, nmax: int = 10000):
+    # move this to numpy implementation
+    if all(abs(initial_value) <= epsilon for initial_value in initial_values):
+        return initial_values
+    initial_jacobian = Matrix(
+        approximate_jacobian(functions, initial_values, h))
+    initial_inverse = initial_jacobian.inverse()
+    for _ in range(1):
+        if all(abs(initial_value) <= epsilon for initial_value in initial_values):
+            return initial_values
+        F_x0 = [[f(*initial_values)] for f in functions]
+        F_x0_matrix = Matrix(F_x0)
+        initial_values_matrix = Matrix(initial_values)
+        current_values = initial_values_matrix - initial_inverse * F_x0
+        F_x1 = [f(*current_values) for f in functions]
+        y1 = [item1 - item2 for (item1, item2) in zip(F_x1, F_x0)]
+        s1 = [item1 - item2 for (item1, item2)
+              in zip(initial_values, current_values)]
+        temp = s1 * initial_inverse * y1
+        print(temp)

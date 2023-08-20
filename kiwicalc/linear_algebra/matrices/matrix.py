@@ -693,3 +693,14 @@ class Matrix:
             new_matrix.append(new_row)
         return Matrix(new_matrix)
 
+
+def column(matrix, index: int):
+    """
+    Fetches a column in a matrix
+
+    :param matrix: the matrix from which we fetch the column
+    :param index: the index of the column. From 0 to the number of num_of_columns minus 1.
+    :return: Returns a list of numbers, that represents the column in the given index
+    :raise: Raises index error if the index isn't valid.
+    """
+    return [row[index] for row in matrix]
