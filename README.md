@@ -1,5 +1,8 @@
 <h1>KiwiCalc</h1>
 
+![PyPI - Downloads](https://img.shields.io/pypi/dm/kiwicalc)
+![GitHub](https://img.shields.io/github/license/jonaprojects/kiwicalc)
+![GitHub issues](https://img.shields.io/github/issues/jonaprojects/kiwicalc)
 
 <img src="kiwicalc_functions16x9.gif"/>
 
