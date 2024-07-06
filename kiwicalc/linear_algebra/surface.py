@@ -1,3 +1,9 @@
+import re 
+from typing import Iterable
+from kiwicalc.plotting.plot import plot_function_3d
+import warnings 
+
+
 class Surface:
     """
     represents a surface of the equation ax+by+cz+d = 0, where (a,b,c) is the perpendicular of the surface, and d
@@ -106,3 +112,22 @@ class Surface:
 
     def __ne__(self, other):
         return not self.__eq__(other)
+
+
+
+def surface_from_str(input_string: str, get_coefficients=False):
+    first_side, second_side = input_string.split('=')
+    first_coefficients = re.findall(number_pattern, first_side)
+
+    for index in range(0, 4 - len(first_coefficients), 1):  # format it to be 4 coefficients
+        first_coefficients.append('0')
+    second_coefficients = re.findall(number_pattern, second_side)
+    for index in range(0, 4 - len(second_coefficients), 1):  # format it to be 4 coefficients
+        second_coefficients.append('0')
+
+    for first_index, second_value in zip(range(len(first_coefficients)), second_coefficients):
+        first_coefficients[first_index] = float(
+            first_coefficients[first_index]) - float(second_value)
+    if get_coefficients:
+        return first_coefficients
+    return Surface(first_coefficients)

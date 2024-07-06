@@ -1,11 +1,20 @@
+import operator 
+from typing import Iterable, Callable, Any, Union
+import vector3d as vec3d 
+import vector2d as vec2d 
+import vector as vec
+from kiwicalc.plotting.plot import plot_vector_3d
+from matplotlib import pyplot as plt
+
+
 class VectorCollection:
     def __init__(self, *vectors):
         self.__vectors = []
         for vector in vectors:
-            if isinstance(vector, Vector):
+            if isinstance(vector, vec.Vector):
                 self.__vectors.append(vector)
             elif isinstance(vector, Iterable):
-                self.__vectors.append(Vector(vector))
+                self.__vectors.append(vec.Vector(vector))
             else:
                 raise TypeError(
                     f"Encountered invalid type {type(vector)} while building a vector collection.")
@@ -20,7 +29,7 @@ class VectorCollection:
 
     @vectors.setter
     def vectors(self, vectors):
-        if isinstance(vectors, (list, set, tuple, Vector)):
+        if isinstance(vectors, (list, set, tuple, vec.Vector)):
             vectors = VectorCollection(vectors)
 
         if isinstance(vectors, VectorCollection):
@@ -33,7 +42,7 @@ class VectorCollection:
     def append(self,
                vector: "Union[Vector, Iterable[Union[Vector, IExpression, VectorCollection, int, float, Iterable]], VectorCollection]"):
         """ Append vectors to the collection of vectors """
-        if isinstance(vector, Vector):  # if the parameter is a vector
+        if isinstance(vector, vec.Vector):  # if the parameter is a vector
             self.__vectors.append(vector)
 
         elif isinstance(vector, VectorCollection):
@@ -42,10 +51,10 @@ class VectorCollection:
         elif isinstance(vector, Iterable) and not isinstance(vector, IExpression):
             # if the parameter is an Iterable object
             for item in vector:
-                if isinstance(item, Vector):
+                if isinstance(item, vec.Vector):
                     self.__vectors.append(item)
                 elif isinstance(item, Iterable):
-                    self.__vectors.append(Vector(item))
+                    self.__vectors.append(vec.Vector(item))
                 elif isinstance(item, VectorCollection):
                     self.__vectors.extend(item)
                 else:
@@ -68,7 +77,7 @@ class VectorCollection:
                     end = (
                         vector.end_coordinate[0], vector.end_coordinate[1], vector.end_coordinate[2])
                     plot_vector_3d(start, end, fig=fig, ax=ax, show=False)
-                min_x, max_x, min_y, max_y, min_z, max_z = _get_limits_vectors_3d(
+                min_x, max_x, min_y, max_y, min_z, max_z = vec3d._get_limits_vectors_3d(
                     self.__vectors)
                 ax.set_xlim([min_x, max_x])
                 ax.set_ylim([min_y, max_y])
@@ -78,7 +87,7 @@ class VectorCollection:
                 for vector in self.__vectors:
                     vector.plot(show=False, fig=fig, ax=ax)
 
-                min_x, max_x, min_y, max_y = _get_limits_vectors_2d(
+                min_x, max_x, min_y, max_y = vec2d._get_limits_vectors_2d(
                     self.__vectors)
                 ax.set_xlim([min_x, max_x])
                 ax.set_ylim([min_y, max_y])
@@ -129,7 +138,7 @@ class VectorCollection:
             return index, shortest_vector
         return shortest_vector
 
-    def find(self, vec: Vector):
+    def find(self, vec: vec.Vector):
         for index, vector in enumerate(self.__vectors):
             if vector.__eq__(vector) or vector is vec:
                 return index
@@ -195,20 +204,20 @@ class VectorCollection:
     def __eq__(self, other: "Union[Vector, VectorCollection, Iterable]"):
         if other is None:
             return False
-        if not isinstance(other, (Vector, VectorCollection)):
+        if not isinstance(other, (vec.Vector, VectorCollection)):
             if isinstance(other, Iterable):
                 if isinstance(other[0], Iterable):
                     try:
                         other = VectorCollection(other)
                     except (ValueError, TypeError):
                         try:
-                            other = Vector(other)
+                            other = vec.Vector(other)
                         except (ValueError, TypeError):
                             raise ValueError(
                                 "Invalid value for equating VectorCollection objects.")
                 else:
                     try:
-                        other = Vector(other)
+                        other = vec.Vector(other)
                     except (ValueError, TypeError):
                         raise ValueError(
                             "Invalid value for equating VectorCollection objects.")
@@ -216,7 +225,7 @@ class VectorCollection:
                 raise TypeError(
                     f"Invalid type '{type(other)}' for equating VectorCollection objects.")
 
-        if isinstance(other, Vector) and len(self.__vectors) == 1:
+        if isinstance(other, vec.Vector) and len(self.__vectors) == 1:
             return self.__vectors[0] == other
             # comparison between a vector to a single item list should return true
         elif isinstance(other, VectorCollection):
@@ -230,7 +239,7 @@ class VectorCollection:
             raise TypeError(
                 f"Invalid type {type(other)} for equating VectorCollection objects.")
 
-    def __ne__(self, other: "Union[Vector, VectorCollection, Iterable]"):
+    def __ne__(self, other: "Union[vec.Vector, VectorCollection, Iterable]"):
         return not self.__eq__(other)
 
     def __getitem__(self, item):
@@ -245,8 +254,8 @@ class VectorCollection:
     def __copy__(self):
         return VectorCollection(self.__vectors)
 
-    def __contains__(self, other: Vector):
-        if isinstance(other, Vector):
+    def __contains__(self, other: vec.Vector):
+        if isinstance(other, vec.Vector):
             return bool([vector for vector in self.__vectors if vector.__eq__(other)])
 
     def __iter__(self):
@@ -270,19 +279,3 @@ class VectorCollection:
         return sum(len(vector) for vector in self.__vectors)
 
 
-def surface_from_str(input_string: str, get_coefficients=False):
-    first_side, second_side = input_string.split('=')
-    first_coefficients = re.findall(number_pattern, first_side)
-
-    for index in range(0, 4 - len(first_coefficients), 1):  # format it to be 4 coefficients
-        first_coefficients.append('0')
-    second_coefficients = re.findall(number_pattern, second_side)
-    for index in range(0, 4 - len(second_coefficients), 1):  # format it to be 4 coefficients
-        second_coefficients.append('0')
-
-    for first_index, second_value in zip(range(len(first_coefficients)), second_coefficients):
-        first_coefficients[first_index] = float(
-            first_coefficients[first_index]) - float(second_value)
-    if get_coefficients:
-        return first_coefficients
-    return Surface(first_coefficients)

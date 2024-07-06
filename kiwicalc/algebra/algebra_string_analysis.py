@@ -2,9 +2,9 @@
 import re
 
 # kiwicalc imports
-from models.mono import Mono
+import kiwicalc.algebra.mono as mono
 from auxiliary import clean_spaces
-from ..string_analysis import extract_coefficient
+from kiwicalc.string_analysis import extract_coefficient
 
 
 def __data_from_single(single_expression: str, variable_name: str):
@@ -43,7 +43,7 @@ def mono_from_str(mono_expression: str, get_tuple=False):
         number = float(mono_expression)
         if get_tuple:
             return number, None
-        return Mono(number)
+        return mono.Mono(number)
     except (ValueError, TypeError):
         mono_expression: str = mono_expression.strip().replace("**", "^")
         for variable in (character for character in mono_expression if character in allowed_characters):
@@ -70,7 +70,7 @@ def mono_from_str(mono_expression: str, get_tuple=False):
         if get_tuple:
             return final_coefficient, variables_and_powers
 
-        return Mono(coefficient=final_coefficient, variables_dict=variables_and_powers)
+        return mono.Mono(coefficient=final_coefficient, variables_dict=variables_and_powers)
 
 
 def poly_from_str(poly_expression: str, get_list=False) -> "Union[Poly,List]":
@@ -89,3 +89,6 @@ def poly_from_str(poly_expression: str, get_list=False) -> "Union[Poly,List]":
     if get_list:
         return expressions
     return Poly(expressions)
+
+
+

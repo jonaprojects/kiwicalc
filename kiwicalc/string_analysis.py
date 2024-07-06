@@ -205,3 +205,27 @@ def apply_parenthesis(given_string: str, delimiters=('+', '-', '*', '**')):
 def extract_coefficient(coefficient: str) -> float:
     """[method for inside use]"""
     return -1 if coefficient == '-' else 1 if coefficient in ('+', '') else float(coefficient)
+
+
+def _format_minus(expression1, expression2):
+    """
+    Internal method. Not for outside use !!!
+    For formatting strings in the format (x-a)^2
+    """
+    expression1_str, expression2_str = expression1.__str__(), expression2.__str__()
+    if "+" in expression1_str or "-" in expression1_str:
+        expression1_str = F"({expression1})"
+    else:
+        expression1_str = f"{expression1}"
+    if "-" in expression2_str or "+" in expression2_str:
+        expression2_str = f"({expression2})"
+    else:
+        expression2_str = f"{expression2}"
+    if expression2 == 0:
+        if expression1 == 0:
+            return "0"
+        return f"{expression1_str}^2"
+    elif expression1 == 0:
+        return f"{expression2_str}^2"  # because (0-a)^2 equals a^2 for example
+
+    return f"({expression1_str}-{expression2_str})^2"

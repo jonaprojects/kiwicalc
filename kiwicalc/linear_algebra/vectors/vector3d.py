@@ -1,3 +1,5 @@
+from kiwicalc.plotting.plot import plot_vector_3d
+
 class Vector3D(Vector, IPlottable):
     def __init__(self, x, y, z, start_coordinate=None, end_coordinate=None):
         if start_coordinate is not None:
@@ -30,3 +32,20 @@ class Vector3D(Vector, IPlottable):
             2]
         plot_vector_3d(
             (start_x, start_y, start_z), (u, v, w), arrow_length_ratio=arrow_length_ratio, show=show, fig=fig, ax=ax)
+
+
+def _get_limits_vectors_3d(vectors):
+    """Internal method: find the edge values for the scope of the 3d frame"""
+    min_x = min(
+        min(vector.start_coordinate[0], vector.end_coordinate[0]) for vector in vectors)
+    max_x = max(
+        max(vector.start_coordinate[0], vector.end_coordinate[0]) for vector in vectors)
+    min_y = min(
+        min(vector.start_coordinate[1], vector.end_coordinate[1]) for vector in vectors)
+    max_y = max(
+        max(vector.start_coordinate[1], vector.end_coordinate[1]) for vector in vectors)
+    min_z = min(
+        min(vector.start_coordinate[2], vector.end_coordinate[2]) for vector in vectors)
+    max_z = max(
+        max(vector.start_coordinate[2], vector.end_coordinate[2]) for vector in vectors)
+    return min_x, max_x, min_y, max_y, min_z, max_z

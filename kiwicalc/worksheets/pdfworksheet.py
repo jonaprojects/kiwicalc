@@ -100,6 +100,12 @@ class PDFWorksheet:
         create_pages(path, self.num_of_pages, [
                      page.title for page in self.__pages], self.__lines)
 
+def get_image(path, width=1 * cm):
+    """Utility method for building images for PDF files. Only for internal use."""
+    img = utils.ImageReader(path)
+    iw, ih = img.getSize()
+    aspect = ih / float(iw)
+    return Image(path, width=width, height=(width * aspect))
 
 def generate_pdf_path() -> str:
     path = f"worksheet1.pdf"

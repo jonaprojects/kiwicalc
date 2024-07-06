@@ -1,3 +1,6 @@
+from typing import Optional, Tuple
+
+
 def __helper_trigo(expression: str) -> Optional[Tuple[int, Optional[float]]]:
     try:
         first_letter_index = expression.find(next(
@@ -83,3 +86,13 @@ def TrigoExprs_from_str(trigo_expression: str, get_list=False):
     if get_list:
         return new_expressions
     return TrigoExprs(new_expressions)
+
+
+def _TrigoMethodFromString(method_string: str):
+    """ Method for internal use. DO NOT USE IT IF YOU'RE NOT IN THE KIWICALC DEVELOPERS TEAM"""
+    try:
+        method_string = method_string.strip().upper()
+        return operator.attrgetter(method_string)(TrigoMethods)
+    except AttributeError:
+        raise AttributeError(
+            f"Unsupported trigonometric method:'{method_string}'")

@@ -16,7 +16,7 @@ from ....kiwicalc.string_analysis import to_lambda
 
 # TODO: try not to use the "from" syntax for circular imports
 
-from string_analysis import poly_from_str
+from kiwicalc.algebra.algebra_string_analysis import poly_from_str
 
 
 class Poly(IExpression, IPlottable):

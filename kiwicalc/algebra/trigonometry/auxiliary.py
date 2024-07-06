@@ -29,3 +29,13 @@ def handle_trigo_expression(expression: str):
     for expr in expressions:
         result += handle_trigo_calculation(expr)
     return result
+
+
+def conversion_wrapper(given_func: Callable):
+    def inner(self):
+        if not len(self._expressions) == 1:
+            raise ValueError(
+                "expression must contain one item only for cosine conversion: For example, sin(3x)")
+        return given_func(self)
+
+    return inner
