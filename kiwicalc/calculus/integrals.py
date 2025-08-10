@@ -1,3 +1,6 @@
+from typing import Callable
+import numpy as np
+
 def reinman(f: Callable, a, b, N: int):
     if N < 2:
         raise ValueError("The method requires N >= 2")

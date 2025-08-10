@@ -1,3 +1,8 @@
+from typing import Iterable, Optional, Tuple
+from .Equation import Equation
+from ..auxiliary import ParseExpression, solve_quartic, random_polynomial
+from .poly_equation import PolyEquation
+
 class QuarticEquation(Equation):
     def __init__(self, equation: str, variables: Iterable[Optional[str]] = None, strict_syntax=False):
         self.__strict_syntax = self.__strict_syntax

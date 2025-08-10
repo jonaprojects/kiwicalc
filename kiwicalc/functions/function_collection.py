@@ -1,3 +1,13 @@
+import random
+from typing import Union, Iterable, Callable, TYPE_CHECKING
+from ..plotting.models import IPlottable, IScatterable
+from ..auxiliary import is_lambda
+from .function import Function
+from ..plotting.plot import plot_functions, scatter_functions
+
+if TYPE_CHECKING:
+    from .function_chain import FunctionChain
+
 class FunctionCollection(IPlottable, IScatterable):
     def __init__(self, *functions, gen_copies=False):
         self._functions = []
@@ -10,7 +20,7 @@ class FunctionCollection(IPlottable, IScatterable):
                     self._functions.append(func.__copy__())
                 else:
                     self._functions.append(func)
-            elif isinstance(func, (FunctionChain, FunctionCollection)):
+            elif isinstance(func, (FunctionCollection,)) or (hasattr(func, '__class__') and func.__class__.__name__ == 'FunctionChain'):
                 if all(isinstance(f, Function) for f in func):
                     for f in func:
                         if gen_copies:

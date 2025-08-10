@@ -1,3 +1,20 @@
+import warnings
+import inspect
+import cmath
+import math
+import numpy as np
+from enum import Enum
+from typing import Union, Optional, Iterable, Iterator, List, Dict, Any, Tuple
+from ..plotting.models import IPlottable, IScatterable
+from ..algebra.mono import Mono
+from ..algebra.poly import Poly
+from ..auxiliary import clean_spaces, extract_variables_from_expression, is_lambda, to_lambda, contains_from_list, round_decimal
+from ..plotting.plot import plot_function, plot_functions, plot_function_3d, scatter_function
+from ..numerical.numerical import newton_raphson, aberth_method
+from ..algebra.IExpression import IExpression
+from ..algebra.constants import TRIGONOMETRY_CONSTANTS, MATHEMATICAL_CONSTANTS
+from ..string_analysis import is_number, only_numbers_letters, is_evaluatable
+
 class Function(IPlottable, IScatterable):
     arithmetic_operations = ('+', '-')
 

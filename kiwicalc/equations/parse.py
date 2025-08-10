@@ -1,3 +1,5 @@
+from ..auxiliary import get_equation_variables, ParseExpression, add_or_sub_coefficients
+
 class ParseEquation:
 
     @staticmethod

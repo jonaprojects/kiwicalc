@@ -1,27 +1,29 @@
 from typing import Union, Iterable, Optional 
-from kiwicalc.algebra.trigonometry.trigo_str_analysis import TrigoExprs_from_str
-from kiwicalc.string_analysis import to_lambda
-import iexpression as iexpr
-import expression_sum as expr_sum
-import trigoexpr as te
-import mono 
-from kiwicalc.algebra import fraction as fr
+from .trigo_str_analysis import TrigoExprs_from_str
+from ...string_analysis import to_lambda
+from ..IExpression import IExpression
+from ..expression_sum import ExpressionSum
+from .trigoexpr import TrigoExpr
+from ..mono import Mono
+from .. import fraction as fr
+from ..auxiliary import create, equal_ignore_order
+from ..plotting.models import IPlottable, IScatterable
 
-class TrigoExprs(expr_sum.ExpressionSum, IPlottable, IScatterable):
+class TrigoExprs(ExpressionSum, IPlottable, IScatterable):
 
     #! THIS INTRODUCES TIGHT COUPLING TO THE PROGRAM, AND HENCE SHOULD BE RESOLVED.
     def _transform_expression(self, expression, dtype='poly'):
         if isinstance(expression, (int, float)):
-            return mono.Mono(expression)
+            return Mono(expression)
         elif isinstance(expression, str):
             return create(expression, dtype=dtype)
-        elif isinstance(expression, (iexpr.IExpression)):
+        elif isinstance(expression, (IExpression)):
             return expression.__copy__()
         else:
             raise TypeError(
                 f"Unexpected type {type(expression)} in TrigoExpr.__init__()")
 
-    def __init__(self, expressions: Union[str, Iterable[iexpr.IExpression]], dtype='poly'):
+    def __init__(self, expressions: Union[str, Iterable[IExpression]], dtype='poly'):
         if isinstance(expressions, str):
             expressions = TrigoExprs_from_str(expressions, get_list=True)
         if isinstance(expressions, Iterable):
@@ -43,7 +45,7 @@ class TrigoExprs(expr_sum.ExpressionSum, IPlottable, IScatterable):
                 f"string.")
         # now
 
-    def __add_TrigoExpr(self, other: te.TrigoExpr):  # TODO: check this methods
+    def __add_TrigoExpr(self, other: TrigoExpr):  # TODO: check this methods
         """Add a TrigoExpr expression"""
         try:
             index = next((index for index, expression in enumerate(self._expressions) if
@@ -53,7 +55,7 @@ class TrigoExprs(expr_sum.ExpressionSum, IPlottable, IScatterable):
             # No matching expression
             self._expressions.append(other)
 
-    def __sub_TrigoExpr(self, other: te.TrigoExpr):
+    def __sub_TrigoExpr(self, other: TrigoExpr):
         """ Subtract a TrigoExpr expression"""
         try:
             index = next((index for index, expression in enumerate(self._expressions) if
@@ -63,18 +65,18 @@ class TrigoExprs(expr_sum.ExpressionSum, IPlottable, IScatterable):
             # No matching expression
             self._expressions.append(other)
 
-    def __iadd__(self, other: Union[int, float, iexpr.IExpression]):
+    def __iadd__(self, other: Union[int, float, IExpression]):
         print(f"adding {other} to {self}")
         if other == 0:
             return self
         if isinstance(other, str):
             other = TrigoExprs(other)
-        if isinstance(other, iexpr.IExpression):
+        if isinstance(other, IExpression):
             my_evaluation, other_evaluation = self.try_evaluate(), other.try_evaluate()
             if None not in (my_evaluation, other_evaluation):
-                return mono.Mono(my_evaluation + other_evaluation)
+                return Mono(my_evaluation + other_evaluation)
 
-            if isinstance(other, te.TrigoExpr):
+            if isinstance(other, TrigoExpr):
                 self.__add_TrigoExpr(other)
                 return self
             elif isinstance(other, TrigoExprs):
@@ -82,19 +84,19 @@ class TrigoExprs(expr_sum.ExpressionSum, IPlottable, IScatterable):
                     self.__add_TrigoExpr(other_expression)
                 return self
             else:
-                return expr_sum.ExpressionSum((self, other))
+                return ExpressionSum((self, other))
         else:
             raise TypeError(
                 f"Invalid type for adding trigonometric expressions: {type(other)}")
 
-    def __isub__(self, other: Union[int, float, iexpr.IExpression]):
+    def __isub__(self, other: Union[int, float, IExpression]):
         if isinstance(other, str):
             other = TrigoExprs(other)
-        if isinstance(other, iexpr.IExpression):
+        if isinstance(other, IExpression):
             my_evaluation, other_evaluation = self.try_evaluate(), other.try_evaluate()
             if None not in (my_evaluation, other_evaluation):
-                return mono.Mono(my_evaluation - other_evaluation)
-            if isinstance(other, te.TrigoExpr):
+                return Mono(my_evaluation - other_evaluation)
+            if isinstance(other, TrigoExpr):
                 self.__sub_TrigoExpr(other)
                 return self
             elif isinstance(other, TrigoExprs):
@@ -102,7 +104,7 @@ class TrigoExprs(expr_sum.ExpressionSum, IPlottable, IScatterable):
                     self.__sub_TrigoExpr(other_expression)
                     return self
             else:
-                return expr_sum.ExpressionSum((self, other))
+                return ExpressionSum((self, other))
         else:
             raise TypeError(
                 f"Invalid type for subtracting trigonometric expressions: {type(other)}")
@@ -124,7 +126,7 @@ class TrigoExprs(expr_sum.ExpressionSum, IPlottable, IScatterable):
         return copy_of_self
 
     def __rsub__(self, other):
-        if isinstance(other, iexpr.IExpression):
+        if isinstance(other, IExpression):
             return other.__sub__(self)
         elif isinstance(other, (int, float)):
             pass  # TrigoExprs or TrigoExpr
@@ -132,9 +134,9 @@ class TrigoExprs(expr_sum.ExpressionSum, IPlottable, IScatterable):
             raise TypeError(
                 f"Invalid type while subtracting a TrigoExprs object: {type(other)} ")
 
-    def __imul__(self, other: Union[int, float, iexpr.IExpression]):
-        if isinstance(other, (int, float, iexpr.IExpression)):
-            if isinstance(other, iexpr.IExpression):
+    def __imul__(self, other: Union[int, float, IExpression]):
+        if isinstance(other, (int, float, IExpression)):
+            if isinstance(other, IExpression):
                 other_evaluation = other.try_evaluate()
                 value = other_evaluation if other_evaluation is not None else other
             else:
@@ -161,7 +163,7 @@ class TrigoExprs(expr_sum.ExpressionSum, IPlottable, IScatterable):
         return self.__mul__(other)
 
     # TODO: implement it
-    def __itruediv__(self, other: Union[int, float, iexpr.IExpression]):
+    def __itruediv__(self, other: Union[int, float, IExpression]):
         my_evaluation = self.try_evaluate()
         if other == 0:
             raise ZeroDivisionError("Cannot divide a TrigoExprs object by 0")
@@ -171,12 +173,12 @@ class TrigoExprs(expr_sum.ExpressionSum, IPlottable, IScatterable):
                     trigo_expression /= other
                 return self
             else:
-                return mono.Mono(coefficient=my_evaluation / other)
-        elif isinstance(other, iexpr.IExpression):
+                return Mono(coefficient=my_evaluation / other)
+        elif isinstance(other, IExpression):
             other_evaluation = other.try_evaluate()
             if other_evaluation is not None:
                 if my_evaluation is not None:
-                    return mono.Mono(coefficient=my_evaluation / other_evaluation)
+                    return Mono(coefficient=my_evaluation / other_evaluation)
                 else:
                     for trigo_expression in self._expressions:
                         trigo_expression /= other
@@ -185,7 +187,7 @@ class TrigoExprs(expr_sum.ExpressionSum, IPlottable, IScatterable):
             elif my_evaluation is not None:
                 # Therefore, a case such as 1/x will be created, which can be represented via a Fraction object.
                 return fr.Fraction(self, other)
-            elif isinstance(other, te.TrigoExpr):
+            elif isinstance(other, TrigoExpr):
                 if len(self._expressions) == 1:
                     return self._expressions[0] / other
                 for [method, inside, power] in other.expressions:
@@ -219,7 +221,7 @@ class TrigoExprs(expr_sum.ExpressionSum, IPlottable, IScatterable):
                 # First of all, check for equality, then return 1
                 if all(trigo_expr in other.expressions for trigo_expr in self._expressions) and all(
                         trigo_expr in self.expressions for trigo_expr in other._expressions):
-                    return mono.Mono(1)
+                    return Mono(1)
                 # TODO: Further implement it.
                 return fr.Fraction(self, other)
 
@@ -229,15 +231,15 @@ class TrigoExprs(expr_sum.ExpressionSum, IPlottable, IScatterable):
             raise TypeError(
                 f"Invalid type '{type(other)}' for dividing a TrigoExprs object")
 
-    def __pow__(self, power: Union[int, float, iexpr.IExpression]):  # Check if this works
-        if isinstance(power, iexpr.IExpression):
+    def __pow__(self, power: Union[int, float, IExpression]):  # Check if this works
+        if isinstance(power, IExpression):
             power_evaluation = power.try_evaluate()
             if power_evaluation is not None:
                 power = power_evaluation
             else:
                 return Exponent(self, power)
         if power == 0:
-            return te.TrigoExpr(1)
+            return TrigoExpr(1)
         elif power == 1:
             return self.__copy__()
         items = len(self._expressions)
@@ -300,7 +302,7 @@ class TrigoExprs(expr_sum.ExpressionSum, IPlottable, IScatterable):
 
     @staticmethod
     def from_dict(given_dict: dict):
-        return TrigoExprs([te.TrigoExpr.from_dict(sub_dict) for sub_dict in given_dict['expressions']])
+        return TrigoExprs([TrigoExpr.from_dict(sub_dict) for sub_dict in given_dict['expressions']])
 
     def __eq__(self, other):
         result = super(TrigoExprs, self).__eq__(other)

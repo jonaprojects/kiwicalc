@@ -1,3 +1,8 @@
+from abc import ABC, abstractmethod
+from typing import Iterable
+from ..auxiliary import clean_spaces, get_equation_variables, extract_dict_from_equation
+from .linear_equation import LinearEquation
+
 class Equation(ABC):
     def __init__(self, equation: str, variables: Iterable = None, calc_now: bool = False):
         """The base function of creating a new Equation"""

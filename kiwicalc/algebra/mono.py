@@ -1,6 +1,8 @@
-from IExpression import IExpression
-from typing import Union, Optional
-from kiwicalc.plot.models import IPlottable, IScatterable
+from .IExpression import IExpression
+from typing import Union, Optional, Iterable
+from ..plotting.models import IPlottable, IScatterable
+from .poly import Poly
+from ..auxiliary import mono_from_str
 
 
 class Mono(IExpression, IPlottable, IScatterable):

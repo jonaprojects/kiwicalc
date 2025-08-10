@@ -1,3 +1,8 @@
+from typing import Iterable, Optional, Tuple
+from .Equation import Equation
+from ..auxiliary import ParseExpression, solve_cubic, random_polynomial
+from .poly_equation import PolyEquation
+
 class CubicEquation(Equation):
 
     def __init__(self, equation: str, variables: Iterable[Optional[str]] = None, strict_syntax: bool = False):

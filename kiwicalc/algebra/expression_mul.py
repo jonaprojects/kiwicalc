@@ -1,3 +1,9 @@
+from typing import Union, Optional, Iterable
+from .IExpression import IExpression
+from ..plotting.models import IPlottable, IScatterable
+from .mono import Mono
+from .expression_sum import ExpressionSum
+
 class ExpressionMul(IExpression, IPlottable, IScatterable):
     __slots__ = ['_coefficient', '_expressions']
 

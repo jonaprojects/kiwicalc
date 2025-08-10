@@ -1,3 +1,8 @@
+from typing import Union, Optional, Iterable
+from .IExpression import IExpression
+from ..plotting.models import IPlottable
+from ..auxiliary import ParseExpression, derivative
+
 class FastPoly(IExpression, IPlottable):
     __slots__ = ['__variables', '__variables_dict']
 

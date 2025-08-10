@@ -5,19 +5,17 @@ import json
 from math import comb
 import random
 
-
 # kiwicalc imports
-from plot.models import IExpression, IPlottable
-import mono
-import var
-from ....kiwicalc.plot.plot import plot_function, plot_functions_3d 
-from ...numerical.numerical import * 
-from ....kiwicalc.string_analysis import to_lambda 
+from .IExpression import IExpression
+from ..plotting.models import IPlottable
+from . import mono
+from . import var
+from ..plotting.plot import plot_function, plot_functions_3d 
+from ..numerical.numerical import * 
+from ..string_analysis import to_lambda 
+from .algebra_string_analysis import poly_from_str
 
 # TODO: try not to use the "from" syntax for circular imports
-
-from kiwicalc.algebra.algebra_string_analysis import poly_from_str
-
 
 class Poly(IExpression, IPlottable):
     __slots__ = ['_expressions', '__loop_index']

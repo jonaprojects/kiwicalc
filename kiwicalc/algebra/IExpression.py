@@ -1,5 +1,13 @@
 from abc import ABC, abstractmethod
+from typing import Union, Optional
+import json
 
+# Import functions from auxiliary to avoid circular imports
+from ..auxiliary import (
+    formatted_expression, to_lambda, reinman, trapz, simpson, 
+    secant_method, bisection_method, plot_function, plot_function_3d,
+    scatter_function, scatter_function_3d
+)
 
 class IExpression(ABC):
 
@@ -96,12 +104,14 @@ class IExpression(ABC):
         pass
 
     def __abs__(self):
+        from .abs import Abs
         return Abs(self)
 
     def __rpow__(self, other: "Union[IExpression, int, float]"):
         my_evaluation = self.try_evaluate()
         if my_evaluation is not None:
             return other ** my_evaluation
+        from .exponent import Exponent
         return Exponent(other, self)
 
     def python_syntax(self, format_abs=True, format_factorial=True):
@@ -173,8 +183,9 @@ class IExpression(ABC):
         with open(path, 'w') as json_file:
             json_file.write(self.to_json())
 
-    def to_Function(self) -> "Optional[Function]":
+    def to_Function(self) -> "Optional['Function']":
         try:
+            from ..functions.function import Function
             return Function(self.__str__())
         except:
             return None

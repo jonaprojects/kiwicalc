@@ -1,5 +1,6 @@
-from trigoexpr import TrigoExpr
-from auxiliary import conversion_wrapper 
+from .trigoexpr import TrigoExpr
+from ...auxiliary import conversion_wrapper 
+from .trigomethods import TrigoMethods
 
 
 class Sin(TrigoExpr):

@@ -1,3 +1,14 @@
+from typing import Union, Optional, Iterable, List, Iterator, Any, Tuple
+from ..IExpression import IExpression
+from ...plotting.models import IPlottable, IScatterable
+from ..mono import Mono
+from ..poly import Poly
+from ..var import Var
+from ...auxiliary import TrigoExpr_from_str
+from .trigomethods import TrigoMethods
+from .trigoexprs import TrigoExprs
+from ..expression_sum import ExpressionSum
+
 class TrigoExpr(IExpression, IPlottable, IScatterable):
     """ This class represents a single trigonometric expression, such as 3sin(2x)cos(x) for example. """
     __slots__ = ['_coefficient', '_expressions']

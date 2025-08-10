@@ -1,3 +1,11 @@
+import random
+from .Equation import Equation
+from ..algebra.poly import Poly
+from ..algebra.mono import Mono
+from ..auxiliary import extract_dict_from_equation
+from ..functions.function import Function
+from ..plotting.plot import plot_functions
+
 class PolyEquation(Equation):
 
     def __init__(self, first_side, second_side=None, variables=None):

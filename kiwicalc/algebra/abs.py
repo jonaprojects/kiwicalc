@@ -1,3 +1,14 @@
+import warnings
+from typing import Union, Optional
+from ..algebra.IExpression import IExpression
+from ..plotting.models import IPlottable, IScatterable
+from ..algebra.mono import Mono
+from ..algebra.expression_sum import ExpressionSum
+from ..algebra.expression_mul import ExpressionMul
+from ..algebra.exponent import Exponent
+from ..algebra.fraction import Fraction
+from ..auxiliary import create_from_dict
+
 class Abs(IExpression, IPlottable, IScatterable):
     """A class for representing expressions with absolute values. For instance, Abs(x) is the same as |x|."""
     __slots__ = ['_coefficient', '_expression', '_power']
@@ -57,7 +68,7 @@ class Abs(IExpression, IPlottable, IScatterable):
     def assign(self, **kwargs):
         self._coefficient.assign(**kwargs)
         self._expression.assign(**kwargs)
-        self._expression.assign(**kwargs)
+        self._power.assign(**kwargs)
 
     def to_dict(self):
         return {
@@ -215,7 +226,7 @@ class Abs(IExpression, IPlottable, IScatterable):
                         return (self._coefficient, self._power) == (other._coefficient, other._power)
                 expression_evaluation = self._expression.try_evaluate()  # computed the second time - waste..
                 if expression_evaluation is not None:
-                    return self._coefficient * abs(expression_evaluation) ** self._power == other
+                    return self._coefficient * (abs(expression_evaluation) ** self._power.try_evaluate()) == other
             return False
         return False
 
@@ -229,7 +240,7 @@ class Abs(IExpression, IPlottable, IScatterable):
         if num_of_variables == 0:
             return lambda x: self.try_evaluate()
         assert num_of_variables == 1, "Use partial derivatives of expressions with several variables."
-        positive_expression = self._coefficient * self._expression ** self._power
+        positive_expression = self._coefficient * (self._expression ** self._power)
         try:
             positive_derivative = positive_expression.derivative()
         except:
@@ -257,24 +268,24 @@ class Abs(IExpression, IPlottable, IScatterable):
             return coefficient_evaluation
         if expression_evaluation is None:
             return None
-        return coefficient_evaluation * abs(expression_evaluation) ** power_evaluation
+        return coefficient_evaluation * (abs(expression_evaluation) ** power_evaluation)
 
     def __str__(self):
         if self._coefficient == 0 or self._expression == 0:
             return "0"
         if self._power == 0:
-            return self._coefficient.__str__()
+            return str(self._coefficient)
         elif self._power == 1:
             power_string = ""
         else:
-            power_string = f"**{self._power.python_syntax()}"
+            power_string = f"**{str(self._power)}"
         if self._coefficient == 1:
-            coefficient_string = f""
+            coefficient_string = ""
         elif self._coefficient == -1:
-            coefficient_string = f"-"
+            coefficient_string = "-"
         else:
-            coefficient_string = f"{self._coefficient.__str__()}*"
-        return f"{coefficient_string}|{self._expression}|{power_string}"
+            coefficient_string = f"{str(self._coefficient)}*"
+        return f"{coefficient_string}|{str(self._expression)}|{power_string}"
 
     def __copy__(self):
         return Abs(expression=self._expression, power=self._power, coefficient=self._coefficient, gen_copies=True)

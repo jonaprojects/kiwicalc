@@ -1,3 +1,6 @@
+from typing import Iterable
+from ..auxiliary import handle_abs, allowed_characters, contains_from_list, is_number
+
 def simplify_linear_expression(expression: str, variables: Iterable[str], format_abs=False, format_factorial=False) -> dict:
     if format_abs:
         expression = handle_abs(expression)

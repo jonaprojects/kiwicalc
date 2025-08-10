@@ -1,3 +1,8 @@
+from typing import Union, Optional
+from .IExpression import IExpression
+from .mono import Mono
+from .expression_sum import ExpressionSum
+
 class Exponent(IExpression):
     """
     This class enables you to represent expressions such as x^x, e^x, (3x)^sin(x), etc.

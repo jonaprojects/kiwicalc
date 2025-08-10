@@ -2,6 +2,16 @@
 Methods for solving different kinds of equations, system of equations and in equalities
 """
 
+import json
+import numpy as np
+from typing import Union, Iterable, Optional, Tuple
+from .parse import ParseEquation
+from ..auxiliary import solve_quadratic, solve_cubic, solve_quartic, solve_quadratic_real, extract_possible_solutions, __find_solutions, simplify_linear_expression, subtract_dicts, extract_dict_from_equation
+from ..algebra.poly import Poly
+from ..algebra.auxiliary import coefficients_to_expressions
+from ..numerical.numerical import aberth_method
+from ..algebra.IExpression import IExpression
+
 
 def solve_polynomial(coefficients, epsilon: float = 0.000001, nmax: int = 10_000):
     """

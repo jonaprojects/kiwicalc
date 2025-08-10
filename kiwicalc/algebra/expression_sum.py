@@ -1,3 +1,10 @@
+from typing import Union, Optional, Iterable
+from .IExpression import IExpression
+from ..plotting.models import IPlottable, IScatterable
+from .mono import Mono
+from .poly import Poly
+from ..auxiliary import copy_expression
+
 class ExpressionSum(IExpression, IPlottable, IScatterable):
     __slots__ = ['_expressions', '_current_index']
 

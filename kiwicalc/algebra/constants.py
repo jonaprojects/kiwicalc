@@ -2,6 +2,12 @@
 Constants and relevant enums
 """
 
+from math import (
+    sin, cos, tan, asin, acos, atan, sinh, cosh, tanh, 
+    asinh, acosh, atanh, log, log2, log10, exp, sqrt,
+    erf, erfc, gamma, lgamma, pi, e, tau
+)
+
 # Lowercase letters, but not 'i' and 'e' since they have special meaning
 ALLOWED_CHARACTERS = ['a', 'b', 'c', 'd', 'f', 'g', 'h', 'j', 'k', 'l',
                       'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z']

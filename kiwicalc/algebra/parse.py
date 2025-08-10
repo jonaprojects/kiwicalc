@@ -1,3 +1,9 @@
+import warnings
+from ..auxiliary import (
+    format_coefficient, format_free_number, get_equation_variables, 
+    extract_coefficient, clean_spaces, round_decimal, split_expression
+)
+
 class ParseExpression:
 
     @staticmethod
@@ -242,7 +248,7 @@ class ParseExpression:
 
     @staticmethod
     def to_coefficients(expression: str, variable=None, strict_syntax=True, get_variable=False):
-        expression = clean_spacesession)
+        expression = clean_spaces(expression)
         if variable is None:
             variables = get_equation_variables(expression)
             num_of_variables = len(variables)

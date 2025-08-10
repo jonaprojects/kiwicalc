@@ -1,3 +1,9 @@
+import warnings
+import random
+from typing import Optional, Iterable
+from .Equation import Equation
+from ..auxiliary import ParseExpression, solve_quadratic, solve_quadratic_real, solve_quadratic_params, round_decimal, format_coefficient
+
 class QuadraticEquation(Equation):
 
     def __init__(self, equation: str, variables: Optional[Iterable[str]] = None, strict_syntax=False):

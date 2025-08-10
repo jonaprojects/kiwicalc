@@ -1,3 +1,8 @@
+from typing import Union
+from .function_collection import FunctionCollection
+from .function import Function
+from ..plotting.plot import plot_function, plot_function_3d, scatter_function
+
 class FunctionChain(FunctionCollection):
     def __init__(self, *functions):
         super(FunctionChain, self).__init__(*functions)

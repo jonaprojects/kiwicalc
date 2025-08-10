@@ -1,4 +1,4 @@
-from mono import Mono
+from .mono import Mono
 
 
 class Var(Mono):

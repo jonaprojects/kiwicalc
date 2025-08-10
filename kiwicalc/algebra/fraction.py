@@ -1,3 +1,9 @@
+from typing import Union, Optional
+from .IExpression import IExpression
+from .mono import Mono
+from .expression_sum import ExpressionSum
+from ..auxiliary import create_from_dict
+
 # Does everything that inherit from IExpression will be accepted here ?
 class Fraction(IExpression):
     __slots__ = ['_numerator', '_denominator']

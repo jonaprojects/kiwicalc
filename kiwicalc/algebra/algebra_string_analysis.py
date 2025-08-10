@@ -2,10 +2,12 @@
 import re
 
 # kiwicalc imports
-import kiwicalc.algebra.mono as mono
-from auxiliary import clean_spaces
-from kiwicalc.string_analysis import extract_coefficient
+from . import mono
+from ..auxiliary import clean_spaces
+from ..string_analysis import extract_coefficient
 
+# Define allowed_characters if not defined elsewhere
+allowed_characters = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
 
 def __data_from_single(single_expression: str, variable_name: str):
     """
@@ -88,6 +90,7 @@ def poly_from_str(poly_expression: str, get_list=False) -> "Union[Poly,List]":
     expressions = [mono_from_str(expression) for expression in expressions]
     if get_list:
         return expressions
+    from .poly import Poly
     return Poly(expressions)
 
 
