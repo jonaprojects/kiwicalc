@@ -1,3 +1,8 @@
+import operator
+import re
+from typing import Callable
+
+
 class Operator:
     __slots__ = ['__sign', '__method']
 

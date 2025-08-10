@@ -1,5 +1,13 @@
 from typing import Optional, Tuple
-
+from ..auxiliary import extract_coefficient
+from ..trigonometry.trigo import TrigoExpr
+from ..trigonometry.trigomethods import TrigoMethods
+from ..trigonometry.trigoexpr import TrigoExpr
+from ..trigonometry.trigo_str_analysis import TrigoExpr_from_str
+from ..trigonometry.trigo_str_analysis import TrigoExprs_from_str
+from ..trigonometry.trigo_str_analysis import _TrigoMethodFromString
+from ..trigonometry.trigo_str_analysis import analyze_single_trigo
+from ..trigonometry.trigo_str_analysis import __helper_trigo 
 
 def __helper_trigo(expression: str) -> Optional[Tuple[int, Optional[float]]]:
     try:

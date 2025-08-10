@@ -1,3 +1,43 @@
+"""
+Auxiliary functions for equation processing and solving
+"""
+
+import warnings
+import re
+from typing import Iterable, List, Union, Callable, Tuple
+from ..auxiliary import clean_spaces, round_decimal, synthetic_division
+from ..algebra.mono import Mono
+from ..algebra.IExpression import IExpression
+from ..algebra.poly import Poly
+from ..algebra.fraction import Fraction
+from ..algebra.poly_fraction import PolyFraction
+from ..algebra.fastpoly import solve_polynomial
+from ..algebra.auxiliary import split_expression, extract_coefficient, get_factors
+from traceback import exc_info
+from functools import reduce
+import math
+
+
+def equation_to_function(equation: str, variables: Iterable[str] = None) -> "Function":
+    """ Convert an equation to a Function object"""
+    from ..functions.function import Function
+    function_string = equation_to_one_side(equation)
+    if variables is None:
+        variables = get_equation_variables(equation)
+    function_signature = f"f({','.join(variables)})"
+    return Function(f"{function_signature} = {function_string}")
+
+
+def get_equation_variables(equation: str) -> List[str]:
+    """
+    Extract variable names from an equation string.
+    
+    :param equation: The equation string
+    :return: List of variable names found in the equation
+    """
+    return list({character for character in equation if character.isalpha()})
+
+
 # TODO: improve this shitty method.
 def extract_dict_from_equation(equation: str, delimiter="="):
     """
@@ -120,8 +160,7 @@ def __find_solutions(coefficients, possible_solutions):
             try:
                 # find more solutions. right now, this feature only works on real numbers, and when the highest power
                 # is 3
-                values = solve_quadratic_real(
-                    division_result[0], division_result[1], division_result[2])
+                values = solve_polynomial(division_result)
                 solutions.add(values[0])
                 solutions.add(values[1])
             except Exception as e:
@@ -256,3 +295,15 @@ def format_free_number(free_number: Union[int, float]):
         return f"{round_decimal(free_number)}"
 
     return f"+{round_decimal(free_number)}"
+
+
+def solve_quadratic_real(a: float, b: float, c: float) -> Union[Tuple[float, float], float, None]:
+    """Returns only the real solutions of the quadratic equation"""
+    if a == 0:
+        return None
+    discriminant = b ** 2 - 4 * a * c
+    if discriminant < 0:
+        return None
+    if discriminant == 0:
+        return (-b + math.sqrt(discriminant)) / (2 * a)
+    return (-b + math.sqrt(discriminant)) / (2 * a), (-b - math.sqrt(discriminant)) / (2 * a)

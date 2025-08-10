@@ -1,3 +1,6 @@
+from typing import Callable
+from ..auxiliary import decimal_range
+from math import sqrt
 
 def mav(func1: Callable, func2: Callable, start: float, stop: float, step: float):
     """ Mean absolute value"""

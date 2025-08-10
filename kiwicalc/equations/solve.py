@@ -3,19 +3,34 @@ Methods for solving different kinds of equations, system of equations and in equ
 """
 
 import json
+import cmath 
+from math import sqrt 
+import warnings
+from traceback import exc_info
+
 import numpy as np
-from typing import Union, Iterable, Optional, Tuple
+from typing import Union, Iterable, Optional, Tuple, List, Dict, Any
 from .parse import ParseEquation
-from ..auxiliary import solve_quadratic, solve_cubic, solve_quartic, solve_quadratic_real, extract_possible_solutions, __find_solutions, simplify_linear_expression, subtract_dicts, extract_dict_from_equation
+from ..auxiliary import round_decimal, extract_variables_from_expression
+from ..equations.auxiliary import (
+    solve_quadratic, solve_cubic, solve_quartic, solve_quadratic_real, 
+    extract_possible_solutions, __find_solutions, simplify_linear_expression, 
+    subtract_dicts, extract_dict_from_equation, coefficients_to_expressions,
+    equation_to_one_side
+)
 from ..algebra.poly import Poly
-from ..algebra.auxiliary import coefficients_to_expressions
+from ..algebra.mono import Mono
+from ..algebra.algebra_string_analysis import poly_from_str
 from ..numerical.numerical import aberth_method
 from ..algebra.IExpression import IExpression
+from ..linear_algebra.matrices.matrix import Matrix
+from ..linear_algebra.auxiliary import generate_jacobian
+from ..equations.auxiliary import get_equation_variables
 
 
-def solve_polynomial(coefficients, epsilon: float = 0.000001, nmax: int = 10_000):
+def solve_polynomial(coefficients: Union[List[float], str], epsilon: float = 0.000001, nmax: int = 10_000) -> Optional[List[Union[float, complex]]]:
     """
-    This method find the roots of a polynomial from a collection of the coefficients of the expression.
+    This method finds the roots of a polynomial from a collection of the coefficients of the expression.
     The algorithm chooses the most efficient algorithm in correspondence to the degree of the polynomial.
     for a collection of coefficients of length n, its degree would be n-1.
     For example, [1, -2, 1] represents x^2 - 2x + 1. The length of the list is 3 and the degree of the expression is 2.
@@ -26,9 +41,9 @@ def solve_polynomial(coefficients, epsilon: float = 0.000001, nmax: int = 10_000
     the polynomial.
 
     :param coefficients: The coefficients of the polynomial.
-    :param epsilon:
+    :param epsilon: Tolerance for numerical methods
     :param nmax: Max number of iterations In case the polynomial is of a degree of 5 or more.Default is 100,000
-    :return:
+    :return: List of roots (complex or real numbers)
     """
     if isinstance(coefficients, str):
         return solve_polynomial(ParseEquation.parse_polynomial(coefficients))
@@ -50,7 +65,7 @@ def solve_polynomial(coefficients, epsilon: float = 0.000001, nmax: int = 10_000
     return aberth_method(polynomial_obj.to_lambda(), poly_derivative, coefficients, epsilon, nmax)
 
 
-def solve_poly_by_factoring(coefficients):
+def solve_poly_by_factoring(coefficients: List[float]) -> Dict[str, float]:
     """
     This method attempts to find the roots of a polynomial by synthetic division.
     It won't always return all the solutions, but it is faster than many numerical root finding algorithms, and might
@@ -69,7 +84,7 @@ def solve_poly_by_factoring(coefficients):
     return solutions
 
 
-def solve_linear(equation: str, variables=None, get_dict=False, get_json=False):
+def solve_linear(equation: str, variables: Optional[Dict[str, Any]] = None, get_dict: bool = False, get_json: bool = False) -> Optional[Union[float, Dict[str, float], str]]:
     if variables is None:
         variables = extract_dict_from_equation(equation)
     first_side, second_side = equation.split("=")
@@ -96,7 +111,7 @@ def solve_linear(equation: str, variables=None, get_dict=False, get_json=False):
         raise ValueError("Invalid equation caused an unexpected error")
 
 
-def solve_linear_inequality(equation: str, variables=None):
+def solve_linear_inequality(equation: str, variables: Optional[Dict[str, Any]] = None) -> str:
     equal_sign_index = equation.find('=')
     if equal_sign_index == -1:
         bigger_sign_index = equation.find('>')
@@ -135,7 +150,7 @@ def solve_linear_inequality(equation: str, variables=None):
     return f"{first_key}{sign}{round_decimal(-number_value / first_value)}"
 
 
-def solve_linear_system(equations, variables=None):
+def solve_linear_system(equations: List[str], variables: Optional[set] = None) -> Dict[str, float]:
     """ Solve a system of linear equations via Guass-Elimination Method with matrices"""
     if not variables:
         variables = set()
@@ -162,7 +177,7 @@ def solve_linear_system(equations, variables=None):
 
 def solve_poly_system(
         equations: "Union[Iterable[Union[str,Poly,Mono]],Iterable[Union[str, Poly, Mono]]]",
-        initial_vals: dict = None, epsilon: float = 0.00001, nmax: int = 10000, show_steps=False):
+        initial_vals: Optional[Dict[str, float]] = None, epsilon: float = 0.00001, nmax: int = 10000, show_steps: bool = False) -> Dict[str, float]:
     """
     This method solves for all the real solutions of a system of polynomial equations.
     :param equations: A collection of equations; each equation must be an equation (of type 'str')  or a polynomial.
@@ -200,7 +215,7 @@ def solve_poly_system(
 # TODO: fix this !!!!
 
 
-def solve_quadratic_from_str(expression, real=False, strict_syntax=False):
+def solve_quadratic_from_str(expression: str, real: bool = False, strict_syntax: bool = False) -> Tuple[float, ...]:
     if isinstance(expression, str):
         variables = get_equation_variables(expression)
         if len(variables) == 0:
@@ -216,7 +231,7 @@ def solve_quadratic_from_str(expression, real=False, strict_syntax=False):
                 "Can't solve a quadratic equation with more than 1 variable")
 
 
-def solve_quadratic(a: Union[str, float], b: float = None, c: float = None) -> tuple:
+def solve_quadratic(a: Union[str, float], b: Optional[float] = None, c: Optional[float] = None) -> Tuple[complex, complex]:
     """ Solves a quadratic equation using computations of complex numbers ( utilizing the cmath library)"""
     if isinstance(a, str):
         return solve_quadratic_from_str(a)
@@ -225,7 +240,7 @@ def solve_quadratic(a: Union[str, float], b: float = None, c: float = None) -> t
 
 
 def solve_quadratic_real(a: Union[str, float], b: float, c: float) -> Optional[Union[Tuple[float, float], float]]:
-    """returns onlu the real solutions of the quadratic equation"""
+    """returns only the real solutions of the quadratic equation"""
     if isinstance(a, str):
         return solve_quadratic_from_str(a, real=True)
     discriminant = b ** 2 - 4 * a * c
@@ -236,7 +251,7 @@ def solve_quadratic_real(a: Union[str, float], b: float, c: float) -> Optional[U
     return (-b + sqrt(discriminant)) / (2 * a), (-b + sqrt(discriminant) / (2 * a))
 
 
-def solve_quadratic_params(a: "Union[IExpression, int, float,str]", b: "Union[IExpression, int, float]", c: "Union[IExpression,int,float]"):
+def solve_quadratic_params(a: "Union[IExpression, int, float,str]", b: "Union[IExpression, int, float]", c: "Union[IExpression,int,float]") -> Tuple[Any, Any]:
     if isinstance(a, str):  # TODO: implement string analysis here
         print("need to be implemented")
     if all(isinstance(coefficient, (int, float)) for coefficient in (a, b, c)):
@@ -256,10 +271,11 @@ def solve_quadratic_params(a: "Union[IExpression, int, float,str]", b: "Union[IE
     if all(isinstance(coefficient, (int, float)) for coefficient in (a, b, c)):
         return (-b + sqrt(b ** 2 - 4 * a * c)) / (2 * a), (-b - sqrt(b ** 2 - 4 * a * c)) / (2 * a)
     else:
-        return (-b + Sqrt(b ** 2 - 4 * a * c)) / (2 * a), (-b - Sqrt(b ** 2 - 4 * a * c)) / (2 * a)
+        # Note: Sqrt is not defined, using sqrt from math instead
+        return (-b + sqrt(b ** 2 - 4 * a * c)) / (2 * a), (-b - sqrt(b ** 2 - 4 * a * c)) / (2 * a)
 
 
-def solve_cubic(a: float, b: float, c: float, d: float):
+def solve_cubic(a: float, b: float, c: float, d: float) -> List[complex]:
     """ Given the real coefficients of a cubic equation, this method will return the solutions"""
     if a == 0:
         return solve_quadratic(b, c, d)
@@ -283,14 +299,14 @@ def solve_cubic(a: float, b: float, c: float, d: float):
 
 
 # TODO: improve in next versions
-def solve_cubic_real(a: float, b: float, c: float, d: float):
+def solve_cubic_real(a: float, b: float, c: float, d: float) -> List[float]:
     roots = solve_cubic(a, b, c, d)
     if not roots:
         return []
     return [root.real for root in roots if abs(root.imag) < 0.00001]
 
 
-def solve_quartic(a: float, b: float, c: float, d: float, e: float):
+def solve_quartic(a: float, b: float, c: float, d: float, e: float) -> List[complex]:
     if a == 0:
         return solve_cubic(b, c, d, e)
     if a != 1:  # Divide everything by a to get to the form x^4 + bx^3 + cx^2 + dx + e

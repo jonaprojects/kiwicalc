@@ -1,5 +1,7 @@
 # built in imports
 import re
+from typing import Union, Tuple, Dict, Optional
+
 
 # kiwicalc imports
 from . import mono
@@ -9,13 +11,13 @@ from ..string_analysis import extract_coefficient
 # Define allowed_characters if not defined elsewhere
 allowed_characters = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
 
-def __data_from_single(single_expression: str, variable_name: str):
+def __data_from_single(single_expression: str, variable_name: str) -> Tuple[float, Optional[Dict[str, float]]]:
     """
     Extracts data from a single-variable monomial, such as 3x^2, or y^2, 82 , etc
 
-    :param single_expression:
-    :param variable_name:
-    :return:  A tuple with the _coefficient as the first element, and a dictionary of the variable name and its power
+    :param single_expression: The string expression to parse
+    :param variable_name: The variable name to look for
+    :return: A tuple with the coefficient as the first element, and a dictionary of the variable name and its power
     as the second element.
     """
     single_expression = clean_spaces(single_expression)
@@ -30,13 +32,13 @@ def __data_from_single(single_expression: str, variable_name: str):
     return coefficient, {variable_name: power}
 
 
-def mono_from_str(mono_expression: str, get_tuple=False):
+def mono_from_str(mono_expression: str, get_tuple: bool = False) -> Union[mono.Mono, Tuple[float, Optional[Dict[str, float]]]]:
     """
     Analyzes a string, such as "3x^2*y^2" and creates a monomial expression ( of type Mono )
     :param mono_expression: the string that represents the monomial
-    :param get_tuple: if set to True, instead of a Mono object, the _coefficient(float) and __variables(dict)
+    :param get_tuple: if set to True, instead of a Mono object, the coefficient(float) and variables(dict)
     will be returned.
-    :return: The monomial, or if get_tuple=True, then its _coefficient and __variables.
+    :return: The monomial, or if get_tuple=True, then its coefficient and variables.
     :rtype: Mono or tuple
     """
     try:
@@ -75,10 +77,10 @@ def mono_from_str(mono_expression: str, get_tuple=False):
         return mono.Mono(coefficient=final_coefficient, variables_dict=variables_and_powers)
 
 
-def poly_from_str(poly_expression: str, get_list=False) -> "Union[Poly,List]":
+def poly_from_str(poly_expression: str, get_list: bool = False) -> Union["Poly", list]:
     """
     Analyzes a string, such as "3x^2 + 2xy - 7" and generates a polynomial expression
-    :param poly_expression:
+    :param poly_expression: The string expression to parse
     :param get_list: if set to True, a list of the monomials ( Mono objects ) will be returned instead
     of a Poly object
     :return: a polynomial corresponding to the string, or a list of monomials.

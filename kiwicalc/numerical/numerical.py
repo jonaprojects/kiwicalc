@@ -3,12 +3,51 @@ Numerical methods for approximating solutions to equations and system of equatio
 """
 
 # Built in imports
-from typing import Callable
+from typing import Callable, Union
 import cmath
 import warnings
 import functools
+import math
+import numpy as np
+
 # Kiwicalc imports
-from auxiliary import round_decimal
+from ..auxiliary import round_decimal
+from ..algebra.poly import Poly
+from ..algebra.var import Var
+from ..algebra.factorial import factorial
+from ..algebra.mono import Mono
+from ..functions.function import Function
+from ..linear_algebra.matrices.matrix import Matrix
+from ..linear_algebra.auxiliary import approximate_jacobian
+
+# Constants
+cos = math.cos
+sin = math.sin
+pi = math.pi
+
+# Helper function to create monic polynomial from coefficients
+def monic_poly_from_coefficients(coefficients):
+    """
+    Create a monic polynomial from a list of coefficients.
+    
+    :param coefficients: List of coefficients [a_n, a_{n-1}, ..., a_0]
+    :return: Poly object representing the polynomial
+    """
+    if not coefficients:
+        return Poly(0)
+    
+    # Create monomials from coefficients
+    monomials = []
+    for i, coef in enumerate(coefficients):
+        if coef != 0:
+            # Power is degree - index
+            power = len(coefficients) - 1 - i
+            if power == 0:
+                monomials.append(Mono(coef))
+            else:
+                monomials.append(Mono(coef, {'x': power}))
+    
+    return Poly(monomials) if monomials else Poly(0)
 
 
 def newton_raphson(f_0: Callable, f_1: Callable, initial_value: float = 0, epsilon=0.00001, nmax: int = 100000):
@@ -416,3 +455,67 @@ def broyden(functions, initial_values, h: float = 0.0001, epsilon: float = 0.000
               in zip(initial_values, current_values)]
         temp = s1 * initial_inverse * y1
         print(temp)
+
+
+def lagrange_polynomial(axes, y_values):
+    """
+    Get a collection of corresponding x and y values, and return a polynomial that passes through these dots
+
+    :param axes: A collection of x values
+    :param y_values: A collection of corresponding y values
+    :return: A polynomial that passes through of all of the dots
+    """
+    x = Var('x')
+    result = Poly(0)
+    for i, xi in enumerate(axes):
+        numerator, denominator = Poly(1), 1
+        for j, xj in enumerate(axes):
+            if xi != xj:
+                numerator *= (x - xj)
+                denominator *= (xi - xj)
+        result += (numerator / denominator) * y_values[i]
+
+    result.simplify()
+    return result
+
+
+def taylor_polynomial(func: "Union[Function, Poly, Mono]", n: int, a: float, var: str = 'x'):
+    """
+    Generate a Taylor polynomial approximation of a function.
+    
+    :param func: Function to approximate (Function, Poly, or Mono)
+    :param n: Degree of the Taylor polynomial
+    :param a: Point around which to expand
+    :param var: Variable name for the polynomial
+    :return: Taylor polynomial
+    """
+    mono_expressions = [func(a)]
+    current_var = Var(var)
+    ith_derivative = func
+    for i in range(n):
+        ith_derivative = ith_derivative.derivative()
+        expression = ith_derivative(
+            a) / factorial(i+1) * (current_var - a) ** (i+1)
+        mono_expressions.append(expression)
+    return Poly(mono_expressions)
+
+
+def numerical_diff(f, a, method='central', h=0.01):
+    """
+    Compute numerical derivative using finite difference methods.
+    
+    :param f: Function to differentiate
+    :param f: Function to differentiate
+    :param a: Point at which to compute derivative
+    :param method: Method to use ('central', 'forward', 'backward')
+    :param h: Step size
+    :return: Numerical derivative
+    """
+    if method == 'central':
+        return (f(a + h) - f(a - h)) / (2 * h)
+    elif method == 'forward':
+        return (f(a + h) - f(a)) / h
+    elif method == 'backward':
+        return (f(a) - f(a - h)) / h
+    else:
+        raise ValueError("Method must be 'central', 'forward' or 'backward'.")
