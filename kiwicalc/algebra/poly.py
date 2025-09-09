@@ -1,19 +1,39 @@
 # built in imports
-from typing import List, Iterable, Union, Optional 
+from typing import List, Iterable, Union, Optional, TYPE_CHECKING
 import warnings
 import json
-from math import comb
+import os
 import random
+import numpy as np
+from math import comb
 
 # kiwicalc imports
 from .IExpression import IExpression
 from ..plotting.models import IPlottable
 from . import mono
 from . import var
-from ..plotting.plot import plot_function, plot_functions_3d 
+from ..plotting.plot import plot_function, plot_function_3d 
 from ..numerical.numerical import * 
 from ..string_analysis import to_lambda 
 from .algebra_string_analysis import poly_from_str
+from ..algebra.auxiliary import sorted_expressions, max_power, fetch_power, fetch_variable
+from ..equations.solve import solve_polynomial
+from ..equations.auxiliary import gcd
+from ..plotting.models import Point2D, PointCollection
+from ..range import Range, RangeOR, LESS_THAN
+from reportlab.pdfgen.canvas import Canvas
+from reportlab.lib.units import cm
+import matplotlib.pyplot as plt
+
+if TYPE_CHECKING:
+    from .expression_sum import ExpressionSum
+    from .expression_mul import ExpressionMul
+    from .fraction import Fraction
+    from .poly_fraction import PolyFraction
+    from .exponent import Exponent
+    from ..linear_algebra.matrices.matrix import Matrix
+    from ..linear_algebra.vectors.vector import Vector
+    from ..functions.function import Function
 
 # TODO: try not to use the "from" syntax for circular imports
 
@@ -102,7 +122,7 @@ class Poly(IExpression, IPlottable):
                 return self
 
             elif isinstance(other, Poly):
-                for mono.Mono_expression in other.expressions:
+                for mono_expression in other.expressions:
                     self.__add_monomial(mono_expression)
                 if all(expression.coefficient == 0 for expression in self.expressions):
                     self.expressions = [mono.Mono(0)]
@@ -152,7 +172,7 @@ class Poly(IExpression, IPlottable):
     def __isub__(self, other: Union[int, float, IExpression, str]):
         if isinstance(other, (int, float)):
             self.__sub_monomial(mono.Mono(other))
-            if all(expression.coefficient == 0 for expression in self.expressions):  # TODO: check if needed
+            if all(expression.coefficient == 0 for expression in self._expressions):  # TODO: check if needed
                 self.expressions = [mono.Mono(0)]
             self.simplify()
             return self

@@ -1,3 +1,13 @@
+import random
+import string
+
+from .pdfexercise import PDFExercise
+from ..algebra.poly import Poly
+from ..equations.linear_equation import LinearEquation
+from ..equations.generate import random_linear, random_polynomial, random_linear_system
+from ..auxiliary import round_decimal
+from ..equations.auxiliary import format_coefficient, format_free_number
+
 class PDFCalculusExercise(PDFExercise):
     def __init__(self, exercise, dtype, solution=None, lang="en"):
         super(PDFCalculusExercise, self).__init__(
@@ -12,8 +22,6 @@ class PDFAnalyzeFunction(PDFCalculusExercise):
 
 class PDFLinearFunction(PDFAnalyzeFunction):
     def __init__(self, with_solution: bool = True, lang: str = 'en'):
-        if lang != 'en':  # Translate the exercise for other languages if needed!
-            translator = Translator()
         my_linear, solution, coefficients = random_linear(
             get_solution=True, get_coefficients=True)
         random_function = f"f(x) = {my_linear}"
@@ -24,11 +32,6 @@ class PDFLinearFunction(PDFAnalyzeFunction):
             d) What is the derivative of the function?
             e) Sketch the function.
         """
-
-        if lang != 'en':  # Translate the exercise for other languages if needed!
-            translation = translator.translate(exercise, dest=lang)
-            exercise = translation.text
-            print(exercise)
         if with_solution:
             if coefficients[0] > 0:
                 answer_for_c = f"Increasing, because the slope of the function is positive"
@@ -40,9 +43,6 @@ class PDFLinearFunction(PDFAnalyzeFunction):
             d) f'(x) = {coefficients[0]}
             e) Sketch not supported yet!
              """
-            if lang != 'en':
-                translation = translator.translate(solution, dest=lang)
-                solution = translation.text
         else:
             solution = None
 
@@ -107,8 +107,6 @@ class PDFLinearFromPointAndSlope(PDFAnalyzeFunction):
 
 class PDFPolyFunction(PDFAnalyzeFunction):
     def __init__(self, with_solution: bool = True, degree: int = None, lang: str = 'en'):
-        if lang != 'en':  # Translate the exercise for other languages if needed!
-            translator = Translator()
         if degree is None:
             degree = random.randint(2, 5)
         random_poly, solutions = random_polynomial(
@@ -122,10 +120,6 @@ class PDFPolyFunction(PDFAnalyzeFunction):
             e) Find the horizontal asymptotes of the function (if there are any).
             f) sketch the function.
         """
-        if lang != 'en':  # Translate the exercise for other languages if needed!
-            translation = translator.translate(exercise, dest=lang)
-            exercise = translation.text
-            print(exercise)
         if with_solution:
             my_poly = Poly(random_poly)
             data = my_poly.data(no_roots=True)
@@ -142,9 +136,6 @@ class PDFPolyFunction(PDFAnalyzeFunction):
             e. Horizontal Asymptotes: Not Supported yet
             f. Sketch: Not supported yet in this format.
              """
-            if lang != 'en':
-                translation = translator.translate(solution, dest=lang)
-                solution = translation.text
         else:
             solution = None
         super(PDFPolyFunction, self).__init__(
@@ -238,8 +229,6 @@ class PDFPolyEquation(PDFEquationExercise):
 
 
 def linear_from_points_exercise(get_solution=True, variable='x', lang="en"):
-    if lang != 'en':
-        translator = Translator()
     first_point = (random.randint(-15, 15), random.randint(-15, 15))
     second_point = (random.randint(-15, 15), random.randint(-15, 15))
     if first_point[1] == second_point[1]:
@@ -251,9 +240,6 @@ def linear_from_points_exercise(get_solution=True, variable='x', lang="en"):
            b)    Is the function increasing or decreasing?
            c)    Bonus: Sketch the function.
            """
-    if lang != 'en':
-        translation = translator.translate(exercise, dest=lang)
-        exercise = translation.text
     a_str = format_coefficient(round_decimal(a))
     b_str = format_free_number(b)
     if a > 0:
@@ -266,9 +252,6 @@ def linear_from_points_exercise(get_solution=True, variable='x', lang="en"):
         b.    {answer_for_b}
         c. Sketching isn't supported yet
         """
-        if lang != 'en':
-            translation = translator.translate(solution, dest=lang)
-            solution = translation.text
 
         return exercise, solution
 
@@ -276,8 +259,6 @@ def linear_from_points_exercise(get_solution=True, variable='x', lang="en"):
 
 
 def linearFromPointAndSlope_exercise(get_solution=True, variable='x', lang="en"):
-    if lang != 'en':
-        translator = Translator()
     my_point = (random.randint(-15, 15), random.randint(-15, 15))
     my_slope = random.randint(-15, 15)
     while my_slope == 0:
@@ -288,9 +269,6 @@ def linearFromPointAndSlope_exercise(get_solution=True, variable='x', lang="en")
            b)    Find where the function intersects with the x axis.
            c)    Bonus: Sketch the function.
            """
-    if lang != 'en':
-        translation = translator.translate(exercise, dest=lang)
-        exercise = translation.text
     a_str = format_coefficient(my_slope)
     b_str = format_free_number(my_point[1] - my_slope * my_point[0])
     if get_solution:
@@ -298,9 +276,6 @@ def linearFromPointAndSlope_exercise(get_solution=True, variable='x', lang="en")
         b.  {round_decimal(-my_point[1] / my_slope), 0}
         c. Sketching isn't supported yet
         """
-        if lang != 'en':
-            translation = translator.translate(solution, dest=lang)
-            solution = translation.text
 
         return exercise, solution
 
@@ -312,8 +287,6 @@ def linear_intersection_exercise(get_solution=True, variable='x', lang='en'):
 
 
 def linear_system_exercise(variables, get_solution=True, digits_after: int = 0, lang='en'):
-    if lang != 'en':
-        translator = Translator()
     if get_solution:
         equations, solutions = random_linear_system(
             variables, get_solutions=get_solution, digits_after=digits_after)
@@ -323,8 +296,6 @@ def linear_system_exercise(variables, get_solution=True, digits_after: int = 0, 
 
     exercise = """Solve the system of equations:\n""" + \
         "\n".join(f"     {equation}" for equation in equations)
-    if lang != 'en':
-        exercise = translator.translate(exercise, dest=lang).text
 
     if get_solution:
         solution = ", ".join(

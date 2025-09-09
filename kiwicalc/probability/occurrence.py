@@ -1,3 +1,5 @@
+import warnings
+
 class Occurrence:
     def __init__(self, chance: float = 1, identifier: str = ""):
         self._chance = chance

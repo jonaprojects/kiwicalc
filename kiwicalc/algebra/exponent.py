@@ -1,7 +1,14 @@
+import warnings
 from typing import Union, Optional
+
 from .IExpression import IExpression
 from .mono import Mono
 from .expression_sum import ExpressionSum
+from .fraction import Fraction
+from .expression_mul import ExpressionMul
+from ..auxiliary import create_from_dict
+from ..global_functions import ln
+from ..string_analysis import apply_parenthesis
 
 class Exponent(IExpression):
     """

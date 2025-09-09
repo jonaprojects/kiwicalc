@@ -1,3 +1,6 @@
+from typing import Union
+from .sequence import Sequence
+
 class ArithmeticProg(Sequence):
     """A class for representing arithmetic progressions. for instance: 2, 4, 6, 8, 10 ..."""
 

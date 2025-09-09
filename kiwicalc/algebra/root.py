@@ -1,9 +1,13 @@
+import warnings
 from typing import Union, Optional, Tuple
 from .IExpression import IExpression
 from ..plotting.models import IPlottable, IScatterable
 from .mono import Mono
 from .fraction import Fraction
 from ..auxiliary import process_object, create_from_dict
+from .expression_sum import ExpressionSum
+from .expression_mul import ExpressionMul
+from .log.log import Log
 
 class Root(IExpression, IPlottable, IScatterable):
     __slots__ = ['_coefficient', '_inside', '_root']

@@ -1,3 +1,15 @@
+from math import log, e
+from typing import Union, List, Set, Iterable
+
+from ..IExpression import IExpression
+from ...plotting.models import IPlottable, IScatterable
+from ..mono import Mono
+from ..poly import Poly
+from ..expression_sum import ExpressionSum
+from ..fraction import Fraction
+from ...auxiliary import create, create_from_dict, round_decimal
+from ...equations.auxiliary import format_coefficient
+
 class Log(IExpression, IPlottable, IScatterable):
     __slots__ = ['_coefficient', '_expressions']
 

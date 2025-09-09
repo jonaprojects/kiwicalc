@@ -1,5 +1,28 @@
-from matplotlib import pyplot as plt
+import math
+import cmath
 import warnings
+from typing import Union, Callable, Iterable, List, Tuple, Optional
+from itertools import cycle, combinations
+import numpy as np
+from matplotlib import pyplot as plt
+
+from ..algebra.IExpression import IExpression
+from ..algebra.mono import Mono
+from ..algebra.poly import Poly
+from ..algebra.var import Var
+from ..functions.function import Function
+from ..auxiliary import round_decimal, clean_spaces, to_lambda, is_lambda, contains_from_list, extract_variables_from_expression, values_in_range, decimal_range
+from .auxiliary import format_matplot, format_matplot_polynomial, format_matplot_function
+
+# Math functions
+sqrt = math.sqrt
+sin = math.sin
+cos = math.cos
+tan = math.tan
+log = math.log
+exp = math.exp
+abs = abs
+ceil = math.ceil
 
 
 def create_grid():

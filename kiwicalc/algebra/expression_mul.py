@@ -3,6 +3,8 @@ from .IExpression import IExpression
 from ..plotting.models import IPlottable, IScatterable
 from .mono import Mono
 from .expression_sum import ExpressionSum
+from .fraction import Fraction
+from .exponent import Exponent
 
 class ExpressionMul(IExpression, IPlottable, IScatterable):
     __slots__ = ['_coefficient', '_expressions']

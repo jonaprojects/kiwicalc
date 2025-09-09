@@ -1,3 +1,22 @@
+import math
+import cmath
+import warnings
+from typing import Union, Iterable, Tuple
+import matplotlib.pyplot as plt
+
+from ...algebra.IExpression import IExpression
+from ...algebra.mono import Mono
+from ...algebra.var import Var
+from ...algebra.root import Sqrt, Abs
+from ...equations.auxiliary import solve_poly_system
+from .point import Point
+from ..models import IPlottable
+from ...auxiliary import _format_minus
+
+# Math constants and functions
+pi = math.pi
+sqrt = math.sqrt
+
 class Circle(IPlottable):
     def __init__(self, radius: Union[float, int, IExpression],
                  center: Union[Iterable[Union[int, float, IExpression]], Point] = (

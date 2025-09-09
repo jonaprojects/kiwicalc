@@ -1,3 +1,15 @@
+from math import gamma
+from typing import Union, Optional
+
+from .IExpression import IExpression
+from ..plotting.models import IPlottable, IScatterable
+from .mono import Mono
+from .expression_sum import ExpressionSum
+from .fraction import Fraction
+from ..auxiliary import create_from_dict
+from ..equations.auxiliary import format_coefficient
+from ..global_functions import factorial
+
 class Factorial(IExpression, IPlottable, IScatterable):
     __slots__ = ['_coefficient', '_expression', '_power']
 

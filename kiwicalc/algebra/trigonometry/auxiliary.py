@@ -1,3 +1,9 @@
+from typing import Callable
+
+from ...algebra.constants import TRIGONOMETRY_CONSTANTS
+from ...auxiliary import round_decimal
+from ...string_analysis import is_evaluatable, split_expression
+
 def handle_trigo_calculation(expression: str):
     """ getting the result of a single trigonometric operation, e.g : sin(90) -> 1"""
     selected_operation = [

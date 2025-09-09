@@ -1,3 +1,9 @@
+from typing import Union
+from .sequence import Sequence
+from ..plotting.models import IPlottable
+from math import log
+
+
 class GeometricSeq(Sequence, IPlottable):
     """
     A class that represents a geometric sequence, namely, a sequence in which every item can be

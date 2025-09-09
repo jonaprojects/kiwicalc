@@ -1,8 +1,23 @@
+import json
+from collections import Counter
+from typing import Union, Optional, Iterable, TYPE_CHECKING
+
 from .IExpression import IExpression
-from typing import Union, Optional, Iterable
 from ..plotting.models import IPlottable, IScatterable
 from .poly import Poly
-from ..auxiliary import mono_from_str
+from ..auxiliary import mono_from_str, round_decimal
+from ..equations.auxiliary import format_coefficient
+from ..algebra.auxiliary import fetch_variable, fetch_power
+from ..string_analysis import to_lambda
+
+if TYPE_CHECKING:
+    from .expression_sum import ExpressionSum
+    from .expression_mul import ExpressionMul
+    from .fraction import Fraction
+    from .poly_fraction import PolyFraction
+    from .exponent import Exponent
+    from .var import Var
+    from ..functions.function import Function
 
 
 class Mono(IExpression, IPlottable, IScatterable):

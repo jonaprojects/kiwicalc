@@ -1,3 +1,15 @@
+import math
+import warnings
+from typing import Union, Iterable
+
+from .point import Point2D
+from ..models import IPlottable
+from ...equations.auxiliary import format_coefficient, format_free_number
+from ...plotting.plot import plot_function, scatter_function
+
+# Math functions
+sqrt = math.sqrt
+
 class Line2D(IPlottable):
     def __init__(self, point1: Union[Point2D, Iterable], point2: Union[Point2D, Iterable], gen_copies=True):
         if isinstance(point1, Point2D):

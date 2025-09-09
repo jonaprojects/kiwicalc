@@ -1,8 +1,11 @@
-from typing import Union, Optional, Iterable
+import warnings
+from typing import Union, Optional, Iterable, List
 from .IExpression import IExpression
 from ..plotting.models import IPlottable, IScatterable
 from .mono import Mono
 from .poly import Poly
+from .fraction import Fraction
+from .trigonometry.trigoexprs import TrigoExprs
 from ..auxiliary import copy_expression
 
 class ExpressionSum(IExpression, IPlottable, IScatterable):

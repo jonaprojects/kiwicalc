@@ -1,3 +1,13 @@
+import re
+import numpy as np
+from typing import Union, Optional, Iterable
+
+from .algebra.IExpression import IExpression
+from .algebra.mono import Mono
+from .auxiliary import create
+from .operators.operator import GREATER_THAN, GREATER_OR_EQUAL, LESS_THAN, LESS_OR_EQUAL
+from .functions.function import Function
+
 class Range:
     __slots__ = ['__expression', '__minimum',
                  '__maximum', '__min_operator', '__max_operator']
@@ -288,4 +298,4 @@ class RangeAND(RangeCollection):
             self._ranges)
 
     def __copy__(self):
-        return RangeOR(self._ranges, copy=True)
+        return RangeAND(self._ranges, copy=True)

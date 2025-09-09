@@ -1,8 +1,28 @@
 from math import floor, ceil
+from typing import Callable
+from functools import reduce
+from contextlib import contextmanager
 
 """
 Auxiliary methods for different parts of the library
 """
+
+# Import classes needed for create() and create_from_dict() functions
+from .algebra.poly import Poly
+from .algebra.mono import Mono
+from .algebra.IExpression import IExpression
+from .algebra.fraction import Fraction
+from .algebra.fastpoly import FastPoly
+from .algebra.exponent import Exponent
+from .algebra.expression_sum import ExpressionSum
+from .algebra.abs import Abs
+from .algebra.root import Root
+from .algebra.factorial import Factorial
+from .algebra.log.log import Log
+from .algebra.log.log import Ln
+from .algebra.trigonometry.trigoexprs import TrigoExprs
+from .algebra.trigonometry.trigoexpr import TrigoExpr
+from .algebra.auxiliary import split_expression
 
 
 def decimal_range(start: float, stop: float, step: float = 1):

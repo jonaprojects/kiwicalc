@@ -1,3 +1,8 @@
+from typing import Iterable
+from .sequence import Sequence
+from ..string_analysis import to_lambda
+from ..constants import TRIGONOMETRY_CONSTANTS, MATHEMATICAL_CONSTANTS
+from ..string_analysis import ptn
 
 
 class RecursiveSeq(Sequence):

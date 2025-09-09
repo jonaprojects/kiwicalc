@@ -1,3 +1,16 @@
+import math
+from typing import Iterable, Union, List, Tuple
+from itertools import combinations
+import matplotlib.pyplot as plt
+import numpy as np
+
+from .point import Point, Point2D, Point3D, Point4D
+from ..models import IPlottable, IScatterable
+from ...machine_learning.linear_regression import linear_regression
+
+# Math functions
+sqrt = math.sqrt
+
 class PointCollection:
     def __init__(self, points: Iterable = ()):
         self._points = []

@@ -1,3 +1,9 @@
+from abc import ABC, abstractmethod
+from functools import reduce
+import warnings
+import matplotlib.pyplot as plt
+
+
 class Sequence(ABC):
 
     @property

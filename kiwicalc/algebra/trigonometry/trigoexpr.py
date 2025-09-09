@@ -1,13 +1,23 @@
+import warnings
+from math import pi
 from typing import Union, Optional, Iterable, List, Iterator, Any, Tuple
+
 from ..IExpression import IExpression
 from ...plotting.models import IPlottable, IScatterable
 from ..mono import Mono
 from ..poly import Poly
 from ..var import Var
-from ...auxiliary import TrigoExpr_from_str
+from ...auxiliary import TrigoExpr_from_str, copy_expression, create_from_dict, round_decimal
 from .trigomethods import TrigoMethods
 from .trigoexprs import TrigoExprs
 from ..expression_sum import ExpressionSum
+from ..fraction import Fraction
+from ..expression_mul import ExpressionMul
+from ..root import Root
+from .trigo import Sin, Cos, Tan, Cot, Sec, Csc
+from ...plotting.plot import plot_function, plot_function_3d
+from ...numerical.numerical import newton_raphson
+from .trigo_str_analysis import _TrigoMethodFromString
 
 class TrigoExpr(IExpression, IPlottable, IScatterable):
     """ This class represents a single trigonometric expression, such as 3sin(2x)cos(x) for example. """

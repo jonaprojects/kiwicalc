@@ -1,3 +1,13 @@
+import os
+import warnings
+from typing import Iterable
+
+from .pdfpage import PDFPage
+from reportlab.pdfgen.canvas import Canvas
+from reportlab.lib.units import cm
+from reportlab.lib import utils
+from reportlab.platypus import Image
+
 class PDFWorksheet:
     __slots__ = ['__pages', '__ordered', '__current_page',
                  '__lines', '__title', '__num_of_exercises']
@@ -123,20 +133,25 @@ def worksheet(path: str = None, dtype='linear', num_of_pages: int = 1, equations
     if path is None:
         path = generate_pdf_path()
     if dtype == 'linear':
+        from ..equations.linear_equation import LinearEquation
         LinearEquation.random_worksheets(path=path, num_of_pages=num_of_pages, equations_per_page=equations_per_page,
                                          after_point=digits_after, get_solutions=get_solutions, titles=titles)
 
     elif dtype == 'quadratic':
+        from ..equations.quadratic_equation import QuadraticEquation
         QuadraticEquation.random_worksheets(path=path, num_of_pages=num_of_pages, equations_per_page=equations_per_page,
                                             digits_after=digits_after, get_solutions=get_solutions, titles=titles)
     elif dtype == 'cubic':
+        from ..equations.cubic_equation import CubicEquation
         CubicEquation.random_worksheets(path=path, num_of_pages=num_of_pages, equations_per_page=equations_per_page,
                                         digits_after=digits_after, get_solutions=get_solutions, titles=titles)
     elif dtype == 'quartic':
+        from ..equations.quartic_equation import QuarticEquation
         QuarticEquation.random_worksheets(path=path, num_of_pages=num_of_pages, equations_per_page=equations_per_page,
                                           digits_after=digits_after, get_solutions=get_solutions, titles=titles)
 
     elif dtype == 'polynomial':
+        from ..equations.poly_equation import PolyEquation
         PolyEquation.random_worksheets(path=path, titles=titles, equations_per_page=equations_per_page,
                                        num_of_pages=num_of_pages, digits_after=digits_after,
                                        get_solutions=get_solutions)

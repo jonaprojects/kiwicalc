@@ -1,3 +1,15 @@
+import math
+from typing import Union, Iterable
+from functools import reduce
+import matplotlib.pyplot as plt
+
+from ...algebra.IExpression import IExpression
+from ..models import IPlottable
+from .point_collection import PointCollection
+
+# Math functions
+sqrt = math.sqrt
+
 class Point:
     def __init__(self, coordinates: Union[Iterable, int, float]):
         if isinstance(coordinates, Iterable):

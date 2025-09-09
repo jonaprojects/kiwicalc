@@ -1,4 +1,6 @@
 import warnings
+import numpy as np
+
 from ..auxiliary import (
     format_coefficient, format_free_number, get_equation_variables, 
     extract_coefficient, clean_spaces, round_decimal, split_expression

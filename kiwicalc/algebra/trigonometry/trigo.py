@@ -1,7 +1,7 @@
 from .trigoexpr import TrigoExpr
 from ...auxiliary import conversion_wrapper 
 from .trigomethods import TrigoMethods
-
+from ...algebra.fraction import Fraction
 
 class Sin(TrigoExpr):
     def __init__(self, expression, dtype='poly'):

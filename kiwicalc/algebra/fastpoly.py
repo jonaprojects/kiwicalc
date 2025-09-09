@@ -1,7 +1,18 @@
+import warnings
+import json
 from typing import Union, Optional, Iterable
+
 from .IExpression import IExpression
 from ..plotting.models import IPlottable
 from ..auxiliary import ParseExpression, derivative
+from .expression_sum import ExpressionSum
+from ..calculus.calculus import integral
+from ..numerical.numerical import newton_raphson, halleys_method
+from ..algebra.auxiliary import add_or_sub_coefficients
+from ..equations.solve import solve_polynomial
+from ..plotting.models import Point2D, PointCollection
+from ..string_analysis import to_lambda
+from ..plotting.plot import plot_function, plot_function_3d
 
 class FastPoly(IExpression, IPlottable):
     __slots__ = ['__variables', '__variables_dict']

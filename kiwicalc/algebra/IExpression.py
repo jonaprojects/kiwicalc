@@ -2,12 +2,8 @@ from abc import ABC, abstractmethod
 from typing import Union, Optional
 import json
 
-# Import functions from auxiliary to avoid circular imports
-from ..auxiliary import (
-    formatted_expression, to_lambda, reinman, trapz, simpson, 
-    secant_method, bisection_method, plot_function, plot_function_3d,
-    scatter_function, scatter_function_3d
-)
+# Note: Removed imports from auxiliary to avoid circular imports
+# These functions should be imported locally where needed
 
 class IExpression(ABC):
 
@@ -115,28 +111,35 @@ class IExpression(ABC):
         return Exponent(other, self)
 
     def python_syntax(self, format_abs=True, format_factorial=True):
+        from ..auxiliary import formatted_expression
         return formatted_expression(self.__str__(), variables=self.variables, format_abs=format_abs,
                                     format_factorial=format_factorial)
 
     def to_lambda(self, variables=None, constants=tuple(), format_abs=True, format_factorial=True):
+        from ..auxiliary import to_lambda
         if variables is None:
             variables = self.variables
         return to_lambda(self.python_syntax(), variables, constants, format_abs=format_abs,
                          format_factorial=format_factorial)
 
     def reinman(self, a: float, b: float, N: int):
+        from ..auxiliary import reinman
         return reinman(self.to_lambda(), a, b, N)
 
     def trapz(self, a: float, b: float, N: int):
+        from ..auxiliary import trapz
         return trapz(self.to_lambda(), a, b, N)
 
     def simpson(self, a: float, b: float, N: int):
+        from ..auxiliary import simpson
         return simpson(self.to_lambda(), a, b, N)
 
     def secant(self, n_0: float, n_1: float, epsilon: float = 0.00001, nmax: int = 10_000):
+        from ..auxiliary import secant_method
         return secant_method(self.to_lambda(), n_0, n_1, epsilon, nmax)
 
     def bisection(self, a: float, b: float, epsilon: float = 0.00001, nmax=100000):
+        from ..auxiliary import bisection_method
         return bisection_method(self.to_lambda(), a, b, epsilon, nmax)
 
     def plot(self, start: float = -6, stop: float = 6, step: float = 0.3, ymin: float = -10,
@@ -145,11 +148,13 @@ class IExpression(ABC):
         variables = self.variables
         num_of_variables = len(variables)
         if num_of_variables == 1:
+            from ..plotting.plot import plot_function
             plot_function(self.to_lambda(),
                           start=start, stop=stop, step=step, ymin=ymin, ymax=ymax, title=title,
                           show_axis=show_axis, show=show, fig=fig, formatText=formatText, ax=ax,
                           values=values)
         elif num_of_variables == 2:
+            from ..plotting.plot import plot_function_3d
             plot_function_3d(given_function=self.to_lambda(),
                              start=start, stop=stop, meshgrid=meshgrid)
         else:
@@ -167,9 +172,11 @@ class IExpression(ABC):
         if num_of_variables == 0:  # TODO: plot this in a number axis
             raise ValueError("Cannot plot a polynomial with 0 variables_dict")
         elif num_of_variables == 1:
+            from ..plotting.plot import scatter_function
             scatter_function(lambda_expression, start=start, stop=stop, step=step, ymin=ymin, ymax=ymax,
                              show_axis=show_axis, show=show, fig=fig, ax=ax, values=values, title=title)
         elif num_of_variables == 2:
+            from ..plotting.plot import scatter_function_3d
             scatter_function_3d(lambda_expression, start=start, stop=stop, step=step,
                                 title=title)  # TODO: update the parameters
         else:

@@ -1,13 +1,17 @@
-from typing import Optional, Tuple
+import operator
+from typing import Optional, Tuple, Union, List, TYPE_CHECKING
+
+from ...auxiliary import create
+from ...algebra.IExpression import IExpression
 from ..auxiliary import extract_coefficient
 from ..trigonometry.trigo import TrigoExpr
 from ..trigonometry.trigomethods import TrigoMethods
-from ..trigonometry.trigoexpr import TrigoExpr
-from ..trigonometry.trigo_str_analysis import TrigoExpr_from_str
-from ..trigonometry.trigo_str_analysis import TrigoExprs_from_str
-from ..trigonometry.trigo_str_analysis import _TrigoMethodFromString
-from ..trigonometry.trigo_str_analysis import analyze_single_trigo
-from ..trigonometry.trigo_str_analysis import __helper_trigo 
+from ...algebra.poly import Poly
+from ...algebra.auxiliary import is_number, split_expression
+
+if TYPE_CHECKING:
+    from ..trigonometry.trigoexprs import TrigoExprs
+
 
 def __helper_trigo(expression: str) -> Optional[Tuple[int, Optional[float]]]:
     try:
@@ -93,6 +97,8 @@ def TrigoExprs_from_str(trigo_expression: str, get_list=False):
         expression) for expression in trigo_expressions]
     if get_list:
         return new_expressions
+    # Import here to avoid circular import
+    from ..trigonometry.trigoexprs import TrigoExprs
     return TrigoExprs(new_expressions)
 
 

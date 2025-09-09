@@ -1,10 +1,10 @@
 from abc import abstractmethod, ABC
 from matplotlib import pyplot as plt
-from plot import draw_axis, scatter_functions_3d, plot_functions_3d, create_grid
+from .plot import draw_axis, scatter_functions_3d, plot_functions_3d, create_grid
 from typing import Iterable, Union, Callable
-from models import *
-from auxiliary import decimal_range
-from ..algebra.models.IExpression import IExpression
+from .models import *
+from ..auxiliary import decimal_range
+from ..algebra.IExpression import IExpression
 
 
 class Graph:

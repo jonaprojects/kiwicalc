@@ -3,6 +3,7 @@ from .IExpression import IExpression
 from .mono import Mono
 from .expression_sum import ExpressionSum
 from ..auxiliary import create_from_dict
+from .exponent import Exponent
 
 # Does everything that inherit from IExpression will be accepted here ?
 class Fraction(IExpression):

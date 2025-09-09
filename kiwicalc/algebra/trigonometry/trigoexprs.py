@@ -1,3 +1,4 @@
+from math import comb
 from typing import Union, Iterable, Optional 
 from .trigo_str_analysis import TrigoExprs_from_str
 from ...string_analysis import to_lambda
@@ -7,7 +8,9 @@ from .trigoexpr import TrigoExpr
 from ..mono import Mono
 from .. import fraction as fr
 from ..auxiliary import create, equal_ignore_order
-from ..plotting.models import IPlottable, IScatterable
+from ...plotting.models import IPlottable, IScatterable
+from ..exponent import Exponent
+from ...plotting.plot import plot_function, plot_function_3d
 
 class TrigoExprs(ExpressionSum, IPlottable, IScatterable):
 
