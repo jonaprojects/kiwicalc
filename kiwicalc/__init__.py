@@ -29,7 +29,7 @@ from .algebra.IExpression import IExpression
 # Basic algebraic classes
 from .algebra.mono import Mono
 from .algebra.poly import Poly
-from .algebra.var import Var
+from .algebra.mono import Var
 from .algebra.fraction import Fraction
 from .algebra.root import Root, Sqrt
 from .algebra.exponent import Exponent

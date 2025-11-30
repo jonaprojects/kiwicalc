@@ -10,10 +10,10 @@ from math import comb
 # kiwicalc imports
 from .IExpression import IExpression
 from ..plotting.models import IPlottable
-from . import mono
-from . import var
-from ..plotting.plot import plot_function, plot_function_3d 
-from ..numerical.numerical import * 
+# mono imported locally to avoid circular imports
+# Var is now defined in mono.py to avoid circular imports
+# plot_function and plot_function_3d imported locally to avoid circular imports 
+# numerical functions imported locally to avoid circular imports 
 from ..string_analysis import to_lambda 
 from .algebra_string_analysis import poly_from_str
 from ..algebra.auxiliary import sorted_expressions, max_power, fetch_power, fetch_variable
@@ -24,6 +24,7 @@ from ..range import Range, RangeOR, LESS_THAN
 from reportlab.pdfgen.canvas import Canvas
 from reportlab.lib.units import cm
 import matplotlib.pyplot as plt
+from . import mono
 
 if TYPE_CHECKING:
     from .expression_sum import ExpressionSum
@@ -41,13 +42,14 @@ class Poly(IExpression, IPlottable):
     __slots__ = ['_expressions', '__loop_index']
 
     def __init__(self, expressions):
+        from . import mono
         self.__loop_index = 0
         if isinstance(expressions, str):
             self._expressions: List[mono.Mono] = poly_from_str(
                 expressions, get_list=True)
             self.simplify()
         elif isinstance(expressions, (int, float)):
-            self._expressions = [mono(expressions)]
+            self._expressions = [mono.Mono(expressions)]
         elif isinstance(expressions, mono.Mono):
             self._expressions = [expressions.__copy__()]
         elif isinstance(expressions, Iterable):
@@ -89,10 +91,11 @@ class Poly(IExpression, IPlottable):
         self._expressions = expressions
 
     def __iadd__(self, other: Union[IExpression, int, float, str]):
+        from . import mono
         if other == 0:
             return self
         if isinstance(other, (int, float)):
-            self.__add_mono.Monomial(mono.Mono(other))
+            self.__add_monomial(mono.Mono(other))
             if all(expression.coefficient == 0 for expression in self.expressions):
                 self.expressions = [mono.Mono(0)]
             self.simplify()
@@ -100,8 +103,8 @@ class Poly(IExpression, IPlottable):
 
         elif isinstance(other, str):
             expressions = poly_from_str(other, get_list=True)
-            for mono.Mono_expression in expressions:
-                self.__add_monomial(mono.Mono_expression)
+            for mono_expression in expressions:
+                self.__add_monomial(mono_expression)
             if all(expression.coefficient == 0 for expression in self.expressions):
                 self.expressions = [mono.Mono(0)]
             self.simplify()
@@ -117,7 +120,7 @@ class Poly(IExpression, IPlottable):
             if isinstance(other, mono.Mono):
                 self.__add_monomial(other)
                 if all(expression.coefficient == 0 for expression in self.expressions):
-                    self.expressions = [Mono(0)]
+                    self.expressions = [mono.Mono(0)]
                 self.simplify()
                 return self
 
@@ -135,7 +138,7 @@ class Poly(IExpression, IPlottable):
                 f"__add__ : invalid type '{type(other)}'. Allowed types: str, Mono, Poly, int, or float"
             )
 
-    def __add_monomial(self, other: mono.Mono) -> None:
+    def __add_monomial(self, other) -> None:
         self.__filter_zeroes()
         for index, expression in enumerate(self.expressions):
             if expression.variables_dict == other.variables_dict or (not expression.variables and not other.variables):
@@ -144,7 +147,7 @@ class Poly(IExpression, IPlottable):
                 return
         self._expressions.append(other)
 
-    def __sub_monomial(self, other: mono.Mono) -> None:
+    def __sub_monomial(self, other) -> None:
         self.__filter_zeroes()
         for index, expression in enumerate(self._expressions):
             if expression.variables_dict == other.variables_dict or (not expression.variables and not other.variables):
@@ -155,6 +158,7 @@ class Poly(IExpression, IPlottable):
         self.expressions.append(-other)
 
     def __rsub__(self, other: Union[int, float, str, IExpression]):
+        from . import mono
         if isinstance(other, (int, float, str)):
             other = Poly(other)
 
@@ -170,6 +174,7 @@ class Poly(IExpression, IPlottable):
                 f"Poly.__rsub__: Expected types int,float,str,Mono,Poly, but got {type(other)}")
 
     def __isub__(self, other: Union[int, float, IExpression, str]):
+        from . import mono
         if isinstance(other, (int, float)):
             self.__sub_monomial(mono.Mono(other))
             if all(expression.coefficient == 0 for expression in self._expressions):  # TODO: check if needed
@@ -204,7 +209,7 @@ class Poly(IExpression, IPlottable):
                 for mono_expression in other._expressions:
                     self.__sub_monomial(mono_expression)
                 if all(expression.coefficient == 0 for expression in self._expressions):
-                    self.expressions = [Mono(0)]
+                    self.expressions = [mono.Mono(0)]
                 self.simplify()
                 return self
             else:  # If it's just a random IExpression expression
@@ -218,6 +223,7 @@ class Poly(IExpression, IPlottable):
 
     # TODO: try to make it more efficient ..
     def __imul__(self, other: Union[int, float, IExpression]):
+        from . import mono
         if other == 0:
             return mono.Mono(coefficient=0)
         if isinstance(other, (int, float)):
@@ -283,7 +289,8 @@ class Poly(IExpression, IPlottable):
             mono_expression.divide_by_number(number)
         return self
 
-    def divide_by_poly(self, other: "Union[Mono, Poly]", get_remainder=False, nmax=1000):
+    def divide_by_poly(self, other, get_remainder=False, nmax=1000):
+        from . import mono
         # TODO: fix this method ....
         if isinstance(other, Poly) and len(other.expressions) == 1:
             # If the polynomial contains only one monomial, turn it to Mono
@@ -356,6 +363,7 @@ class Poly(IExpression, IPlottable):
             return PolyFraction(self, other)
 
     def __itruediv__(self, other: Union[int, float, IExpression], get_remainder=False):
+        from . import mono
         my_evaluation = self.try_evaluate()
         if isinstance(other, (int, float)):
             if other == 0:
@@ -397,6 +405,7 @@ class Poly(IExpression, IPlottable):
 
     def __calc_binomial(self, power: int):
         """Internal method for using the newton's binomial in order to speed up calculations in the form (a+b)^2"""
+        from . import mono
         expressions = []
         first, second = self._expressions[0], self._expressions[1]
         if_number1, if_number2 = first.variables_dict is None, second.variables_dict is None
@@ -421,6 +430,7 @@ class Poly(IExpression, IPlottable):
         return Poly(expressions)
 
     def __pow__(self, power: Union[int, float, IExpression, str], modulo=None):
+        from . import mono
         if isinstance(power, float):  # Power by float is not supported yet ...
             power = int(power)
         if not isinstance(power, int):
@@ -582,7 +592,7 @@ class Poly(IExpression, IPlottable):
         result = Poly([expression.integral()
                       for expression in self.expressions])
         if add_c:
-            c = var.Var('c')
+            c = mono.Var('c')
             result += c
         return result
 
@@ -709,7 +719,7 @@ class Poly(IExpression, IPlottable):
         return self.__up_and_down(extremums_axes, my_derivative)
 
     def __up_and_down(self, extremums_axes, my_derivative=None):
-        x = var.Var('x')
+        x = mono.Var('x')
         coefficients = self.coefficients()
         num_of_coefficients: int = len(coefficients)
         if num_of_coefficients == 1:  # free number
@@ -857,6 +867,8 @@ class Poly(IExpression, IPlottable):
         print(self.get_report())
 
     def export_report(self, path: str, delete_image=True):
+        from ..plotting.plot import plot_function, plot_function_3d
+        
         c = Canvas(path)
         c.setFont('Helvetica-Bold', 22)
 
@@ -888,12 +900,16 @@ class Poly(IExpression, IPlottable):
         c.save()
 
     def durand_kerner(self):
+        from ..numerical.numerical import durand_kerner
         return durand_kerner(self.to_lambda(), self.coefficients())
 
     def ostrowski(self, initial_value: float, epsilon=0.00001, nmax=10_000):
+        from ..numerical.numerical import ostrowski_method
         return ostrowski_method(self.to_lambda(), self.derivative().to_lambda(), initial_value, epsilon, nmax)
 
     def laguerres(self, x0: float, epsilon=0.00001, nmax=100000):
+        from ..numerical.numerical import laguerre_method
+        
         my_derivative = self.derivative()
         second_derivative = self.derivative().to_lambda()
         return laguerre_method(self.to_lambda(), my_derivative.to_lambda(), second_derivative, x0, epsilon, nmax)
@@ -906,6 +922,8 @@ class Poly(IExpression, IPlottable):
         :param epsilon:
         :return:
         """
+        from ..numerical.numerical import halleys_method
+        
         f_0 = self
         f_1 = f_0.derivative()
         f_2 = f_1.derivative()
@@ -916,6 +934,7 @@ class Poly(IExpression, IPlottable):
         return halleys_method(f_0, f_1, f_2, initial_value, epsilon, nmax)
 
     def newton(self, initial_value=0, epsilon=0.00001, nmax=10_000):
+        from ..numerical.numerical import newton_raphson
         return newton_raphson(self.to_lambda(), self.derivative().to_lambda(), initial_value, epsilon, nmax)
 
     def __str__(self):
@@ -986,7 +1005,7 @@ class Poly(IExpression, IPlottable):
                     same_variable.coefficient for same_variable in same_variables)
                 if coefficients_sum != 0:
                     new_expressions.append(
-                        Mono(coefficient=coefficients_sum, variables_dict=same_variables[0].variables_dict))
+                        mono.Mono(coefficient=coefficients_sum, variables_dict=same_variables[0].variables_dict))
             elif len(same_variables) == 1:
                 if same_variables[0].coefficient != 0:
                     new_expressions.append(same_variables[0])
@@ -1003,7 +1022,7 @@ class Poly(IExpression, IPlottable):
         free_number = sum(
             expression.coefficient for expression in self._expressions if expression.variables_dict in (None, {}))
         if free_number != 0:  # No reason to add a trailing zero
-            sorted_exprs.append(Mono(free_number))
+            sorted_exprs.append(mono.Mono(free_number))
         return sorted_exprs
 
     def sort(self):
@@ -1044,9 +1063,9 @@ class Poly(IExpression, IPlottable):
         :return:
         """
         if isinstance(item, (int, float, str)):
-            item = Mono(item)
+            item = mono.Mono(item)
 
-        if isinstance(item, Mono):
+        if isinstance(item, mono.Mono):
             return item in self._expressions
         elif isinstance(item, Poly):
             # Meaning it's smaller and thus can't contain the items
@@ -1068,6 +1087,8 @@ class Poly(IExpression, IPlottable):
     def plot(self, start: float = -10, stop: float = 10,
              step: float = 0.01, ymin: float = -10, ymax: float = 10, text=None, show_axis=True, show=True,
              fig=None, ax=None, formatText=True, values=None):
+        from ..plotting.plot import plot_function, plot_function_3d
+        
         lambda_expression = self.to_lambda()
         num_of_variables = self.num_of_variables
         if text is None:
@@ -1086,6 +1107,7 @@ class Poly(IExpression, IPlottable):
                 "Cannot plot a function with more than two variables_dict (As for this version)")
 
     def to_Function(self):
+        from ..functions.function import Function
         return Function(self.__str__())
 
     def gcd(self):
@@ -1094,8 +1116,8 @@ class Poly(IExpression, IPlottable):
         gcd_coefficient = gcd(self.coefficients())
         # If there's a free number
         if any(not expression.variables_dict for expression in self._expressions):
-            return Mono(gcd_coefficient)
-        gcd_algebraic = Mono(gcd_coefficient)
+            return mono.Mono(gcd_coefficient)
+        gcd_algebraic = mono.Mono(gcd_coefficient)
         my_variables = self.variables
         for variable in my_variables:
             if all(variable in expression.variables_dict for expression in self._expressions):

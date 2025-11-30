@@ -3,10 +3,10 @@ from typing import Union, Optional
 
 from .IExpression import IExpression
 from ..plotting.models import IPlottable, IScatterable
-from .mono import Mono
-from .expression_sum import ExpressionSum
-from .fraction import Fraction
 from ..auxiliary import create_from_dict
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from .fraction import Fraction
 from ..equations.auxiliary import format_coefficient
 from ..global_functions import factorial
 
@@ -14,8 +14,14 @@ class Factorial(IExpression, IPlottable, IScatterable):
     __slots__ = ['_coefficient', '_expression', '_power']
 
     def __init__(self, expression: Optional[Union[IExpression, int, float, str]],
-                 coefficient: Union[IExpression, int, float] = Mono(1),
-                 power: Union[IExpression, int, float] = Mono(1), dtype=''):
+                 coefficient: Union[IExpression, int, float] = None,
+                 power: Union[IExpression, int, float] = None, dtype=''):
+        from .mono import Mono
+        
+        if coefficient is None:
+            coefficient = Mono(1)
+        if power is None:
+            power = Mono(1)
 
         if isinstance(coefficient, (int, float)):
             self._coefficient = Mono(coefficient)
@@ -68,6 +74,9 @@ class Factorial(IExpression, IPlottable, IScatterable):
         return Factorial(expression=expression_obj, power=power_obj, coefficient=coefficient_obj)
 
     def __iadd__(self, other: Union[int, float, IExpression]):
+        from .mono import Mono
+        from .expression_sum import ExpressionSum
+        
         if other == 0:
             return self
         if isinstance(other, (int, float)):
@@ -79,6 +88,9 @@ class Factorial(IExpression, IPlottable, IScatterable):
         return ExpressionSum((self, other))
 
     def __isub__(self, other):
+        from .mono import Mono
+        from .expression_sum import ExpressionSum
+        
         if other == 0:
             return self
         if isinstance(other, (int, float)):
@@ -90,6 +102,9 @@ class Factorial(IExpression, IPlottable, IScatterable):
         return ExpressionSum((self, other))
 
     def __imul__(self, other: Union[IExpression, int, float]):
+        from .mono import Mono
+        from .expression_sum import ExpressionSum
+        
         if self._expression == other - 1:
             self._expression += 1
             return self
@@ -121,6 +136,8 @@ class Factorial(IExpression, IPlottable, IScatterable):
         return self.__copy__().__imul__(other)
 
     def __itruediv__(self, other: Union[IExpression, int, float]) -> "Optional[Union[Fraction,Factorial]]":
+        from .mono import Mono
+        
         if other == 0:
             raise ZeroDivisionError(
                 "Cannot divide a factorial expression by 0")
@@ -166,6 +183,7 @@ class Factorial(IExpression, IPlottable, IScatterable):
                     self.simplify()
 
             else:  # Just a random IExpression - just return a Fraction ..
+                from .fraction import Fraction
                 return Fraction(self, other)
 
         else:
@@ -173,6 +191,9 @@ class Factorial(IExpression, IPlottable, IScatterable):
                 f"Invalid type for dividing factorials: '{type(other)}'")
 
     def __rtruediv__(self, other: Union[int, float, IExpression]):
+        from .mono import Mono
+        from .fraction import Fraction
+        
         my_evaluation = self.try_evaluate()
         if my_evaluation == 0:
             raise ZeroDivisionError("Cannot divide by 0: Tried to divide by a Factorial expression that evaluates"
@@ -195,6 +216,7 @@ class Factorial(IExpression, IPlottable, IScatterable):
         return self.__copy__().__ipow__(power)
 
     def __neg__(self):
+        from .mono import Mono
         if self._expression is None:
             return Factorial(
                 coefficient=self._coefficient.__neg__(),
@@ -245,6 +267,8 @@ class Factorial(IExpression, IPlottable, IScatterable):
 
     def simplify(self):
         """Try to simplify the factorial expression"""
+        from .mono import Mono
+        
         self._coefficient.simplify()
         if self._coefficient == 0:
             self._expression = None

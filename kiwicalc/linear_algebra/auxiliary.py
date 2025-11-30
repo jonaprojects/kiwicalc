@@ -2,12 +2,14 @@
 Auxiliary functions for linear algebra operations
 """
 
-from typing import List, Union, Iterable
-from ..algebra.poly import Poly
-from ..algebra.mono import Mono
+from typing import List, Union, Iterable, TYPE_CHECKING
 from ..algebra.algebra_string_analysis import poly_from_str
 from ..equations.auxiliary import equation_to_one_side
 from .matrices.matrix import Matrix
+
+if TYPE_CHECKING:
+    from ..algebra.poly import Poly
+    from ..algebra.mono import Mono
 
 
 def generate_jacobian(functions, variables):

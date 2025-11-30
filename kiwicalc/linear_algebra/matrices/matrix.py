@@ -1,3 +1,11 @@
+from numpy.linalg import LinAlgError, inv
+from typing import Union, Iterable, List, Tuple, Callable, Any, Iterator, Optional
+from ...auxiliary import copy_expression, round_decimal
+from ...algebra.IExpression import IExpression
+import random
+import numpy as np
+import warnings
+
 class Matrix:
 
     def __init__(self, matrix: Union[list, str, tuple] = None, dimensions=None, copy_elements=False):

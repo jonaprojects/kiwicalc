@@ -7,7 +7,8 @@ from ..mono import Mono
 from ..poly import Poly
 from ..expression_sum import ExpressionSum
 from ..fraction import Fraction
-from ...auxiliary import create, create_from_dict, round_decimal
+from ...auxiliary import create, create_from_dict
+from ...utils import round_decimal
 from ...equations.auxiliary import format_coefficient
 
 class Log(IExpression, IPlottable, IScatterable):

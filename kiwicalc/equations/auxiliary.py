@@ -4,18 +4,17 @@ Auxiliary functions for equation processing and solving
 
 import warnings
 import re
-from typing import Iterable, List, Union, Callable, Tuple
-from ..auxiliary import clean_spaces, round_decimal, synthetic_division
-from ..algebra.mono import Mono
+from typing import Iterable, List, Union, Callable, Tuple, TYPE_CHECKING
+from ..auxiliary import clean_spaces, synthetic_division
+from ..utils import round_decimal
 from ..algebra.IExpression import IExpression
-from ..algebra.poly import Poly
-from ..algebra.fraction import Fraction
-from ..algebra.poly_fraction import PolyFraction
-from ..algebra.fastpoly import solve_polynomial
-from ..algebra.auxiliary import split_expression, extract_coefficient, get_factors
-from traceback import exc_info
+from ..string_analysis import split_expression, extract_coefficient
+from ..auxiliary import get_factors
+from sys import exc_info
 from functools import reduce
 import math
+if TYPE_CHECKING:
+    from ..functions.function import Function
 
 
 def equation_to_function(equation: str, variables: Iterable[str] = None) -> "Function":
@@ -119,6 +118,7 @@ def coefficients_to_expressions(coefficients, variable: str = "x"):
     :param variable: the name of the variable, the default is "x"
     :return: returns a list of polynomials with the corresponding coefficients and powers.
     """
+    from ..algebra.mono import Mono
     return [Mono(coefficient=coef, variables_dict={variable: len(coefficients) - 1 - index}) for index, coef in
             enumerate(coefficients) if coef != 0]
 
@@ -145,6 +145,7 @@ def __find_solutions(coefficients, possible_solutions):
             if copy[i] != 0:
                 break
             del copy[i]
+        from ..algebra.fastpoly import solve_polynomial
         solutions.add(solve_polynomial(copy))
 
     for solution in possible_solutions:
@@ -153,6 +154,7 @@ def __find_solutions(coefficients, possible_solutions):
             continue
         solutions.add(solution)
         if len(division_result) >= 4:
+            from ..algebra.fastpoly import solve_polynomial
             for sol in solve_polynomial(division_result):
                 solutions.add(sol)
         elif len(division_result) == 3:
@@ -160,6 +162,7 @@ def __find_solutions(coefficients, possible_solutions):
             try:
                 # find more solutions. right now, this feature only works on real numbers, and when the highest power
                 # is 3
+                from ..algebra.fastpoly import solve_polynomial
                 values = solve_polynomial(division_result)
                 solutions.add(values[0])
                 solutions.add(values[1])
@@ -295,15 +298,3 @@ def format_free_number(free_number: Union[int, float]):
         return f"{round_decimal(free_number)}"
 
     return f"+{round_decimal(free_number)}"
-
-
-def solve_quadratic_real(a: float, b: float, c: float) -> Union[Tuple[float, float], float, None]:
-    """Returns only the real solutions of the quadratic equation"""
-    if a == 0:
-        return None
-    discriminant = b ** 2 - 4 * a * c
-    if discriminant < 0:
-        return None
-    if discriminant == 0:
-        return (-b + math.sqrt(discriminant)) / (2 * a)
-    return (-b + math.sqrt(discriminant)) / (2 * a), (-b - math.sqrt(discriminant)) / (2 * a)

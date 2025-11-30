@@ -4,9 +4,12 @@ from typing import Union, Tuple, Dict, Optional
 
 
 # kiwicalc imports
-from . import mono
 from ..auxiliary import clean_spaces
 from ..string_analysis import extract_coefficient
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from .mono import Mono
+    from .poly import Poly
 
 # Define allowed_characters if not defined elsewhere
 allowed_characters = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
@@ -32,7 +35,7 @@ def __data_from_single(single_expression: str, variable_name: str) -> Tuple[floa
     return coefficient, {variable_name: power}
 
 
-def mono_from_str(mono_expression: str, get_tuple: bool = False) -> Union[mono.Mono, Tuple[float, Optional[Dict[str, float]]]]:
+def mono_from_str(mono_expression: str, get_tuple: bool = False) -> Union["Mono", Tuple[float, Optional[Dict[str, float]]]]:
     """
     Analyzes a string, such as "3x^2*y^2" and creates a monomial expression ( of type Mono )
     :param mono_expression: the string that represents the monomial
@@ -47,7 +50,8 @@ def mono_from_str(mono_expression: str, get_tuple: bool = False) -> Union[mono.M
         number = float(mono_expression)
         if get_tuple:
             return number, None
-        return mono.Mono(number)
+        from .mono import Mono
+        return Mono(number)
     except (ValueError, TypeError):
         mono_expression: str = mono_expression.strip().replace("**", "^")
         for variable in (character for character in mono_expression if character in allowed_characters):
@@ -74,7 +78,8 @@ def mono_from_str(mono_expression: str, get_tuple: bool = False) -> Union[mono.M
         if get_tuple:
             return final_coefficient, variables_and_powers
 
-        return mono.Mono(coefficient=final_coefficient, variables_dict=variables_and_powers)
+        from .mono import Mono
+        return Mono(coefficient=final_coefficient, variables_dict=variables_and_powers)
 
 
 def poly_from_str(poly_expression: str, get_list: bool = False) -> Union["Poly", list]:

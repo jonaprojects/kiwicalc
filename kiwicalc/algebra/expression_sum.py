@@ -2,8 +2,8 @@ import warnings
 from typing import Union, Optional, Iterable, List
 from .IExpression import IExpression
 from ..plotting.models import IPlottable, IScatterable
-from .mono import Mono
-from .poly import Poly
+# Mono imported locally to avoid circular imports
+# Poly imported locally to avoid circular imports
 from .fraction import Fraction
 from .trigonometry.trigoexprs import TrigoExprs
 from ..auxiliary import copy_expression
@@ -12,6 +12,8 @@ class ExpressionSum(IExpression, IPlottable, IScatterable):
     __slots__ = ['_expressions', '_current_index']
 
     def __init__(self, expressions: Iterable[IExpression] = None, copy=True):
+        from .mono import Mono
+        
         self._current_index = 0
         if expressions is None:
             self._expressions = []
@@ -51,6 +53,8 @@ class ExpressionSum(IExpression, IPlottable, IScatterable):
         # Prevent unnecessary double copying
 
     def __add_or_sub(self, other: "Union[IExpression, ExpressionSum]", operation='+'):
+        from .mono import Mono
+        
         if isinstance(other, (int, float)):
             my_evaluation = self.try_evaluate()
             if my_evaluation is not None:
@@ -137,6 +141,8 @@ class ExpressionSum(IExpression, IPlottable, IScatterable):
             return self
 
     def __ipow__(self, power: Union[IExpression, int, float]):
+        from .mono import Mono
+        
         if isinstance(power, (int, float)):
             length = len(self._expressions)
             if length == 0:  # No expression
@@ -180,6 +186,8 @@ class ExpressionSum(IExpression, IPlottable, IScatterable):
         return self.__copy__().__ipow__(power)
 
     def __itruediv__(self, other: Union[IExpression, int, float]) -> "Union[ExpressionSum,IExpression]":
+        from .poly import Poly
+        
         if other == 0:
             raise ValueError("Cannot divide an ExpressionSum object by 0.")
         if isinstance(other, (int, float)):
@@ -215,12 +223,16 @@ class ExpressionSum(IExpression, IPlottable, IScatterable):
             expression.assign(**kwargs)
 
     def is_poly(self):
+        from .mono import Mono
+        from .poly import Poly
         return all(isinstance(expression, (Mono, Poly)) for expression in self._expressions)
 
     def to_poly(self) -> "Optional[Poly]":
         """Tries to convert the ExpressionSum object to a Poly object (to a polynomial).
         If not successful, None will be returned.
         """
+        from .poly import Poly
+        
         if not self.is_poly():
             return None
         my_poly = Poly(0)
@@ -242,6 +254,7 @@ class ExpressionSum(IExpression, IPlottable, IScatterable):
                              index not in delete_indices]
         # if evaluation sum is not 0, add it. ( Because there's no point in adding trailing zeroes)
         if evaluation_sum:
+            from .mono import Mono
             self._expressions.append(Mono(evaluation_sum))
 
     def try_evaluate(self):

@@ -1,11 +1,13 @@
 import math
-from typing import Union, Iterable
+from typing import Union, Iterable, TYPE_CHECKING
 from functools import reduce
 import matplotlib.pyplot as plt
 
 from ...algebra.IExpression import IExpression
-from ..models import IPlottable
-from .point_collection import PointCollection
+from .interfaces import IPlottable
+
+if TYPE_CHECKING:
+    from .point_collection import PointCollection
 
 # Math functions
 sqrt = math.sqrt
@@ -114,9 +116,11 @@ class Point:
         elif isinstance(other, Point):
             return reduce(lambda tuple1, tuple2: tuple1[0] * tuple2[0] + tuple1[1] * tuple2[1],
                           zip(self._coordinates, other._coordinates))
-        elif isinstance(other, PointCollection):
-            raise NotImplementedError(
-                "This feature isn't implemented yet in this version")
+        else:
+            from .point_collection import PointCollection
+            if isinstance(other, PointCollection):
+                raise NotImplementedError(
+                    "This feature isn't implemented yet in this version")
 
     def __mul__(self, other: "Union[int, float, Point, PointCollection, IExpression]"):
         return self.__copy__().__imul__(other)
@@ -145,6 +149,7 @@ class Point:
     def __eq__(self, other: "Union[Point, PointCollection]"):
         if other is None:
             return False
+        from .point_collection import PointCollection
         if isinstance(other, PointCollection):
             if len(other.points) != 1:
                 return False

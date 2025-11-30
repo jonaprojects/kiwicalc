@@ -11,9 +11,9 @@ import math
 import numpy as np
 
 # Kiwicalc imports
-from ..auxiliary import round_decimal
+from ..utils import round_decimal
 from ..algebra.poly import Poly
-from ..algebra.var import Var
+from ..algebra.mono import Var
 from ..algebra.factorial import factorial
 from ..algebra.mono import Mono
 from ..functions.function import Function

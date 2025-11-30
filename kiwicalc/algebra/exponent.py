@@ -2,10 +2,6 @@ import warnings
 from typing import Union, Optional
 
 from .IExpression import IExpression
-from .mono import Mono
-from .expression_sum import ExpressionSum
-from .fraction import Fraction
-from .expression_mul import ExpressionMul
 from ..auxiliary import create_from_dict
 from ..global_functions import ln
 from ..string_analysis import apply_parenthesis
@@ -21,6 +17,7 @@ class Exponent(IExpression):
         if isinstance(base, IExpression):
             self._base = base.__copy__() if gen_copies else base
         elif isinstance(base, (int, float)):
+            from .mono import Mono
             self._base = Mono(base)
         else:
             raise TypeError(
@@ -29,12 +26,14 @@ class Exponent(IExpression):
         if isinstance(power, IExpression):
             self._power = power.__copy__() if gen_copies else power
         elif isinstance(power, (int, float)):
+            from .mono import Mono
             self._power = Mono(power)
         else:
             raise TypeError(
                 f"Exponent.__init__(): Invalid type {type(power)} for parameter 'power'.")
 
         if coefficient is None:
+            from .mono import Mono
             self._coefficient = Mono(1)
         elif isinstance(coefficient, IExpression):
             if gen_copies:
@@ -42,21 +41,25 @@ class Exponent(IExpression):
             else:
                 self._coefficient = coefficient
         elif isinstance(coefficient, (int, float)):
+            from .mono import Mono
             self._coefficient = Mono(coefficient)
         else:
             raise TypeError(
                 f"Invalid type for coefficient of Exponent object: '{coefficient}'.")
 
     def __add_or_sub(self, other, operation='+'):
+        from .expression_sum import ExpressionSum
         if other == 0:
             return self
         my_evaluation = self.try_evaluate()
         if isinstance(other, (int, float)):
             if my_evaluation is None:
+                from .mono import Mono
                 if operation == '+':
                     return ExpressionSum((self, Mono(other)))
                 return ExpressionSum((self, Mono(-other)))
             else:
+                from .mono import Mono
                 if operation == '+':
                     return Mono(my_evaluation + other)
                 return Mono(my_evaluation - other)
@@ -64,10 +67,12 @@ class Exponent(IExpression):
         elif isinstance(other, IExpression):
             other_evaluation = self.try_evaluate()
             if None not in (my_evaluation, other_evaluation):
+                from .mono import Mono
                 if operation == '+':
                     return Mono(my_evaluation + other_evaluation)
                 return Mono(my_evaluation - other_evaluation)
             elif other_evaluation is not None:
+                from .mono import Mono
                 if operation == '+':
                     return ExpressionSum((self, Mono(other_evaluation)))
                 return ExpressionSum((self, Mono(-other)))
@@ -87,6 +92,7 @@ class Exponent(IExpression):
                     elif False:  # TODO: check for relations in the base and power pairs?
                         pass
                     else:
+                        from .expression_mul import ExpressionMul
                         if operation == '+':
                             return ExpressionSum((self, other))
                         return ExpressionSum((self, -other))
@@ -101,6 +107,7 @@ class Exponent(IExpression):
     # TODO: further implement
     def __imul__(self, other: Union[int, float, IExpression]):
         if other == 0:
+            from .mono import Mono
             return Mono(0)
 
         if other == self.base:
@@ -109,12 +116,14 @@ class Exponent(IExpression):
         my_evaluation = self.try_evaluate()
         if isinstance(other, (int, float)):
             if my_evaluation is not None:
+                from .mono import Mono
                 return Mono(my_evaluation * other)
             self.multiply_by_number(other)
             return self
         elif isinstance(other, IExpression):
             other_evaluation = other.try_evaluate()
             if None not in (my_evaluation, other_evaluation):
+                from .mono import Mono
                 return Mono(my_evaluation * other_evaluation)
             elif other_evaluation is not None:
                 self.multiply_by_number(other_evaluation)
@@ -142,6 +151,7 @@ class Exponent(IExpression):
         self._coefficient /= number
 
     def __itruediv__(self, other: Union[int, float, IExpression]):
+        from .fraction import Fraction
         return Fraction(self, other)
 
     def __ipow__(self, other: Union[IExpression, int, float]):
@@ -179,12 +189,14 @@ class Exponent(IExpression):
         variables_length = len(my_variables)
         if variables_length == 0:
             # Free number, then the derivative is 0
+            from .mono import Mono
             return Mono(0)
         elif variables_length == 1:
             coefficient_eval = self._coefficient.try_evaluate()
             base_eval = self._base.try_evaluate()
             power_eval = self._power.try_evaluate()
             if None not in (coefficient_eval, base_eval, power_eval) or coefficient_eval == 0 or base_eval == 0:
+                from .mono import Mono
                 return Mono(0)
 
             if power_eval is not None and power_eval == 0:

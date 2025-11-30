@@ -4,16 +4,20 @@ import cmath
 import math
 import numpy as np
 from enum import Enum
-from typing import Union, Optional, Iterable, Iterator, List, Dict, Any, Tuple
+from typing import Union, Optional, Iterable, Iterator, List, Dict, Any, Tuple, TYPE_CHECKING
 from ..plotting.models import IPlottable, IScatterable
-from ..algebra.mono import Mono
-from ..algebra.poly import Poly
-from ..auxiliary import clean_spaces, extract_variables_from_expression, is_lambda, to_lambda, contains_from_list, round_decimal
+from ..auxiliary import clean_spaces, extract_variables_from_expression, is_lambda, to_lambda, contains_from_list
+from ..utils import round_decimal
 from ..plotting.plot import plot_function, plot_functions, plot_function_3d, scatter_function
 from ..numerical.numerical import newton_raphson, aberth_method
 from ..algebra.IExpression import IExpression
 from ..algebra.constants import TRIGONOMETRY_CONSTANTS, MATHEMATICAL_CONSTANTS
 from ..string_analysis import is_number, only_numbers_letters, is_evaluatable
+
+if TYPE_CHECKING:
+    from ..algebra.mono import Mono
+    from ..algebra.poly import Poly
+    from ..linear_algebra.matrices.matrix import Matrix
 
 class Function(IPlottable, IScatterable):
     arithmetic_operations = ('+', '-')
@@ -76,14 +80,20 @@ class Function(IPlottable, IScatterable):
                 warnings.warn(
                     "Couldn't generate an executable lambda function from the input, trying manual execution")
                 self.__lambda_expression = None
-        elif isinstance(func, (Mono, Poly)):
-            self.__variables = list(func.variables)
-            self.__num_of_variables = len(self.__variables)
-            self.__lambda_expression = func.to_lambda()
-            self.__func_expression = func.__str__().replace("^", "**")
-            self.__func_signature = f'f({",".join(self.__variables)}'
-            self.__func = f"{self.__func_signature})={self.__func_expression}"
-            self.classify_function()
+        elif isinstance(func, (IExpression, "Mono", "Poly")):
+            from ..algebra.mono import Mono
+            from ..algebra.poly import Poly
+            if isinstance(func, (Mono, Poly)):
+                self.__variables = list(func.variables)
+                self.__num_of_variables = len(self.__variables)
+                self.__lambda_expression = func.to_lambda()
+                self.__func_expression = func.__str__().replace("^", "**")
+                self.__func_signature = f'f({",".join(self.__variables)}'
+                self.__func = f"{self.__func_signature})={self.__func_expression}"
+                self.classify_function()
+            else:
+                # It's a generic IExpression
+                raise TypeError(f"Function.__init__(). Unexpected IExpression type {type(func)}")
 
         elif not isinstance(func, str):
             if is_lambda(func):

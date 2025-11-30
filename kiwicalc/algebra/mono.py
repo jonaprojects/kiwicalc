@@ -4,8 +4,8 @@ from typing import Union, Optional, Iterable, TYPE_CHECKING
 
 from .IExpression import IExpression
 from ..plotting.models import IPlottable, IScatterable
-from .poly import Poly
-from ..auxiliary import mono_from_str, round_decimal
+from .algebra_string_analysis import mono_from_str
+from ..utils import round_decimal
 from ..equations.auxiliary import format_coefficient
 from ..algebra.auxiliary import fetch_variable, fetch_power
 from ..string_analysis import to_lambda
@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from .fraction import Fraction
     from .poly_fraction import PolyFraction
     from .exponent import Exponent
-    from .var import Var
+    from .poly import Poly
     from ..functions.function import Function
 
 
@@ -69,6 +69,8 @@ class Mono(IExpression, IPlottable, IScatterable):
         return max(self.__variables.values())
 
     def __iadd__(self, other: Union[int, float, str, IExpression]):
+        from .poly import Poly
+        
         if other == 0:
             return self
         my_evaluation = self.try_evaluate()
@@ -118,6 +120,7 @@ class Mono(IExpression, IPlottable, IScatterable):
                     return Poly([self, other])
             elif isinstance(other, Poly):
                 return other.__add__(self)
+            from .expression_sum import ExpressionSum
             return ExpressionSum((self, other))
         else:
             raise TypeError(
@@ -125,6 +128,8 @@ class Mono(IExpression, IPlottable, IScatterable):
             )
 
     def __isub__(self, other: Union[int, float, str, IExpression]):
+        from .poly import Poly
+        
         my_evaluation = self.try_evaluate()
         if isinstance(other, (int, float)):
             if my_evaluation is not None:
@@ -176,6 +181,7 @@ class Mono(IExpression, IPlottable, IScatterable):
             elif isinstance(other, Poly):
                 return other.__neg__().__iadd__(self)
             else:
+                from .expression_sum import ExpressionSum
                 return ExpressionSum((self, -other))
 
         else:
@@ -234,6 +240,8 @@ class Mono(IExpression, IPlottable, IScatterable):
             if evaluated_other is not None:  # if the other expression can be evaluated into float or int
                 self._coefficient *= evaluated_other
                 return self
+            from .expression_mul import ExpressionMul
+            from .expression_sum import ExpressionSum
             if isinstance(other, (ExpressionMul, ExpressionSum)):
                 for expression in other.expressions:
                     result = self.__imul__(expression)
@@ -256,6 +264,8 @@ class Mono(IExpression, IPlottable, IScatterable):
         self._coefficient /= number
 
     def __itruediv__(self, other: Union[int, float, str, IExpression]):
+        from .poly import Poly
+        
         if other == 0:
             raise ZeroDivisionError("Can't divide by 0")
 
@@ -277,6 +287,7 @@ class Mono(IExpression, IPlottable, IScatterable):
                 return self
             if isinstance(other, Poly):
                 if len(other.expressions) != 1:
+                    from .poly_fraction import PolyFraction
                     return PolyFraction(self, other)
                 other = other.expressions[0]
 
@@ -291,13 +302,16 @@ class Mono(IExpression, IPlottable, IScatterable):
                     self._coefficient /= other._coefficient
                     return self
                 if self.num_of_variables < other.num_of_variables:
+                    from .poly_fraction import PolyFraction
                     return PolyFraction(self, other)
                 my_variables, other_variables = self.variables, other.variables
                 if my_variables != other_variables:
+                    from .poly_fraction import PolyFraction
                     return PolyFraction(self, other)
                 if any(my_value < other_value for my_value, other_value in
                        zip(self.__variables.values(), self.__variables.values())):
                     # That means we should return a fraction - since Monomials don't support negative powers
+                    from .poly_fraction import PolyFraction
                     return PolyFraction(self, other)
                 my_keys = [] if self.__variables in (
                     None, {}) else list(self.variables)
@@ -317,6 +331,7 @@ class Mono(IExpression, IPlottable, IScatterable):
                 self.__variables = new_variables
                 return self
             else:
+                from .fraction import Fraction
                 return Fraction(self, other)
         else:
             raise TypeError(
@@ -326,6 +341,7 @@ class Mono(IExpression, IPlottable, IScatterable):
         if isinstance(power, IExpression):
             power_eval = power.try_evaluate()
             if power_eval is None:  # the algebraic expression couldn't be evaluated
+                from .exponent import Exponent
                 return Exponent(self, power)
             power = power_eval
         if power == 0:
@@ -340,6 +356,8 @@ class Mono(IExpression, IPlottable, IScatterable):
         return self
 
     def __eq__(self, other: Union[int, float, str, IExpression]):
+        from .poly import Poly
+        
         if other is None:
             return False
         if isinstance(other, (int, float)):
@@ -569,6 +587,38 @@ class Mono(IExpression, IPlottable, IScatterable):
 
         :return: A Function object, corresponding to the  Mono object
         """
+        from ..functions.function import Function
         return Function(self.python_syntax())
+
+
+class Var(Mono):
+    """
+    A class for representing variables in algebraic operations.
+    It is currently represented as a subclass of the 'mono' class,
+    since it is technically a monomial.
+
+    Variables are supposed to be immutable.
+    When activating operators such as '+=' on a Var object, 
+    it creates new objects instead of changing the original.
+    """
+
+    def __init__(self, variable='x'):
+        super().__init__(coefficient=1, variables_dict={variable: 1})
+
+    # Make sure the variables_dict don't change, by creating copies
+    def __iadd__(self, other):
+        return super().__add__(other)
+
+    def __isub__(self, other):
+        return super().__sub__(other)
+
+    def __imul__(self, other):
+        return super().__mul__(other)
+
+    def __itruediv__(self, other):
+        return super().__truediv__(other)
+
+    def __ipow__(self, other):
+        return super().__pow__(other)
 
 

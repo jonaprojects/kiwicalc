@@ -5,7 +5,7 @@ from .pdfexercise import PDFExercise
 from ..algebra.poly import Poly
 from ..equations.linear_equation import LinearEquation
 from ..equations.generate import random_linear, random_polynomial, random_linear_system
-from ..auxiliary import round_decimal
+from ..utils import round_decimal
 from ..equations.auxiliary import format_coefficient, format_free_number
 
 class PDFCalculusExercise(PDFExercise):

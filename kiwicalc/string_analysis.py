@@ -3,8 +3,8 @@ import re
 # might be necessary for the eval()
 from math import sin, asin, sinh, cos, acos, cosh, tan, atan, tanh, asinh, acosh, atanh
 from math import pi, e, tau, log, exp, log2, sqrt, log10, gamma, lgamma, erf, erfc
-from .functions.function import Function
-from .algebra.factorial import factorial
+# Function imported locally to avoid circular imports
+from .global_functions import factorial
 
 # TODO: later replace with the code inside to_lambda
 
@@ -111,6 +111,8 @@ def is_number(suspicious_string: str):
 
 def split_expression(expression: str):
     """splits the expression by delimiters, but doesn't touch what's inside parenthesis """
+    from .functions.function import Function
+    
     delimiters = []
     for index, char in enumerate(expression):
         if char in Function.arithmetic_operations and index > 0:

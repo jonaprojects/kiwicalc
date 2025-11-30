@@ -1,17 +1,19 @@
 import math
 import cmath
 import warnings
-from typing import Union, Callable, Iterable, List, Tuple, Optional
+from typing import Union, Callable, Iterable, List, Tuple, Optional, TYPE_CHECKING
 from itertools import cycle, combinations
 import numpy as np
 from matplotlib import pyplot as plt
 
 from ..algebra.IExpression import IExpression
-from ..algebra.mono import Mono
-from ..algebra.poly import Poly
-from ..algebra.var import Var
+if TYPE_CHECKING:
+    from ..algebra.mono import Mono
+    from ..algebra.poly import Poly
+    from ..algebra.mono import Var
 from ..functions.function import Function
-from ..auxiliary import round_decimal, clean_spaces, to_lambda, is_lambda, contains_from_list, extract_variables_from_expression, values_in_range, decimal_range
+from ..auxiliary import clean_spaces, to_lambda, is_lambda, contains_from_list, extract_variables_from_expression, values_in_range, decimal_range
+from ..utils import round_decimal
 from .auxiliary import format_matplot, format_matplot_polynomial, format_matplot_function
 
 # Math functions

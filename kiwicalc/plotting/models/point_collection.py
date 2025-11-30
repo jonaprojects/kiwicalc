@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from .point import Point, Point2D, Point3D, Point4D
-from ..models import IPlottable, IScatterable
+from .interfaces import IPlottable, IScatterable
 from ...machine_learning.linear_regression import linear_regression
 
 # Math functions

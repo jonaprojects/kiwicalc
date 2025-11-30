@@ -4,9 +4,9 @@ from typing import Union, Optional, Iterable
 
 from .IExpression import IExpression
 from ..plotting.models import IPlottable
-from ..auxiliary import ParseExpression, derivative
+from .parse import ParseExpression
 from .expression_sum import ExpressionSum
-from ..calculus.calculus import integral
+from ..calculus.calculus import integral, derivative
 from ..numerical.numerical import newton_raphson, halleys_method
 from ..algebra.auxiliary import add_or_sub_coefficients
 from ..equations.solve import solve_polynomial

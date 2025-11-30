@@ -23,3 +23,4 @@ class IScatterable3D(ABC):
     @abstractmethod
     def scatter3d(self):
         pass
+

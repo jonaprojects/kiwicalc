@@ -6,8 +6,9 @@ from ..IExpression import IExpression
 from ...plotting.models import IPlottable, IScatterable
 from ..mono import Mono
 from ..poly import Poly
-from ..var import Var
-from ...auxiliary import TrigoExpr_from_str, copy_expression, create_from_dict, round_decimal
+from ..mono import Var
+from ...auxiliary import TrigoExpr_from_str, copy_expression, create_from_dict
+from ...utils import round_decimal
 from .trigomethods import TrigoMethods
 from .trigoexprs import TrigoExprs
 from ..expression_sum import ExpressionSum

@@ -7,22 +7,7 @@ from contextlib import contextmanager
 Auxiliary methods for different parts of the library
 """
 
-# Import classes needed for create() and create_from_dict() functions
-from .algebra.poly import Poly
-from .algebra.mono import Mono
 from .algebra.IExpression import IExpression
-from .algebra.fraction import Fraction
-from .algebra.fastpoly import FastPoly
-from .algebra.exponent import Exponent
-from .algebra.expression_sum import ExpressionSum
-from .algebra.abs import Abs
-from .algebra.root import Root
-from .algebra.factorial import Factorial
-from .algebra.log.log import Log
-from .algebra.log.log import Ln
-from .algebra.trigonometry.trigoexprs import TrigoExprs
-from .algebra.trigonometry.trigoexpr import TrigoExpr
-from .algebra.auxiliary import split_expression
 
 
 def decimal_range(start: float, stop: float, step: float = 1):
@@ -132,18 +117,24 @@ def values_in_range(func: Callable, start: float, end: float, step: float, round
 
 def create(expression: str, dtype: str = 'poly'):
     if dtype == 'poly':
+        from .algebra.poly import Poly
         return Poly(expression)
     elif dtype == 'log':
+        from .algebra.log.log import Log
         return Log(expression)
     elif dtype == 'ln':
+        from .algebra.log.log import Ln
         return Ln(expression)
     elif dtype == 'trigo':
+        from .algebra.trigonometry.trigoexprs import TrigoExprs
         return TrigoExprs(expression)
     elif dtype == 'root':
         # TODO: implement string constructor in root via dtype as well
+        from .algebra.root import Root
         return Root(expression)
     elif dtype == 'factorial':
         # TODO: implement string constructor in root via dtype as well
+        from .algebra.factorial import Factorial
         return Factorial(expression)
     else:
         raise ValueError(f"Invalid parameter 'dtype': {dtype}")
@@ -151,31 +142,44 @@ def create(expression: str, dtype: str = 'poly'):
 
 def create_from_dict(given_dict: dict):
     if isinstance(given_dict, int):
+        from .algebra.mono import Mono
         return Mono(given_dict)
     expression_type = given_dict['type'].lower()
     if expression_type == 'mono':
+        from .algebra.mono import Mono
         return Mono.from_dict(given_dict)
     elif expression_type == 'poly':
+        from .algebra.poly import Poly
         return Poly.from_dict(given_dict)
     elif expression_type == 'trigoexpr':
+        from .algebra.trigonometry.trigoexpr import TrigoExpr
         return TrigoExpr.from_dict(given_dict)
     elif expression_type == 'trigoexprs':
+        from .algebra.trigonometry.trigoexprs import TrigoExprs
         return TrigoExprs.from_dict(given_dict)
     elif expression_type == 'log':
+        from .algebra.log.log import Log
         return Log.from_dict(given_dict)
     elif expression_type == 'factorial':
+        from .algebra.factorial import Factorial
         return Factorial.from_dict(given_dict)
     elif expression_type == 'root':
+        from .algebra.root import Root
         return Root.from_dict(given_dict)
     elif expression_type == 'abs':
+        from .algebra.abs import Abs
         return Abs.from_dict(given_dict)
     elif expression_type == 'iexpressions':
+        from .algebra.expression_sum import ExpressionSum
         return ExpressionSum.from_dict(given_dict)
     elif expression_type == 'fraction':
+        from .algebra.fraction import Fraction
         return Fraction.from_dict(given_dict)
     elif expression_type == 'fastpoly':
+        from .algebra.fastpoly import FastPoly
         return FastPoly.from_dict(given_dict)
     elif expression_type == 'exponent':
+        from .algebra.exponent import Exponent
         return Exponent.from_dict(given_dict)
     else:
         raise ValueError(f"Invalid type of expression: {given_dict}")
@@ -188,6 +192,7 @@ def format_matplot_polynomial(expression: str):
     :return:
     """
     # SPAGHETTI CODE ALERT !!!
+    from .algebra.auxiliary import split_expression
     expressions = split_expression(expression)
     for index, expr in enumerate(expressions):
         expr = expr.replace('**', '^')

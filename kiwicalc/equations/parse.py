@@ -1,4 +1,6 @@
-from ..auxiliary import get_equation_variables, ParseExpression, add_or_sub_coefficients
+from ..equations.auxiliary import get_equation_variables
+from ..algebra.parse import ParseExpression
+from ..algebra.auxiliary import add_or_sub_coefficients
 
 class ParseEquation:
 

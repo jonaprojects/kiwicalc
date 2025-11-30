@@ -1,7 +1,9 @@
 from typing import Union, Optional
 from .IExpression import IExpression
-from .mono import Mono
-from .expression_sum import ExpressionSum
+# Mono imported locally to avoid circular imports
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from .expression_sum import ExpressionSum
 from ..auxiliary import create_from_dict
 from .exponent import Exponent
 
@@ -13,6 +15,7 @@ class Fraction(IExpression):
                  denominator: "Optional[Union[IExpression,float,int]]" = None, gen_copies=True):
         # Handle the numerator
         if isinstance(numerator, (float, int)):
+            from .mono import Mono
             self._numerator = Mono(numerator)
         elif isinstance(numerator, IExpression):
             self._numerator = numerator.__copy__() if gen_copies else numerator
@@ -21,11 +24,13 @@ class Fraction(IExpression):
                             f"Modify the type of the numerator parameter to a valid one.")
 
         if denominator is None:
+            from .mono import Mono
             self._denominator = Mono(1)
             return
         # Handle the denominator
         # Create a Mono object instead of ints and floats
         if isinstance(denominator, (float, int)):
+            from .mono import Mono
             self._denominator = Mono(denominator)
         elif isinstance(denominator, IExpression):
             self._denominator = denominator.__copy__() if gen_copies else denominator
@@ -95,18 +100,22 @@ class Fraction(IExpression):
         return Fraction(numerator=numerator_obj, denominator=denominator_obj)
 
     def __iadd__(self, other: Union[IExpression, int, float]):
+        from .expression_sum import ExpressionSum
         #  TODO: add simplifications for expressions that can be evaluated like Log(5) for instance
         if isinstance(other, (int, float)):  # If we're adding a number
             my_evaluation = self.try_evaluate()
             if my_evaluation is not None:  # If the fraction can be evaluated into number
+                from .mono import Mono
                 return Mono(coefficient=my_evaluation + other)
             else:
+                from .mono import Mono
                 return ExpressionSum((self, Mono(coefficient=other)))
         elif isinstance(other, IExpression):
             other_evaluation = other.try_evaluate()
             my_evaluation = self.try_evaluate()
             # Both of the expressions can be evaluated into numbers
             if None not in (other_evaluation, my_evaluation):
+                from .mono import Mono
                 return Mono(coefficient=my_evaluation + other_evaluation)
             if isinstance(other, ExpressionSum):
                 copy_of_other = other.__copy__()
@@ -142,9 +151,11 @@ class Fraction(IExpression):
             self._denominator *= other._denominator
             return self
         if self._denominator == other:
+            from .mono import Mono
             self._denominator = Mono(1)
             my_evaluation = self.try_evaluate()
             if my_evaluation is not None:
+                from .mono import Mono
                 return Mono(my_evaluation)
             return self._numerator
         self._numerator *= other

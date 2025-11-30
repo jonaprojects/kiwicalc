@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 
 from ...algebra.IExpression import IExpression
 from ...algebra.mono import Mono
-from ...algebra.var import Var
+from ...algebra.mono import Var
 from ...algebra.root import Sqrt, Abs
 from ...equations.auxiliary import solve_poly_system
 from .point import Point

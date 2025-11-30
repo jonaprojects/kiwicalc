@@ -2,10 +2,11 @@
 Auxiliary functions for algebraic operations
 """
 
-from typing import Iterable, Union, Dict, Any
-from .poly import Poly
-from .mono import Mono
+from typing import Iterable, Union, Dict, Any, TYPE_CHECKING
 from .IExpression import IExpression
+if TYPE_CHECKING:
+    from .poly import Poly
+    from .mono import Mono
 
 
 def add_or_sub_coefficients(first_coefficients, second_coefficients, mode='add', copy_first=True):
@@ -90,6 +91,7 @@ def process_object(expression: Union[IExpression, int, float], class_name: str, 
     :return: Processed expression
     """
     if isinstance(expression, (int, float)):
+        from .mono import Mono
         return Mono(expression)
     elif isinstance(expression, IExpression):
         return expression.__copy__()

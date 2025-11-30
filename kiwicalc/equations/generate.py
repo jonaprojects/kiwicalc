@@ -1,6 +1,7 @@
 import random
 from typing import Tuple
-from ..auxiliary import ParseExpression, round_decimal, format_coefficient, format_free_number
+from ..auxiliary import ParseExpression, format_coefficient, format_free_number
+from ..utils import round_decimal
 
 def random_linear_system(variables, solutions_range: Tuple[int, int] = (-10, 10),
                          coefficients_range: Tuple[int, int] = (-10, 10),

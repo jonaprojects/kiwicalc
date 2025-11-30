@@ -1,7 +1,7 @@
 from typing import Union, Optional, Iterable
 from .IExpression import IExpression
 from ..plotting.models import IPlottable, IScatterable
-from .mono import Mono
+# Mono imported locally to avoid circular imports
 from .expression_sum import ExpressionSum
 from .fraction import Fraction
 from .exponent import Exponent
@@ -17,6 +17,7 @@ class ExpressionMul(IExpression, IPlottable, IScatterable):
             self._expressions = list()
             for expression in expressions:
                 if isinstance(expression, (float, int)):
+                    from .mono import Mono
                     self._expressions.append(Mono(expression))
                 elif isinstance(expression, IExpression):
                     if gen_copies:
@@ -87,8 +88,10 @@ class ExpressionMul(IExpression, IPlottable, IScatterable):
             first_derivative, second_derivative = expressionMul1.derivative(
             ), expressionMul2.derivative()
             if isinstance(first_derivative, (int, float)):
+                from .mono import Mono
                 first_derivative = Mono(first_derivative)
             if isinstance(second_derivative, (int, float)):
+                from .mono import Mono
                 second_derivative = Mono(second_derivative)
             return first_derivative * expressionMul2 + second_derivative * expressionMul1
 

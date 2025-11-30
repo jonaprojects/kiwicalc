@@ -1,6 +1,7 @@
 from typing import Iterable
 from .linear_equation import LinearEquation
-from ..auxiliary import simplify_linear_expression, subtract_dicts, round_decimal
+from ..auxiliary import simplify_linear_expression, subtract_dicts
+from ..utils import round_decimal
 from ..numerical.matrix import Matrix
 
 class LinearSystem:

@@ -1,5 +1,5 @@
 from .fraction import Fraction
-from .mono import Mono
+# Mono imported locally to avoid circular imports
 from .poly import Poly
 from .algebra_string_analysis import poly_frac_from_str
 
@@ -19,7 +19,8 @@ class PolyFraction(Fraction):
                 super().__init__(
                     numerator._numerator.__copy__() if gen_copies else numerator._numerator,
                     numerator._denominator.__copy__() if gen_copies else numerator._denominator)
-            elif isinstance(numerator, (int, float, Mono, Poly)):
+            elif isinstance(numerator, (int, float, Poly)):
+                from .mono import Mono
                 super().__init__(Poly(numerator), Mono(1))
             else:
                 raise TypeError(
@@ -28,19 +29,19 @@ class PolyFraction(Fraction):
         else:  # if the user chooses to specify both parameter in the constructor.
             if isinstance(numerator, Poly):  # Handling the numerator
                 numerator = numerator.__copy__()
-            elif isinstance(numerator, (int, float, str, Mono)):
+            elif isinstance(numerator, (int, float, str)):
                 numerator = Poly(numerator)
             else:
                 raise TypeError(f"Invalid type for a numerator in PolyFraction : {type(numerator)}. Expected types "
-                                f" Poly, Mono, str , float , int")
+                                f" Poly, str , float , int")
 
             if isinstance(denominator, Poly):  # Handling the denominator
                 denominator = denominator.__copy__()
-            elif isinstance(denominator, (int, float, str, Mono)):
+            elif isinstance(denominator, (int, float, str)):
                 denominator = Poly(denominator)
             else:
                 raise TypeError(f"Invalid type for a denominator in PolyFraction : {type(denominator)}. Expected types "
-                                f" Poly, Mono, str , float , int")
+                                f" Poly, str , float , int")
             super().__init__(numerator, denominator)
 
     def roots(self, epsilon: float = 0.000001, nmax: int = 100000):
@@ -125,12 +126,12 @@ class PolyFraction(Fraction):
             self._numerator *= other._numerator
             self._denominator *= other._denominator
             return self
-        elif isinstance(other, (int, float, Mono, Poly)):
+        elif isinstance(other, (int, float, Poly)):
             self._numerator *= other
             return self
         else:
             raise TypeError(f"Invalid type {type(other)} for multiplying PolyFraction objects. Allowed types: "
-                            f" PolyFraction, Mono, Poly, int, float")
+                            f" PolyFraction, Poly, int, float")
 
     def __mul__(self, other):
         new_copy = self.__copy__()

@@ -1,5 +1,5 @@
 from typing import Union
-from ..auxiliary import ParseExpression
+from ..algebra.parse import ParseExpression
 
 def derivative(coefficients, get_string=False) -> Union[int, float, list]:
     """ receives the coefficients of a polynomial or a string

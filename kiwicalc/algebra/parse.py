@@ -1,10 +1,12 @@
 import warnings
 import numpy as np
 
-from ..auxiliary import (
-    format_coefficient, format_free_number, get_equation_variables, 
-    extract_coefficient, clean_spaces, round_decimal, split_expression
+from ..equations.auxiliary import (
+    format_coefficient, format_free_number, get_equation_variables
 )
+from ..string_analysis import extract_coefficient, split_expression
+from ..auxiliary import clean_spaces
+from ..utils import round_decimal
 
 class ParseExpression:
 

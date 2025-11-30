@@ -6,26 +6,26 @@ import json
 import cmath 
 from math import sqrt 
 import warnings
-from traceback import exc_info
+from sys import exc_info
 
 import numpy as np
-from typing import Union, Iterable, Optional, Tuple, List, Dict, Any
+from typing import Union, Iterable, Optional, Tuple, List, Dict, Any, TYPE_CHECKING
 from .parse import ParseEquation
-from ..auxiliary import round_decimal, extract_variables_from_expression
+from ..auxiliary import extract_variables_from_expression
+from ..utils import round_decimal
 from ..equations.auxiliary import (
-    solve_quadratic, solve_cubic, solve_quartic, solve_quadratic_real, 
-    extract_possible_solutions, __find_solutions, simplify_linear_expression, 
+    extract_possible_solutions, __find_solutions, 
     subtract_dicts, extract_dict_from_equation, coefficients_to_expressions,
-    equation_to_one_side
+    equation_to_one_side, get_equation_variables
 )
-from ..algebra.poly import Poly
-from ..algebra.mono import Mono
-from ..algebra.algebra_string_analysis import poly_from_str
-from ..numerical.numerical import aberth_method
+from .simplify import simplify_linear_expression
 from ..algebra.IExpression import IExpression
 from ..linear_algebra.matrices.matrix import Matrix
 from ..linear_algebra.auxiliary import generate_jacobian
-from ..equations.auxiliary import get_equation_variables
+
+if TYPE_CHECKING:
+    from ..algebra.poly import Poly
+    from ..algebra.mono import Mono
 
 
 def solve_polynomial(coefficients: Union[List[float], str], epsilon: float = 0.000001, nmax: int = 10_000) -> Optional[List[Union[float, complex]]]:
@@ -47,54 +47,41 @@ def solve_polynomial(coefficients: Union[List[float], str], epsilon: float = 0.0
     """
     if isinstance(coefficients, str):
         return solve_polynomial(ParseEquation.parse_polynomial(coefficients))
-
-    if len(coefficients) == 1:
+    degree = len(coefficients) - 1
+    if degree == 0:
         return None
-    if len(coefficients) == 2:
+    elif degree == 1:
         return [-coefficients[1] / coefficients[0]]
-    if len(coefficients) == 3:
-        return solve_quadratic(coefficients[0], coefficients[1], coefficients[2])
-    if len(coefficients) == 4:
+    elif degree == 2:
+        return list(solve_quadratic(coefficients[0], coefficients[1], coefficients[2]))
+    elif degree == 3:
         return solve_cubic(coefficients[0], coefficients[1], coefficients[2], coefficients[3])
-    if len(coefficients) == 5:
+    elif degree == 4:
         return solve_quartic(coefficients[0], coefficients[1], coefficients[2], coefficients[3], coefficients[4])
-    # Iterative approach via aberth's method, since there are no generalized formulas for polynomial equations
-    # of degree 5 or higher, as proven by the Abel–Ruffini theorem.
-    polynomial_obj = Poly(coefficients_to_expressions(coefficients))
-    poly_derivative = polynomial_obj.derivative().to_lambda()
-    return aberth_method(polynomial_obj.to_lambda(), poly_derivative, coefficients, epsilon, nmax)
+    else:
+        return list(__find_solutions(coefficients, extract_possible_solutions(coefficients[0], coefficients[-1])))
 
 
-def solve_poly_by_factoring(coefficients: List[float]) -> Dict[str, float]:
-    """
-    This method attempts to find the roots of a polynomial by synthetic division.
-    It won't always return all the solutions, but it is faster than many numerical root finding algorithms, and might
-    even be preferable in some cases over these algorithms.
-    """
-    if len(coefficients) == 3:
-        return solve_quadratic_real(coefficients[0], coefficients[1], coefficients[2])
-    if coefficients is None:
-        return {}
-    most_significant = coefficients[0]
-    free_number = coefficients[-1]
-    possible_solutions = extract_possible_solutions(
-        most_significant, free_number)
-    print(possible_solutions)
-    solutions = __find_solutions(coefficients, possible_solutions)
-    return solutions
-
-
-def solve_linear(equation: str, variables: Optional[Dict[str, Any]] = None, get_dict: bool = False, get_json: bool = False) -> Optional[Union[float, Dict[str, float], str]]:
+def solve_linear(equation: str, variables: Optional[Dict[str, Any]] = None) -> Union[str, float, None]:
     if variables is None:
         variables = extract_dict_from_equation(equation)
-    first_side, second_side = equation.split("=")
+    if "number" not in variables:
+        variables["number"] = 0
+    if len(variables) != 2:
+        raise ValueError(
+            f"Can only solve linear equations with 1 variable, but found {len(variables) - 1} variables")
+    equal_sign_index = equation.find('=')
+    first_side, second_side = equation[:equal_sign_index], equation[equal_sign_index + 1:]
     first_dict = simplify_linear_expression(
         expression=first_side, variables=variables)
     second_dict = simplify_linear_expression(
         expression=second_side, variables=variables)
-    result_dict = {key: value for key, value in subtract_dicts(
-        dict1=first_dict, dict2=second_dict).items() if key}
-    if len(result_dict) < 2:
+    result_dict = subtract_dicts(first_dict, second_dict)
+    if len(result_dict) == 1:
+        # if result_dict['number'] != 0:
+        #     # TODO: fix this bug, result_dict should have 2 items: number and variable
+        #     # TODO: if it only has number, it means that the variable is 0 * variable
+        #     return None
         return None
     elif len(result_dict) == 2:
         if list(result_dict.values())[0] == 0:
@@ -102,10 +89,6 @@ def solve_linear(equation: str, variables: Optional[Dict[str, Any]] = None, get_
                 return np.inf
             return None  # There are no solutions, ( like 0 = 5 )
         solution = -result_dict["number"] / list(result_dict.values())[0]
-        if get_dict:
-            return {list(variables.keys())[0]: solution}
-        elif get_json:
-            return json.dumps({"variable": list(variables.keys())[0], "result": solution})
         return solution
     elif len(result_dict) > 2:
         raise ValueError("Invalid equation caused an unexpected error")
@@ -211,6 +194,7 @@ def solve_poly_system(
             return {variables[index]: row[0] for index, row in enumerate(current_values_matrix)}
         interval_matrix = jacobian_inverse @ assigned_polynomials
         current_values_matrix -= interval_matrix
+
 
 # TODO: fix this !!!!
 

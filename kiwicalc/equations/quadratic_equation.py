@@ -2,7 +2,8 @@ import warnings
 import random
 from typing import Optional, Iterable
 from .Equation import Equation
-from ..auxiliary import ParseExpression, solve_quadratic, solve_quadratic_real, solve_quadratic_params, round_decimal, format_coefficient
+from ..auxiliary import ParseExpression, solve_quadratic, solve_quadratic_real, solve_quadratic_params, format_coefficient
+from ..utils import round_decimal
 
 class QuadraticEquation(Equation):
 

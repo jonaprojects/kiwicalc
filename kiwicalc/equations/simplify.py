@@ -1,5 +1,7 @@
 from typing import Iterable
-from ..auxiliary import handle_abs, allowed_characters, contains_from_list, is_number
+from ..auxiliary import contains_from_list
+from ..string_analysis import is_number, handle_abs
+from ..algebra.algebra_string_analysis import allowed_characters
 
 def simplify_linear_expression(expression: str, variables: Iterable[str], format_abs=False, format_factorial=False) -> dict:
     if format_abs:
