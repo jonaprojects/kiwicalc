@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kiwicalc"
+version = "1.0.0"
+description = "A comprehensive Python library for mathematical calculations, calculus, geometry, and plotting"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [
+    { name = "KiwiCalc Developers" }
+]
+dependencies = [
+    "numpy>=1.20.0",
+    "matplotlib>=3.3.0",
+    "reportlab>=3.5.0",
+    "anytree>=2.8.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["kiwicalc*"]

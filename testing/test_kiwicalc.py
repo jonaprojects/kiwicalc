@@ -1,5 +1,17 @@
+import os
+import sys
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+plt.show = lambda *a, **k: None
+
 import unittest
 import kiwicalc as kw
+from kiwicalc import *
 import numpy as np
 import math
 
@@ -549,7 +561,7 @@ class TestAbs(unittest.TestCase):
     def test_add(self):
         x, y = kw.Var('x'), kw.Var('y')
         self.assertEqual(kw.Abs(x) + kw.Abs(x), 2 * kw.Abs(x))
-        self.assertEqual(kw.Abs(y) + kw.Abs(x) == kw.Abs(x) + kw.Abs(y))
+        self.assertTrue(kw.Abs(y) + kw.Abs(x) == kw.Abs(x) + kw.Abs(y))
 
     def test_sub(self):
         x, y = kw.Var('x'), kw.Var('y')
@@ -807,3 +819,7 @@ class EquationSolving(unittest.TestCase):
 
     def test_solve_quadratic(self):
         self.assertEqual(kw.solve_quadratic(1, 6, 8), (-2, -4))
+
+
+if __name__ == '__main__':
+    unittest.main()

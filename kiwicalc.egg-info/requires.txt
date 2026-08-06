@@ -1,0 +1,7 @@
+numpy>=1.20.0
+matplotlib>=3.3.0
+reportlab>=3.5.0
+anytree>=2.8.0
+
+[dev]
+pytest>=7.0.0
