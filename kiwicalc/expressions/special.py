@@ -671,7 +671,7 @@ class Exponent(IExpression):
         return copy_of_self
 
     def to_dict(self):
-        return {'type': 'Factorial', 'coefficient': self._coefficient.to_dict(), 'base': self._base.to_dict(), 'power': self._power.to_dict()}
+        return {'type': 'Exponent', 'coefficient': self._coefficient.to_dict(), 'base': self._base.to_dict(), 'power': self._power.to_dict()}
 
     @staticmethod
     def from_dict(given_dict: dict):

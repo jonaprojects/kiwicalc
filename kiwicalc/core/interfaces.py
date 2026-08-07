@@ -146,15 +146,15 @@ class IExpression(ABC):
         return to_lambda(self.python_syntax(), variables, constants, format_abs=format_abs, format_factorial=format_factorial)
 
     def reinman(self, a: float, b: float, N: int):
-        from kiwicalc.calculus.integration import reinman
+        from kiwicalc.numeric.calculus import reinman
         return reinman(self.to_lambda(), a, b, N)
 
     def trapz(self, a: float, b: float, N: int):
-        from kiwicalc.calculus.integration import trapz
+        from kiwicalc.numeric.calculus import trapz
         return trapz(self.to_lambda(), a, b, N)
 
     def simpson(self, a: float, b: float, N: int):
-        from kiwicalc.calculus.integration import simpson
+        from kiwicalc.numeric.calculus import simpson
         return simpson(self.to_lambda(), a, b, N)
 
     def secant(self, n_0: float, n_1: float, epsilon: float=1e-05, nmax: int=10000):

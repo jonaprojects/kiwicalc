@@ -76,7 +76,7 @@ class Vector:
             raise ValueError(f'Cannot plot a vector with {start_length} dimensions. (Only 2D and 3D plotting is supported')
 
     def length(self):
-        return round_decimal(sqrt(reduce(lambda a, b: a ** 2 + b ** 2, self._direction_vector)))
+        return round_decimal(sqrt(sum(item ** 2 for item in self._direction_vector)))
 
     def multiply(self, other: 'Union[int, float, IExpression, Iterable, Vector, VectorCollection, ]'):
         if isinstance(other, (Vector, Iterable)) and (not isinstance(other, (VectorCollection, IExpression))):
@@ -477,7 +477,7 @@ class VectorCollection:
         :param remove: if True, removes the longest vector from the collection
         :return: depends whether get_index evaluates to True or False
         """
-        longest_vector = max(self.__vectors, key=operator.attrgetter('_Vector__direction_vector'))
+        longest_vector = max(self.__vectors, key=lambda vector: vector.length())
         if not (get_index or remove):
             return longest_vector
         index = self.__vectors.index(longest_vector)
@@ -495,7 +495,7 @@ class VectorCollection:
         :param remove: if True, removes the shortest vector from the collection
         :return: depends whether get_index evaluates to True or False
         """
-        shortest_vector = min(self.__vectors, key=operator.attrgetter('_Vector__direction_vector'))
+        shortest_vector = min(self.__vectors, key=lambda vector: vector.length())
         if not (get_index or remove):
             return shortest_vector
         index = self.__vectors.index(shortest_vector)
@@ -513,11 +513,15 @@ class VectorCollection:
 
     def nlongest(self, n: int):
         """returns the n longest vector for an integer n"""
-        return [self.longest(remove=True) for _ in range(n)]
+        if not 0 <= n <= len(self.__vectors):
+            raise ValueError(f'n must be between 0 and {len(self.__vectors)}')
+        return sorted(self.__vectors, key=lambda vector: vector.length(), reverse=True)[:n]
 
     def nshortest(self, n: int):
         """returns the n shortest vector for an integer n"""
-        return [self.shortest(remove=True) for _ in range(n)]
+        if not 0 <= n <= len(self.__vectors):
+            raise ValueError(f'n must be between 0 and {len(self.__vectors)}')
+        return sorted(self.__vectors, key=lambda vector: vector.length())[:n]
 
     def sort_by_length(self, reverse=False):
         self.__vectors.sort(key=lambda vector: vector.length(), reverse=reverse)

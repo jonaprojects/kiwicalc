@@ -379,7 +379,9 @@ class Mono(IExpression, IPlottable, IScatterable):
 
     def __str__(self):
         if self.__variables is not None:
-            return f'{(round_decimal(self._coefficient) if self._coefficient not in (-1, 1) else '-' if self.coefficient == -1 else '')}' + '*'.join([f'{variable}' if power == 1 else f'{variable}^{round_decimal(power)}' for variable, power in self.__variables.items()])
+            coefficient = round_decimal(self._coefficient) if self._coefficient not in (-1, 1) else '-' if self.coefficient == -1 else ''
+            variables = '*'.join([f'{variable}' if power == 1 else f'{variable}^{round_decimal(power)}' for variable, power in self.__variables.items()])
+            return f'{coefficient}{variables}'
         result = str(round_decimal(self._coefficient))
         return result
 
@@ -396,7 +398,8 @@ class Mono(IExpression, IPlottable, IScatterable):
         return self.__variables in ({}, None)
 
     def latex(self):
-        return f'{self._coefficient}*{'*'.join([f'{variable}^{{{power}}}' if self._coefficient >= 0 else f'({variable}^{{{power}}})' for variable, power in self.__variables.items()])} '
+        variables = '*'.join([f'{variable}^{{{power}}}' if self._coefficient >= 0 else f'({variable}^{{{power}}})' for variable, power in self.__variables.items()])
+        return f'{self._coefficient}*{variables} '
 
     def to_dict(self):
         return {'type': 'Mono', 'coefficient': self._coefficient, 'variables_dict': self.__variables}

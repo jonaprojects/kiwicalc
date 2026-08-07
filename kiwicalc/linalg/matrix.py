@@ -225,12 +225,11 @@ class Matrix:
     def get_rank(self, copy=True) -> int:
         my_matrix = self.__copy__() if copy else self
         my_matrix.gauss()
-        min_span: int = len(my_matrix)
         num_of_zeroes_lines = 0
         for row in my_matrix:
             if all((item == 0 for item in row)):
                 num_of_zeroes_lines += 1
-        return num_of_zeroes_lines - num_of_zeroes_lines
+        return my_matrix.num_of_rows - num_of_zeroes_lines
 
     def __zero_line(self, row: Iterable) -> int:
         return 1 if all((element == 0 for element in row)) else 0
@@ -310,7 +309,7 @@ class Matrix:
         return sum(self._matrix[row_index]) / self._num_of_columns
 
     def average_in_column(self, column_index: int):
-        return sum((row[column_index] for row in self._matrix))
+        return sum((row[column_index] for row in self._matrix)) / self._num_of_rows
 
     def __iadd__(self, other: 'Union[IExpression, int, float, Matrix, np.array]'):
         if isinstance(other, (int, float, IExpression)):
@@ -329,7 +328,7 @@ class Matrix:
 
     def __isub__(self, other: 'Union[IExpression, int, float, Matrix, np.array]'):
         if isinstance(other, (int, float, IExpression)):
-            self.subtract_from_all(other)
+            self.subtract_from_all(-other)
             return self
         elif isinstance(other, Matrix):
             if self.shape != other.shape:
@@ -546,9 +545,7 @@ class Matrix:
         """Matrix multiplication. Can also be done via the '@' operator. """
         if isinstance(other, Iterable) and (not isinstance(other, Matrix)):
             other = Matrix(other)
-        print(self)
-        print(other)
-        if self.shape[1] != other.shape[0] and self.shape[0] != other.shape[1]:
+        if self.shape[1] != other.shape[0]:
             raise ValueError(f"The matrices aren't suitable for multiplications: Shapes {self.shape} and {other.shape} ")
         result = []
         columns = list(other.columns())

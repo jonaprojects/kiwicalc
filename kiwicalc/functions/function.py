@@ -62,7 +62,8 @@ class Function(IPlottable, IScatterable):
             first_equal_index = self.__func.find('=')
             if first_equal_index == -1:
                 self.__variables = list(extract_variables_from_expression(func))
-                self.__func_signature = f'f({','.join(self.__variables)})'
+                variable_names = ','.join(self.__variables)
+                self.__func_signature = f'f({variable_names})'
                 self.__func_expression = func
                 self.__func = self.__func_signature + '=' + self.__func_expression
             else:
@@ -82,7 +83,8 @@ class Function(IPlottable, IScatterable):
             self.__num_of_variables = len(self.__variables)
             self.__lambda_expression = func.to_lambda()
             self.__func_expression = func.__str__().replace('^', '**')
-            self.__func_signature = f'f({','.join(self.__variables)}'
+            variable_names = ','.join(self.__variables)
+            self.__func_signature = f'f({variable_names}'
             self.__func = f'{self.__func_signature})={self.__func_expression}'
             self.classify_function()
         elif not isinstance(func, str):

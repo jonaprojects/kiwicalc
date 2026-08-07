@@ -94,7 +94,7 @@ def worksheet(path: str=None, dtype='linear', num_of_pages: int=1, equations_per
 
 def create_pdf(path: str, title='Worksheet', lines=()) -> bool:
     try:
-        c = Canvas(path)
+        c = Canvas(os.fspath(path))
         c.setFontSize(22)
         c.drawString(50, 800, title)
         textobject = c.beginText(2 * cm, 26 * cm)
@@ -111,7 +111,7 @@ def create_pdf(path: str, title='Worksheet', lines=()) -> bool:
         return False
 
 def create_pages(path: str, num_of_pages: int, titles, lines):
-    c = Canvas(path)
+    c = Canvas(os.fspath(path))
     for i in range(num_of_pages):
         c.setFontSize(22)
         c.drawString(50, 800, titles[i])

@@ -162,8 +162,8 @@ class Point:
 
     def __str__(self):
         if all((isinstance(coordinate, (int, float)) for coordinate in self._coordinates)):
-            return f'({','.join((str(round(coordinate, 3)) for coordinate in self._coordinates))})'
-        return f'({','.join((coordinate.__str__() for coordinate in self._coordinates))})'
+            return '(' + ','.join((str(round(coordinate, 3)) for coordinate in self._coordinates)) + ')'
+        return '(' + ','.join((coordinate.__str__() for coordinate in self._coordinates)) + ')'
 
     def __copy__(self):
         return Point(self._coordinates)
@@ -250,7 +250,7 @@ class Line2D(IPlottable):
             raise TypeError(f"Invalid type for param 'point2' when creating a Line object.")
 
     def middle(self):
-        return Point2D((self._point1.x + self._point2) / 2, (self._point1.y + self._point2.y) / 2)
+        return Point2D((self._point1.x + self._point2.x) / 2, (self._point1.y + self._point2.y) / 2)
 
     def length(self):
         inside_root = (self._point1.x - self._point2.x) ** 2 + (self._point1.y - self._point2.y) ** 2
@@ -262,7 +262,7 @@ class Line2D(IPlottable):
         x1, x2 = (self._point1.x, self._point2.x)
         y1, y2 = (self._point1.y, self._point2.y)
         numerator, denominator = (y2 - y1, x2 - x1)
-        if denominator is None:
+        if denominator == 0:
             warnings.warn("There's no slope for a single x value with two y values.")
             return None
         return numerator / denominator
@@ -416,6 +416,12 @@ class Circle(IPlottable):
             center_x_eval = self.center_x.try_evaluate()
             center_y_eval = self.center_y.try_evaluate()
         if None not in (radius_eval, center_x_eval, center_y_eval):
+            if isinstance(x, IExpression):
+                x = x.try_evaluate()
+            if isinstance(y, IExpression):
+                y = y.try_evaluate()
+            if None in (x, y):
+                raise ValueError('The point coordinates must evaluate to real numbers')
             if x > center_x_eval + radius_eval:
                 return False
             if x < center_x_eval - radius_eval:

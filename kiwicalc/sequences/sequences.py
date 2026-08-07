@@ -116,6 +116,8 @@ class GeometricSeq(Sequence, IPlottable):
         return result
 
     def sum_first_n(self, n: int) -> float:
+        if self.__ratio == 1:
+            return self.__first * n
         return self.__first * (self.__ratio ** n - 1) / (self.__ratio - 1)
 
     def __repr__(self):
@@ -150,7 +152,7 @@ class ArithmeticProg(Sequence):
 
     @property
     def first(self):
-        return self.__difference
+        return self.__first
 
     @property
     def difference(self):

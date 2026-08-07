@@ -50,7 +50,9 @@ class Occurrence:
     def union(self, *occurrences):
         result = self.chance
         for occurrence in occurrences:
-            result += occurrence.chance + result - self.intersection(occurrence)
+            if isinstance(occurrence, (int, float)):
+                occurrence = Occurrence(occurrence)
+            result = result + occurrence.chance - result * occurrence.chance
         return result
 
     def __str__(self):
@@ -143,7 +145,7 @@ class ProbabilityTree:
 
     @staticmethod
     def __to_dict_json(tree):
-        root = tree.root()
+        root = tree.root
         nodes = [children for children in ZigZagGroupIter(root)]
         new_dict = {}
         for level_nodes in nodes:
@@ -225,9 +227,7 @@ class ProbabilityTree:
 
     @staticmethod
     def get_level_sum(node: Node):
-        if not node.siblings:
-            return node.name.chance
-        return node.name.chance + reduce(lambda a, b: a.name.chance + b.name.chance, node.siblings).name.chance
+        return sum(current.name.chance for current in (node,) + node.siblings)
 
     def num_of_nodes(self):
         return sum((len(children) for children in ZigZagGroupIter(self.__root)))
@@ -296,9 +296,9 @@ class ProbabilityTree:
         """
         if isinstance(node, Node):
             for current_node in PreOrderIter(self.__root):
-                if current_node is Node or current_node == node:
+                if current_node == node:
                     return True
-                return False
+            return False
         elif isinstance(node, str):
             for current_node in PreOrderIter(self.__root):
                 if current_node.name.identifier == node:

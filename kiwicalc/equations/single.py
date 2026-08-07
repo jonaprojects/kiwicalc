@@ -775,7 +775,8 @@ class QuadraticEquation(Equation):
             for i in range(num_of_equations):
                 equ, sol = QuadraticEquation.random(values=solutions_range, digits_after=digits_after, get_solutions=True)
                 equations.append(f'{i + 1}. {equ}')
-                solutions.append(f'{i + 1}. {', '.join(sol)}')
+                joined_solutions = ', '.join(sol)
+                solutions.append(f'{i + 1}. {joined_solutions}')
             lines.extend((equations, solutions))
         else:
             equations = []
@@ -799,7 +800,8 @@ class QuadraticEquation(Equation):
                 for j in range(equations_per_page):
                     equ, sol = QuadraticEquation.random(values=solutions_range, digits_after=digits_after, get_solutions=True)
                     equations.append(f'{i + 1}. {equ}')
-                    solutions.append(f'{i + 1}. {', '.join(sol)}')
+                    joined_solutions = ', '.join(sol)
+                    solutions.append(f'{i + 1}. {joined_solutions}')
                 lines.extend((equations, solutions))
             create_pages(path=path, num_of_pages=num_of_pages * 2, titles=titles, lines=lines)
         else:

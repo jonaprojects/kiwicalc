@@ -49,6 +49,19 @@ class LessOrEqual(Operator):
     def __init__(self):
         super(LessOrEqual, self).__init__('<=', operator.le)
 
+
+def range_operator_from_string(operator_string: str) -> Operator:
+    operators = {
+        '>': GreaterThan,
+        '>=': GreaterOrEqual,
+        '<': LessThan,
+        '<=': LessOrEqual,
+    }
+    try:
+        return operators[operator_string.strip()]()
+    except KeyError as exc:
+        raise ValueError(f'Unsupported range operator: {operator_string!r}') from exc
+
 class TrigoMethods(Enum):
     SIN = (sin,)
     ASIN = (asin,)

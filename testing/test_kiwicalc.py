@@ -32,6 +32,12 @@ class TestOutsideMethods(unittest.TestCase):
         self.assertEqual(kw.float_gcd(0, 0.5), 0)
         self.assertEqual(kw.float_gcd(-2, -4), -2)
 
+    def test_expression_integration_methods(self):
+        x = kw.Var('x')
+        self.assertAlmostEqual(x.reinman(0, 1, 101), 0.505)
+        self.assertAlmostEqual(x.trapz(0, 1, 100), 0.5)
+        self.assertAlmostEqual(x.simpson(0, 1, 101), 0.5)
+
 
 class TestMono(unittest.TestCase):
     """ check whether the Mono Class operates as it should"""

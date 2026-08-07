@@ -517,7 +517,7 @@ def format_matplot_polynomial(expression: str):
             else:
                 skip -= 1
         expressions[index] = f'{accumulator}'
-    return f'{''.join(expressions)}'
+    return ''.join(expressions)
 
 def format_matplot_function(expression: str):
     raise NotImplementedError

@@ -1,5 +1,6 @@
 from __future__ import annotations
 import math
+import re
 import warnings
 from typing import Union, Tuple, List, Optional, Any, Callable, Iterator, Iterable, Set
 import numpy as np
@@ -8,17 +9,20 @@ import matplotlib.pyplot as plt
 from kiwicalc.core.utils import decimal_range, is_number
 from kiwicalc.core.operators import (
     Operator, GreaterThan, LessThan, GreaterOrEqual, LessOrEqual,
-    GREATER_THAN, GREATER_OR_EQUAL, LESS_THAN, LESS_OR_EQUAL
+    GREATER_THAN, GREATER_OR_EQUAL, LESS_THAN, LESS_OR_EQUAL,
+    range_operator_from_string
 )
+from kiwicalc.core.interfaces import IExpression
 
 class Range:
     __slots__ = ['__expression', '__minimum', '__maximum', '__min_operator', '__max_operator']
 
     def __init__(self, expression: 'Union[str,IExpression, Function, int, float]', limits: Union[set, list, tuple]=None, operators: Union[set, list, tuple]=None, dtype='poly', copy: bool=True):
+        from kiwicalc.expressions.mono import Mono
+
         if isinstance(expression, str):
-            self.__expression, (self.__minimum, self.__maximum), (self.__min_operator, self.__max_operator) = create_range(expression, get_tuple=True)
-            return
-        elif isinstance(expression, (IExpression, Function)):
+            expression, limits, operators = create_range(expression, get_tuple=True)
+        if isinstance(expression, IExpression):
             self.__expression = expression.__copy__() if copy else expression
         elif isinstance(expression, (int, float)):
             self.__expression = Mono(expression)
@@ -32,7 +36,7 @@ class Range:
             self.__minimum = limits[0]
         elif isinstance(limits[0], (int, float)):
             self.__minimum = Mono(limits[0])
-        elif isinstance(limits[0], (IExpression, Function)):
+        elif isinstance(limits[0], IExpression):
             self.__minimum = limits[0].__copy__() if copy else limits[0]
         elif limits[0] is None:
             self.__minimum = -np.inf
@@ -42,10 +46,10 @@ class Range:
             self.__maximum = limits[1]
         elif isinstance(limits[1], (int, float)):
             self.__maximum = Mono(limits[1])
-        elif isinstance(limits[1], (IExpression, Function)):
+        elif isinstance(limits[1], IExpression):
             self.__maximum = limits[1].__copy__() if copy else limits[1]
         elif limits[1] is None:
-            self.__maximum = -np.inf
+            self.__maximum = np.inf
         else:
             raise TypeError("Maximum of the range must be of type 'IExpression', 'Function', None, and inf ")
         if not isinstance(operators, (list, set, tuple)):
@@ -147,7 +151,7 @@ class RangeCollection:
 
     def chain(self, range_obj: Range, copy=False):
         if not isinstance(range_obj, Range):
-            return TypeError(f"Invalid type {type(range_obj)} for chaining Ranges. Expected type: 'Range' ")
+            raise TypeError(f"Invalid type {type(range_obj)} for chaining Ranges. Expected type: 'Range' ")
         self._ranges.append(range_obj.__copy__() if copy else range_obj)
         return self
 
@@ -176,7 +180,12 @@ class RangeOR(RangeCollection):
         super(RangeOR, self).__init__(ranges)
 
     def try_evaluate(self):
-        pass
+        results = [my_range.try_evaluate() for my_range in self._ranges]
+        if any(result is True for result in results):
+            return True
+        if all(result is False for result in results):
+            return False
+        return None
 
     def simplify(self) -> Optional[Union[Range, RangeCollection]]:
         pass
@@ -200,7 +209,12 @@ class RangeAND(RangeCollection):
         super(RangeAND, self).__init__(ranges)
 
     def try_evaluate(self):
-        pass
+        results = [my_range.try_evaluate() for my_range in self._ranges]
+        if any(result is False for result in results):
+            return False
+        if all(result is True for result in results):
+            return True
+        return None
 
     def simplify(self) -> Optional[Union[Range, RangeCollection]]:
         pass
@@ -209,7 +223,7 @@ class RangeAND(RangeCollection):
         return ' and '.join((f'({my_range.__str__()})' if isinstance(my_range, RangeCollection) else my_range.__str__() for my_range in self._ranges))
 
     def __copy__(self):
-        return RangeOR(self._ranges, copy=True)
+        return RangeAND(self._ranges, copy=True)
 
 def values_in_range(func: Callable, start: float, end: float, step: float, round_results: bool=False):
     """
@@ -226,13 +240,12 @@ def values_in_range(func: Callable, start: float, end: float, step: float, round
     else:
         values = [_ for _ in decimal_range(start, end, step)]
         results = [func(i) for i in values]
-    for index, result in enumerate(results):
-        if result is None:
-            del results[index]
-            del values[index]
-        elif isinstance(result, bool):
-            results[index] = float(result)
-    return (values, results)
+    filtered = [
+        (value, float(result) if isinstance(result, bool) else result)
+        for value, result in zip(values, results)
+        if result is not None
+    ]
+    return ([value for value, _ in filtered], [result for _, result in filtered])
 
 def create_range(expression: str, min_dtype: str='poly', expression_dtype: str='poly', max_dtype='poly', get_tuple=False):
     from kiwicalc.expressions.factory import create
