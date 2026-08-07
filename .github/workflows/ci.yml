@@ -22,8 +22,6 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            python-version: "3.8"
-          - os: ubuntu-latest
             python-version: "3.12"
           - os: windows-latest
             python-version: "3.12"
