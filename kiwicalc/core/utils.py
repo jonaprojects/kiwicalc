@@ -567,7 +567,8 @@ def format_poly_dict(algebraic_dict: dict):
             if power == int(power):
                 power = int(power)
             if power == 1:
-                accumulator += f'{coefficient}{expression[:expression.find('**')]}'
+                variable = expression[:expression.find('**')]
+                accumulator += f'{coefficient}{variable}'
             elif power == 0:
                 algebraic_dict['number'] += 1
             else:
