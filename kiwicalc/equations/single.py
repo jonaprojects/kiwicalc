@@ -457,15 +457,15 @@ class LinearEquation(Equation):
         if len(variables) < 2:
             first_side, second_side = (self.first_side, self.second_side)
             accumulator = '\x1b[1m1. First step: recognize that this equation only contains free numbers,and hence either it has no solutions, or it has infinite solutions \x1b[0m\n'
-            accumulator += f'\x1b[93m{first_side.replace('+', ' +').replace('-', ' -')}\x1b[0m'
+            accumulator += f"\x1b[93m{first_side.replace('+', ' +').replace('-', ' -')}\x1b[0m"
             accumulator += ' = '
-            accumulator += f'\x1b[93m{second_side.replace('+', ' +').replace('-', ' -')}\x1b[0m\n'
+            accumulator += f"\x1b[93m{second_side.replace('+', ' +').replace('-', ' -')}\x1b[0m\n"
             accumulator += '\x1b[1m2. Second Step: sum all the numbers in both sides\x1b[0m\n'
             first_expression = simplify_expression(expression=first_side, variables=variables)
             second_expression = simplify_expression(expression=first_side, variables=variables)
-            accumulator += f'\x1b[93m{first_expression['number']}\x1b[0m'
+            accumulator += f"\x1b[93m{first_expression['number']}\x1b[0m"
             accumulator += ' = '
-            accumulator += f'\x1b[93m{second_expression['number']}\x1b[0m\n'
+            accumulator += f"\x1b[93m{second_expression['number']}\x1b[0m\n"
             if first_expression['number'] == second_expression['number']:
                 accumulator += '\x1b[1mFinal Step:  The expression above is always true, and hence there are infinite solutions to the equation.\x1b[0m\n'
                 self._solution = 'Infinite'

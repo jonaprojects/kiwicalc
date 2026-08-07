@@ -965,11 +965,11 @@ class Poly(IExpression, IPlottable):
         return '\n'.join((value.__str__() for key, value in self.data().items()))
 
     def _format_report(self, data):
-        accumulator = [f'Function: {data['string']}']
+        accumulator = [f"Function: {data['string']}"]
         variables = ', '.join((variable for variable in data['variables']))
         accumulator.append(f'variables: {variables}')
         if len(data['variables']) == 1:
-            accumulator.append(f'coefficients: {data['coefficients']}')
+            accumulator.append(f"coefficients: {data['coefficients']}")
             roots = list(data['roots'])
             for index, root in enumerate(roots):
                 if isinstance(root, complex):
@@ -977,11 +977,11 @@ class Poly(IExpression, IPlottable):
                         roots[index] = round(root.real, 3)
             roots_string = ', '.join((str(root) for root in roots))
             accumulator.append(f'roots: {roots_string}')
-            accumulator.append(f'Intersection with the y axis: {round(data['y_intersection'], 3)}')
-            accumulator.append(f'Derivative: {data['derivative']}')
+            accumulator.append(f"Intersection with the y axis: {round(data['y_intersection'], 3)}")
+            accumulator.append(f"Derivative: {data['derivative']}")
             accumulator.append('Extremums Points:' + ','.join((extremum.__str__() for extremum in data['extremums'])))
-            accumulator.append(f'Up: {data['up']}')
-            accumulator.append(f'Down: {data['down']}')
+            accumulator.append(f"Up: {data['up']}")
+            accumulator.append(f"Down: {data['down']}")
         return accumulator
 
     def print_report(self):
@@ -1000,9 +1000,9 @@ class Poly(IExpression, IPlottable):
             textobject.textLine('')
         c.drawText(textobject)
         if len(variables) == 1:
-            plot_function(f'f({variables}) = {data['string']}', show=False)
+            plot_function(f"f({variables}) = {data['string']}", show=False)
         else:
-            plot_function_3d(f'f({variables}) = {data['string']}', show=False)
+            plot_function_3d(f"f({variables}) = {data['string']}", show=False)
         plt.savefig('tempPlot1146151.png')
         if len(data['variables']) == 1 or len(data['variables']) == 2:
             if len(data['variables']) == 1:

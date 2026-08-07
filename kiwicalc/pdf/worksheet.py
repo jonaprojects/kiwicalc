@@ -255,7 +255,7 @@ class PDFPolyFunction(PDFAnalyzeFunction):
             extremums_string = ', '.join((extremum.__str__() for extremum in data['extremums']))
             if not extremums_string:
                 extremums_string = 'None'
-            solution = f'\n            a. Domain: all \n            b. Derivative: {data['derivative']}\n            c. Extremums: {extremums_string}\n            d. Increase & Decrease: Increase: {data['up']}, Decrease: {data['down']}\n            e. Horizontal Asymptotes: Not Supported yet\n            f. Sketch: Not supported yet in this format.\n             '
+            solution = f"\n            a. Domain: all \n            b. Derivative: {data['derivative']}\n            c. Extremums: {extremums_string}\n            d. Increase & Decrease: Increase: {data['up']}, Decrease: {data['down']}\n            e. Horizontal Asymptotes: Not Supported yet\n            f. Sketch: Not supported yet in this format.\n             "
         else:
             solution = None
         super(PDFPolyFunction, self).__init__(exercise, dtype='poly', solution=solution, lang=lang)
