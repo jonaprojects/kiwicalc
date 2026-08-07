@@ -97,8 +97,9 @@ def create_pdf(path: str, title='Worksheet', lines=()) -> bool:
         c = Canvas(os.fspath(path))
         c.setFontSize(22)
         c.drawString(50, 800, title)
-        textobject = c.beginText(2 * cm, 26 * cm)
-        c.setFontSize(14)
+        textobject = c.beginText()
+        textobject.setTextOrigin(2 * cm, 26 * cm)
+        textobject.setFont('Helvetica', 14)
         for index, line in enumerate(lines):
             textobject.textLine(f'{index + 1}. {line.strip()}')
             textobject.textLine('')
@@ -115,8 +116,9 @@ def create_pages(path: str, num_of_pages: int, titles, lines):
     for i in range(num_of_pages):
         c.setFontSize(22)
         c.drawString(50, 800, titles[i])
-        textobject = c.beginText(2 * cm, 26 * cm)
-        c.setFontSize(14)
+        textobject = c.beginText()
+        textobject.setTextOrigin(2 * cm, 26 * cm)
+        textobject.setFont('Helvetica', 14)
         for index, line in enumerate(lines[i]):
             textobject.textLine(f'{lines[i][index]}')
             textobject.textLine('')
