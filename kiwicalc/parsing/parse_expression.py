@@ -4,6 +4,7 @@ from math import log, e
 import re
 import string
 import warnings
+import numpy as np
 from itertools import combinations
 from typing import Union, Tuple, List, Optional, Any, Callable, Iterator, Set, Dict, Iterable
 
@@ -276,37 +277,44 @@ def log_from_str(expression: str, get_tuple=False, dtype: str='poly'):
 
 def surface_from_str(input_string: str, get_coefficients=False):
     from kiwicalc.linalg.spaces import Surface
-    first_side, second_side = input_string.split('=')
-    first_coefficients = re.findall(number_pattern, first_side)
-    for index in range(0, 4 - len(first_coefficients), 1):
-        first_coefficients.append('0')
-    second_coefficients = re.findall(number_pattern, second_side)
-    for index in range(0, 4 - len(second_coefficients), 1):
-        second_coefficients.append('0')
-    for first_index, second_value in zip(range(len(first_coefficients)), second_coefficients):
-        first_coefficients[first_index] = float(first_coefficients[first_index]) - float(second_value)
+    first_side, second_side = input_string.split('=', 1)
+    variables = ('x', 'y', 'z')
+    first = ParseExpression.parse_linear(first_side, variables)
+    second = ParseExpression.parse_linear(second_side, variables)
+    coefficients = [first[variable] - second[variable] for variable in variables]
+    coefficients.append(first['free'] - second['free'])
     if get_coefficients:
-        return first_coefficients
-    return Surface(first_coefficients)
+        return coefficients
+    return Surface(coefficients)
 
 class ParseExpression:
 
     @staticmethod
     def parse_linear(expression, variables):
-        pass
+        parsed = ParseExpression.parse_polynomial(expression, variables=variables)
+        result = {'free': parsed['free']}
+        for variable in variables:
+            coefficients = parsed[variable]
+            if len(coefficients) > 1:
+                raise ValueError(f"Expected a linear expression, but found a power greater than 1 for '{variable}'")
+            result[variable] = coefficients[0] if coefficients else 0
+        return {variable: result[variable] for variable in variables} | {'free': result['free']}
 
     @staticmethod
-    def unparse_linear(variables_dict: dict, free_number: float):
+    def unparse_linear(variables_dict: dict, free_number: float=None):
         accumulator = []
         for variable, coefficients in variables_dict.items():
+            if variable == 'free':
+                continue
+            if isinstance(coefficients, (int, float)):
+                coefficients = (coefficients,)
             for coefficient in coefficients:
-                if coefficient == 0:
-                    continue
-                coefficient_str = format_coefficient(coefficient)
-                if coefficient > 0:
-                    accumulator.append(f'+{coefficient_str}{variable}')
-                else:
-                    accumulator.append(f'{coefficient_str}{variable}')
+                if coefficient != 0:
+                    coefficient_str = format_coefficient(coefficient)
+                    sign = '+' if coefficient > 0 else ''
+                    accumulator.append(f'{sign}{coefficient_str}{variable}')
+        if free_number is None:
+            free_number = variables_dict.get('free', 0)
         accumulator.append(format_free_number(free_number))
         result = ''.join(accumulator)
         if not result:
@@ -317,117 +325,44 @@ class ParseExpression:
 
     @staticmethod
     def parse_quadratic(expression: str, variables=None, strict_syntax=True):
-        expression = expression.replace(' ', '')
+        expression = expression.replace(' ', '').replace('**', '^')
         if variables is None:
             variables = get_equation_variables(expression)
         if strict_syntax:
             if len(variables) != 1:
                 raise ValueError(f'Strict quadratic syntax must contain exactly 1 variable, found {len(variables)}')
             variable = variables[0]
-            if '**' in expression:
-                expression = expression.replace('**', '^')
-            a_expression_index: int = expression.find(f'{variable}^2')
-            if a_expression_index == -1:
-                raise ValueError(f"Didn't find expression containing '{variable}^2' ")
-            elif a_expression_index == 0:
-                a = 1
-            else:
-                a = extract_coefficient(expression[:a_expression_index])
-            b_expression_index = expression.rfind(variable)
-            if b_expression_index == -1:
-                b = 0
-                c_str = expression[a_expression_index + 3:]
-            else:
-                b = extract_coefficient(expression[a_expression_index + 3:b_expression_index])
-                c_str = expression[b_expression_index + 1:]
-            if c_str == '':
-                c = 0
-            else:
-                c = extract_coefficient(c_str)
-            return {variable: [a, b], 'free': c}
-        else:
-            return ParseExpression.parse_polynomial(expression, variables, strict_syntax)
+            parsed = ParseExpression.parse_polynomial(expression, variables, strict_syntax=False)
+            if len(parsed[variable]) != 2:
+                raise ValueError(f"Didn't find a quadratic term containing '{variable}^2'")
+            return parsed
+        return ParseExpression.parse_polynomial(expression, variables, strict_syntax=False)
 
     @staticmethod
     def parse_cubic(expression: str, variables, strict_syntax=True):
-        expression = expression.replace(' ', '')
+        expression = expression.replace(' ', '').replace('**', '^')
         if strict_syntax:
-            print('reached here for cubic')
             if len(variables) != 1:
                 raise ValueError(f'Strict cubic syntax must contain exactly 1 variable, found {len(variables)}')
             variable = variables[0]
-            if '**' in expression:
-                expression = expression.replace('**', '^')
-            a_expression_index: int = expression.find(f'{variable}^3')
-            if a_expression_index == -1:
-                raise ValueError(f"Didn't find expression containing '{variable}^3' ")
-            elif a_expression_index == 0:
-                a = 1
-            else:
-                a = extract_coefficient(expression[:a_expression_index])
-            b_expression_index = expression.find(f'{variable}^2')
-            if b_expression_index == -1:
-                b_expression_index = a_expression_index
-                b = 0
-            else:
-                b = extract_coefficient(expression[a_expression_index + 3:b_expression_index])
-            c_expression_index = expression.rfind(variable)
-            if c_expression_index == -1:
-                c = 0
-                c_expression_index = b_expression_index
-            else:
-                c = extract_coefficient(expression[b_expression_index + 3:c_expression_index])
-            d_str = expression[c_expression_index + 1:]
-            if d_str == '':
-                d = 0
-            else:
-                d = extract_coefficient(d_str)
-            return {variable: [a, b, c], 'free': d}
-        else:
-            return ParseExpression.parse_polynomial(expression, variables, strict_syntax)
+            parsed = ParseExpression.parse_polynomial(expression, variables, strict_syntax=False)
+            if len(parsed[variable]) != 3:
+                raise ValueError(f"Didn't find a cubic term containing '{variable}^3'")
+            return parsed
+        return ParseExpression.parse_polynomial(expression, variables, strict_syntax=False)
 
     @staticmethod
     def parse_quartic(expression: str, variables, strict_syntax=True):
-        expression = expression.replace(' ', '')
+        expression = expression.replace(' ', '').replace('**', '^')
         if strict_syntax:
             if len(variables) != 1:
-                raise ValueError(f'Strict quadratic syntax must contain exactly 1 variable, found {len(variables)}')
+                raise ValueError(f'Strict quartic syntax must contain exactly 1 variable, found {len(variables)}')
             variable = variables[0]
-            if '**' in expression:
-                expression = expression.replace('**', '^')
-            a_expression_index: int = expression.find(f'{variable}^4')
-            if a_expression_index == -1:
-                raise ValueError(f"Didn't find expression containing '{variable}^4' ")
-            elif a_expression_index == 0:
-                a = 1
-            else:
-                a = extract_coefficient(expression[:a_expression_index])
-            b_expression_index = expression.find(f'{variable}^3')
-            if b_expression_index == -1:
-                b_expression_index = a_expression_index
-                b = 0
-            else:
-                b = extract_coefficient(expression[a_expression_index + 3:b_expression_index])
-            c_expression_index = expression.find(f'{variable}^2')
-            if c_expression_index == -1:
-                c = 0
-                c_expression_index = b_expression_index
-            else:
-                c = extract_coefficient(expression[b_expression_index + 3:c_expression_index])
-            d_expression_index = expression.rfind(variable)
-            if d_expression_index == -1:
-                d = 0
-                d_expression_index = c_expression_index
-            else:
-                d = extract_coefficient(expression[c_expression_index + 3:d_expression_index])
-            e_str = expression[d_expression_index + 1:]
-            if e_str == '':
-                e = 0
-            else:
-                e = extract_coefficient(e_str)
-            return {variable: [a, b, c, d], 'free': e}
-        else:
-            return ParseExpression.parse_polynomial(expression, variables)
+            parsed = ParseExpression.parse_polynomial(expression, variables, strict_syntax=False)
+            if len(parsed[variable]) != 4:
+                raise ValueError(f"Didn't find a quartic term containing '{variable}^4'")
+            return parsed
+        return ParseExpression.parse_polynomial(expression, variables, strict_syntax=False)
 
     @staticmethod
     def parse_polynomial(expression: str, variables=None, strict_syntax=True, numpy_array=False, get_variables=False):
@@ -457,6 +392,11 @@ class ParseExpression:
                         coefficient_list.insert(0, coefficient)
                 else:
                     coefficient_list[len(coefficient_list) - int(power)] += coefficient
+        if numpy_array and len(variables) == 1:
+            result = np.append(variables_dict[variables[0]], variables_dict['free'])
+            if not get_variables:
+                return result
+            return (result, variables)
         if not get_variables:
             return variables_dict
         return (variables_dict, variables)
@@ -494,7 +434,6 @@ class ParseExpression:
     @staticmethod
     def _parse_monomial(expression: str, variables):
         """ Extracting the coefficient an power from a monomial, this method is used while parsing polynomials"""
-        print(expression)
         variable_index = -1
         for suspect_variable in variables:
             suspect_variable_index = expression.find(suspect_variable)
@@ -525,26 +464,15 @@ class ParseExpression:
     def to_coefficients(expression: str, variable=None, strict_syntax=True, get_variable=False):
         expression = clean_from_spaces(expression)
         if variable is None:
-            variables = get_equation_variables(expression)
+            variables = sorted({character for character in expression if character.isalpha()})
             num_of_variables = len(variables)
             if num_of_variables == 0:
                 return [float(expression)]
             elif num_of_variables != 1:
                 raise ValueError(f'Can only parse polynomials with 1 variable, but got {num_of_variables}')
             variable = variables[0]
-        mono_expressions = split_expression(expression)
-        coefficients_list = [0]
-        for mono in mono_expressions:
-            coefficient, variable, power = ParseExpression._parse_monomial(mono, (variable,), strict_syntax)
-            if power == 0:
-                coefficients_list[-1] += coefficient
-            elif power > len(coefficients_list) - 1:
-                zeros_to_add = int(power) - len(coefficients_list)
-                for _ in range(zeros_to_add):
-                    coefficients_list.insert(0, 0)
-                coefficients_list.insert(0, coefficient)
-            else:
-                coefficients_list[len(coefficients_list) - int(power) - 1] += coefficient
+        parsed = ParseExpression.parse_polynomial(expression, variables=(variable,), strict_syntax=strict_syntax)
+        coefficients_list = list(parsed[variable]) + [parsed['free']]
         if not get_variable:
             return coefficients_list
         return (coefficients_list, variable)

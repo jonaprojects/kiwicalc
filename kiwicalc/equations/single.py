@@ -42,10 +42,9 @@ def solve_quadratic_from_str(expression, real=False, strict_syntax=False):
         if len(variables) == 0:
             return tuple()
         elif len(variables) == 1:
-            variable = variables[0]
-            parsed_dict = ParseEquation.parse_quadratic(expression, variables, strict_syntax=strict_syntax)
+            coefficients = ParseEquation.parse_quadratic(expression, strict_syntax=strict_syntax)
             solve_method = solve_quadratic_real if real else solve_quadratic
-            return solve_method(parsed_dict[variable][0], parsed_dict[variable][0], parsed_dict['free'])
+            return solve_method(*coefficients)
         else:
             raise ValueError("Can't solve a quadratic equation with more than 1 variable")
 
@@ -65,7 +64,7 @@ def solve_quadratic_real(a: Union[str, float], b: float, c: float) -> Optional[U
         return None
     if discriminant == 0:
         return (-b + sqrt(discriminant)) / (2 * a)
-    return ((-b + sqrt(discriminant)) / (2 * a), -b + sqrt(discriminant) / (2 * a))
+    return ((-b + sqrt(discriminant)) / (2 * a), (-b - sqrt(discriminant)) / (2 * a))
 
 def solve_quadratic_params(a: 'Union[IExpression, int, float,str]', b: 'Union[IExpression, int, float]', c: 'Union[IExpression,int,float]'):
     if isinstance(a, str):
@@ -87,7 +86,8 @@ def solve_quadratic_params(a: 'Union[IExpression, int, float,str]', b: 'Union[IE
     if all((isinstance(coefficient, (int, float)) for coefficient in (a, b, c))):
         return ((-b + sqrt(b ** 2 - 4 * a * c)) / (2 * a), (-b - sqrt(b ** 2 - 4 * a * c)) / (2 * a))
     else:
-        return ((-b + Sqrt(b ** 2 - 4 * a * c)) / (2 * a), (-b - Sqrt(b ** 2 - 4 * a * c)) / (2 * a))
+        discriminant_root = Sqrt(b ** 2 - 4 * a * c)
+        return ((-b + discriminant_root) / (2 * a), (-b + -discriminant_root) / (2 * a))
 
 def solve_cubic(a: float, b: float, c: float, d: float):
     """ Given the real coefficients of a cubic equation, this method will return the solutions"""
@@ -182,10 +182,10 @@ def solve_poly_by_factoring(coefficients):
     It won't always return all the solutions, but it is faster than many numerical root finding algorithms, and might
     even be preferable in some cases over these algorithms.
     """
-    if len(coefficients) == 3:
-        return solve_quadratic_real(coefficients[0], coefficients[1], coefficients[2])
     if coefficients is None:
         return {}
+    if len(coefficients) == 3:
+        return solve_quadratic_real(coefficients[0], coefficients[1], coefficients[2])
     most_significant = coefficients[0]
     free_number = coefficients[-1]
     possible_solutions = extract_possible_solutions(most_significant, free_number)
@@ -217,27 +217,9 @@ def solve_linear(equation: str, variables=None, get_dict=False, get_json=False):
         raise ValueError('Invalid equation caused an unexpected error')
 
 def solve_linear_inequality(equation: str, variables=None):
-    equal_sign_index = equation.find('=')
-    if equal_sign_index == -1:
-        bigger_sign_index = equation.find('>')
-        if bigger_sign_index == -1:
-            smaller_sign_index = equation.find('<')
-            if smaller_sign_index == -1:
-                raise ValueError('Invalid equation')
-            else:
-                sign = '<'
-        else:
-            sign = '>'
-    else:
-        bigger_sign_index = equation.find('>')
-        if bigger_sign_index == -1:
-            smaller_sign_index = equation.find('<')
-            if smaller_sign_index == -1:
-                sign = '<='
-            else:
-                sign = '='
-        else:
-            sign = '>='
+    sign = next((candidate for candidate in ('<=', '>=', '<', '>') if candidate in equation), None)
+    if sign is None:
+        raise ValueError('Invalid equation')
     expressions = equation.split(sign)
     if len(expressions) != 2:
         raise ValueError(f'Invalid equation')
@@ -348,10 +330,9 @@ class Equation(ABC):
             self._variables = list(variables)
             self._variables_dict = {variable: 0 for variable in variables}
             self._variables_dict['number'] = 0
+        self._solution = None
         if calc_now:
             self._solution = self.solve()
-        else:
-            self._solution = None
 
     @property
     def equation(self):
@@ -530,6 +511,11 @@ class LinearEquation(Equation):
         """
         Plot the solution of the linear equation, as the intersection of two linear functions ( in each side )
         """
+        # Keep these imports local to avoid a module-level cycle between equations,
+        # functions, and plotting.
+        from kiwicalc.functions.function import Function
+        from kiwicalc.plotting.plots import plot_functions
+
         if is_number(self.first_side):
             first_function = Function(f'f(x) = {self.first_side}')
         else:
@@ -817,7 +803,7 @@ class QuadraticEquation(Equation):
         return f'QuadraticEquation({self._equation}, variables={self._variables})'
 
     def __copy__(self):
-        return QuadraticEquation(equation=self._equation, variables=self._variables)
+        return QuadraticEquation(equation=self._equation, strict_syntax=self.__strict_syntax)
 
 class CubicEquation(Equation):
 
@@ -834,7 +820,7 @@ class CubicEquation(Equation):
         return solve_cubic(a, b, c, d)
 
     def coefficients(self):
-        return [self._variables_dict['x'][0], self._variables_dict[1], self._variables_dict[2]]
+        return self._variables_dict['x'] + [self._variables_dict['free']]
 
     @staticmethod
     def random(solutions_range: Tuple[float, float]=(-15, 15), digits_after: int=0, variable='x', get_solutions=False):
@@ -861,12 +847,12 @@ class CubicEquation(Equation):
         return f'CubicEquation({self._equation}, variables={self._variables})'
 
     def __copy__(self):
-        return CubicEquation(equation=self._equation, variables=self._variables)
+        return CubicEquation(equation=self._equation, strict_syntax=self.__strict_syntax)
 
 class QuarticEquation(Equation):
 
     def __init__(self, equation: str, variables: Iterable[Optional[str]]=None, strict_syntax=False):
-        self.__strict_syntax = self.__strict_syntax
+        self.__strict_syntax = strict_syntax
         super().__init__(equation, variables)
 
     def _extract_variables(self):
@@ -878,13 +864,11 @@ class QuarticEquation(Equation):
         return solve_quartic(a, b, c, d, e)
 
     def coefficients(self):
-        a, b, c = (self._variables_dict['a'], self._variables_dict['b'], self._variables_dict['c'])
-        d, e = (self._variables_dict['d'], self._variables_dict['e'])
-        return (a, b, c, d, e)
+        return self._variables_dict['x'] + [self._variables_dict['free']]
 
     @staticmethod
     def random(solutions_range: Tuple[float, float]=(-15, 15), digits_after: int=0, variable='x', get_solutions=False):
-        result = random_polynomial(degree=3, solutions_range=solutions_range, digits_after=digits_after, variable=variable, get_solutions=get_solutions)
+        result = random_polynomial(degree=4, solutions_range=solutions_range, digits_after=digits_after, variable=variable, get_solutions=get_solutions)
         if isinstance(result, str):
             return result + ' = 0'
         else:
@@ -907,7 +891,7 @@ class QuarticEquation(Equation):
         return f'QuarticEquation({self._equation}, variables={self._variables})'
 
     def __copy__(self):
-        return QuarticEquation(equation=self._equation, variables=self._variables)
+        return QuarticEquation(equation=self._equation, strict_syntax=self.__strict_syntax)
 
 class PolyEquation(Equation):
 
@@ -924,18 +908,18 @@ class PolyEquation(Equation):
                 if isinstance(first_side, (Mono, Poly)):
                     self.__first_expression = first_side.__copy__()
                 else:
-                    self.__first_expression = None
+                    self.__first_expression = Poly(first_side)
                 if isinstance(second_side, (Mono, Poly)):
                     self.__second_expression = second_side.__copy__()
                 else:
-                    self.__second_expression = None
+                    self.__second_expression = Poly(second_side)
                 equation = '='.join((str(first_side), str(second_side)))
             except TypeError:
                 raise TypeError(f"Unexpected type{type(first_side)} in PolyEquation.__init__().Couldn't convert the parameter to type str.")
         super().__init__(equation, variables)
 
     def solve(self):
-        return (self.__first_expression - self.__second_expression).roots()
+        return solve_polynomial(self.to_PolyExpr().coefficients())
 
     @property
     def solution(self):
@@ -1006,6 +990,8 @@ class PolyEquation(Equation):
 
     @staticmethod
     def random_worksheet(path=None, title='Equation Worksheet', num_of_equations=20, degrees_range=(2, 5), solutions_range=(-15, 15), digits_after: int=0, get_solutions=False):
+        from kiwicalc.pdf.worksheet import create_pdf, create_pages
+
         if get_solutions:
             expressions = [random_polynomial(random.randint(degrees_range[0], degrees_range[1]), solutions_range=solutions_range, digits_after=digits_after, get_solutions=get_solutions) for _ in range(num_of_equations)]
             equations = [f'{index + 1}. {expression[0]} = 0' for index, expression in enumerate(expressions)]
@@ -1016,6 +1002,8 @@ class PolyEquation(Equation):
 
     @staticmethod
     def random_worksheets(path=None, num_of_pages=2, equations_per_page=20, titles=None, degrees_range=(2, 5), solutions_range=(-15, 15), digits_after: int=0, get_solutions=False):
+        from kiwicalc.pdf.worksheet import create_pages
+
         if get_solutions:
             pages_list = []
             for i in range(num_of_pages):
@@ -1038,7 +1026,7 @@ class PolyEquation(Equation):
             create_pages(path, num_of_pages, titles, pages_list)
 
     def to_PolyExpr(self):
-        return Poly(self._equation)
+        return self.__first_expression - self.__second_expression
 
     def __str__(self):
         return self._equation

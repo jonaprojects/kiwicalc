@@ -14,23 +14,23 @@ class FunctionChain(FunctionCollection):
             raise ValueError('Cannot execute an empty FunctionChain object!')
         final_x = self._functions[0](*args)
         for index in range(1, len(self._functions)):
-            final_x = self._functions[index](*args)
+            final_x = self._functions[index](final_x)
         return final_x
 
     def execute_reverse(self, *args):
         if not len(self._functions):
             raise ValueError('Cannot execute an empty FunctionChain object!')
         final_x = self._functions[-1](*args)
-        for index in range(len(self._functions) - 2, 0, -1):
-            final_x = self._functions[index](*args)
+        for index in range(len(self._functions) - 2, -1, -1):
+            final_x = self._functions[index](final_x)
         return final_x
 
     def execute_indices(self, indices, *args):
         if not len(indices):
             raise ValueError('Cannot execute an empty FunctionChain object!')
-        final_x = indices[0](*args)
+        final_x = self._functions[indices[0]](*args)
         for index in indices[1:]:
-            final_x = self._functions[index](*args)
+            final_x = self._functions[index](final_x)
         return final_x
 
     def __call__(self, *args):
@@ -59,4 +59,7 @@ class FunctionChain(FunctionCollection):
         scatter_function(func=self.execute_all, start=start, stop=stop, step=step, ymin=ymin, ymax=ymax, title=title, fig=None, ax=None)
 
     def __getitem__(self, item):
-        return FunctionChain(*self._functions.__getitem__(item))
+        selected = self._functions.__getitem__(item)
+        if isinstance(item, slice):
+            return FunctionChain(*selected)
+        return selected

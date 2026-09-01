@@ -68,14 +68,14 @@ class Fraction(IExpression):
 
     @property
     def variables(self):
-        return self._numerator.variables_dict.union(self._denominator.variables_dict)
+        return set(self._numerator.variables).union(self._denominator.variables)
 
     def assign(self, **kwargs):
         self._numerator.assign(**kwargs)
         self._denominator.assign(**kwargs)
 
     def derivative(self):
-        return (self._numerator.derivative() * self._denominator - self._numerator * self._denominator.derivative) / self._denominator ** 2
+        return (self._numerator.derivative() * self._denominator - self._numerator * self._denominator.derivative()) / self._denominator ** 2
 
     def integral(self):
         pass
@@ -130,6 +130,7 @@ class Fraction(IExpression):
             elif isinstance(other, Fraction):
                 if self._denominator == other._denominator:
                     self._numerator += other._numerator
+                    return self
                 else:
                     return ExpressionSum((self, other))
             else:

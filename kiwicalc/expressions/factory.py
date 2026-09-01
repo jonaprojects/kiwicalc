@@ -24,12 +24,14 @@ def create(expression: str, dtype: str = 'poly'):
 
 def create_from_dict(given_dict: dict):
     from kiwicalc.expressions.mono import Mono
-    from kiwicalc.expressions.poly import Poly
+    from kiwicalc.expressions.poly import FastPoly, Poly
     from kiwicalc.expressions.trigonometry import TrigoExpr, TrigoExprs
     from kiwicalc.expressions.log import Log, Ln
     from kiwicalc.expressions.fractions import Fraction
     from kiwicalc.expressions.roots import Root
     from kiwicalc.expressions.special import Abs, Exponent, Factorial
+    from kiwicalc.expressions.sum import ExpressionSum
+    from kiwicalc.expressions.mul import ExpressionMul
     if isinstance(given_dict, (int, float)):
         return Mono(given_dict)
     expression_type = given_dict['type'].lower()
@@ -37,6 +39,8 @@ def create_from_dict(given_dict: dict):
         return Mono.from_dict(given_dict)
     elif expression_type == 'poly':
         return Poly.from_dict(given_dict)
+    elif expression_type == 'fastpoly':
+        return FastPoly.from_dict(given_dict)
     elif expression_type == 'trigoexpr':
         return TrigoExpr.from_dict(given_dict)
     elif expression_type == 'trigoexprs':
@@ -55,4 +59,8 @@ def create_from_dict(given_dict: dict):
         return Exponent.from_dict(given_dict)
     elif expression_type == 'factorial':
         return Factorial.from_dict(given_dict)
+    elif expression_type == 'expressionsum':
+        return ExpressionSum.from_dict(given_dict)
+    elif expression_type == 'expressionmul':
+        return ExpressionMul.from_dict(given_dict)
     raise ValueError(f"Unknown expression type '{expression_type}'")

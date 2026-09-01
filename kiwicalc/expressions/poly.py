@@ -51,13 +51,16 @@ class FastPoly(IExpression, IPlottable):
         if isinstance(polynomial, (int, float)):
             self.__variables = []
             self.__variables_dict = {'free': polynomial}
-        if isinstance(polynomial, str):
+        elif isinstance(polynomial, str):
             self.__variables_dict = ParseExpression.parse_polynomial(polynomial, self.__variables, strict_syntax=True)
             self.__variables_dict = ParseExpression.parse_polynomial(polynomial, self.__variables, strict_syntax=True)
         elif isinstance(polynomial, dict):
             if 'free' not in polynomial.keys():
                 raise KeyError(f"Key 'free' must appear in FastPoly.__init__() when entering dict. Its value is thefree number of the expression")
-            self.__variables_dict = polynomial.copy()
+            self.__variables_dict = {
+                key: value.copy() if isinstance(value, list) else value
+                for key, value in polynomial.items()
+            }
         elif isinstance(polynomial, (list, tuple)):
             if not polynomial:
                 raise ValueError(f'FastPoly.__init__(): At least one coefficient is required.')
@@ -102,18 +105,17 @@ class FastPoly(IExpression, IPlottable):
         return self.num_of_variables == 0 or len(self.__variables_dict.keys()) == 1
 
     def derivative(self) -> 'FastPoly':
+        from kiwicalc.core.utils import derivative
+
         num_of_variables = self.num_of_variables
         if num_of_variables == 0:
             return FastPoly(0)
         elif num_of_variables == 1:
             variable = self.__variables[0]
             derivative_coefficients = derivative(self.__variables_dict[variable] + [self.__variables_dict['free']])
-            free_number = derivative_coefficients[-1]
-            del derivative_coefficients[-1]
             if isinstance(derivative_coefficients, (int, float)):
-                derivative_coefficients = []
-                self.__variables_dict['free'] = derivative_coefficients
-            return FastPoly({variable: derivative_coefficients, 'free': free_number})
+                return FastPoly(derivative_coefficients)
+            return FastPoly(derivative_coefficients, variables=[variable])
         else:
             raise ValueError('Please use the partial_derivative() method for polynomials with several variables')
 
@@ -121,6 +123,9 @@ class FastPoly(IExpression, IPlottable):
         pass
 
     def extremums(self):
+        from kiwicalc.geometry.points import Point2D
+        from kiwicalc.geometry.point_collections import PointCollection
+
         num_of_variables = len(self.__variables)
         if num_of_variables == 0:
             return None
@@ -136,23 +141,32 @@ class FastPoly(IExpression, IPlottable):
             pass
 
     def integral(self, c: float=0, variable='x'):
+        from kiwicalc.core.utils import integral
+
         num_of_variables = len(self.__variables)
         if num_of_variables == 0:
             return FastPoly({variable: [self.__variables_dict['free']], 'free': c})
         elif num_of_variables != 1:
             raise ValueError('Cannot integrate a PolyFast object with more than 1 variable')
-        variables = self.__variables_dict[self.__variables[0]] + [self.__variables_dict['free']]
-        result = integral(variables, modify_original=True)
-        del result[-1]
-        return FastPoly({self.__variables[0]: result, 'free': c})
+        coefficients = self.__variables_dict[self.__variables[0]] + [self.__variables_dict['free']]
+        return FastPoly(integral(coefficients, c=c), variables=[self.__variables[0]])
 
     def newton(self, initial: float=0, epsilon: float=1e-05, nmax=10000):
+        from kiwicalc.numeric.roots import newton_raphson
+
         return newton_raphson(self.to_lambda(), self.derivative().to_lambda(), initial, epsilon, nmax)
 
     def halley(self, initial: float=0, epsilon: float=1e-05, nmax=10000):
+        from kiwicalc.numeric.roots import halleys_method
+
         first_derivative = self.derivative()
         second_derivative = first_derivative.derivative()
-        return halleys_method(self.to_lambda(), first_derivative.to_lambda(), second_derivative.to_lambda(), initial, epsilon, nmax)
+        second_callable = (
+            (lambda _: second_derivative.try_evaluate())
+            if second_derivative.num_of_variables == 0
+            else second_derivative.to_lambda()
+        )
+        return halleys_method(self.to_lambda(), first_derivative.to_lambda(), second_callable, initial, epsilon, nmax)
 
     def __add_or_sub(self, other: 'FastPoly', mode: str):
         for variable in other.__variables:
@@ -170,9 +184,9 @@ class FastPoly(IExpression, IPlottable):
             self.__variables_dict['free'] -= other.__variables_dict['free']
 
     def __iadd__(self, other: Union[IExpression, int, float]):
-        if other == 0:
-            return self
         if isinstance(other, (int, float)):
+            if other == 0:
+                return self
             self.__variables_dict['free'] += other
             return self
         if not isinstance(other, IExpression):
@@ -218,6 +232,7 @@ class FastPoly(IExpression, IPlottable):
             for index, coefficient in enumerate(self.__variables_dict[variable]):
                 self.__variables_dict['free'] += coefficient * value ** (coefficients_length - index)
             del self.__variables_dict[variable]
+            self.__variables.remove(variable)
 
     def simplify(self):
         warnings.warn('FastPoly objects are already simplified. Method is deprecated.')
@@ -228,7 +243,7 @@ class FastPoly(IExpression, IPlottable):
         return None
 
     def roots(self, epsilon=1e-05, nmax: int=10000):
-        from kiwicalc.numeric.roots import solve_polynomial, newton_raphson, halleys_method
+        from kiwicalc.equations.single import solve_polynomial
         num_of_variables = len(self.__variables)
         if num_of_variables == 0:
             return 'Infinite' if self.__variables_dict['free'] == 0 else None
@@ -286,7 +301,9 @@ class FastPoly(IExpression, IPlottable):
 
     @staticmethod
     def from_dict(given_dict: dict):
-        return FastPoly(given_dict)
+        if given_dict.get('type', '').strip().lower() != 'fastpoly':
+            raise ValueError("FastPoly.from_dict() expected a FastPoly serialization payload")
+        return FastPoly(given_dict['data'])
 
     @staticmethod
     def from_json(json_content: str):
@@ -848,7 +865,7 @@ class Poly(IExpression, IPlottable):
             raise ValueError('Discriminants are not supported yet for polynomials with degree 5 or more')
 
     def roots(self, epsilon=1e-06, nmax=10000):
-        from kiwicalc.numeric.roots import solve_polynomial, newton_raphson, halleys_method, laguerre_method, ostrowski_method
+        from kiwicalc.equations.single import solve_polynomial
         my_coefficients = self.coefficients()
         return solve_polynomial(my_coefficients, epsilon, nmax)
 
@@ -856,6 +873,9 @@ class Poly(IExpression, IPlottable):
         pass
 
     def extremums(self):
+        from kiwicalc.geometry.points import Point2D
+        from kiwicalc.geometry.point_collections import PointCollection
+
         num_of_variables = len(self.variables)
         if num_of_variables == 0:
             return None
@@ -883,7 +903,11 @@ class Poly(IExpression, IPlottable):
             return my_roots
 
     def up_and_down(self):
-        extremums_axes, my_derivative = self.extremums_axes(get_derivative=True)
+        axes_and_derivative = self.extremums_axes(get_derivative=True)
+        if axes_and_derivative is None:
+            extremums_axes, my_derivative = ([], self.derivative())
+        else:
+            extremums_axes, my_derivative = axes_and_derivative
         return self.__up_and_down(extremums_axes, my_derivative)
 
     def __up_and_down(self, extremums_axes, my_derivative=None):
@@ -941,6 +965,8 @@ class Poly(IExpression, IPlottable):
         """
         Get a dictionary that provides information about the polynomial: string, degree, coefficients, roots, extremums, up and down.
         """
+        from kiwicalc.geometry.points import Point2D
+
         variables = self.variables
         num_of_variables = len(variables)
         my_eval = self.try_evaluate()
@@ -1015,15 +1041,27 @@ class Poly(IExpression, IPlottable):
         c.save()
 
     def durand_kerner(self):
+        from kiwicalc.numeric.roots import durand_kerner
+
         return durand_kerner(self.to_lambda(), self.coefficients())
 
     def ostrowski(self, initial_value: float, epsilon=1e-05, nmax=10000):
+        from kiwicalc.numeric.roots import ostrowski_method
+
         return ostrowski_method(self.to_lambda(), self.derivative().to_lambda(), initial_value, epsilon, nmax)
 
     def laguerres(self, x0: float, epsilon=1e-05, nmax=100000):
+        from kiwicalc.numeric.roots import laguerre_method
+
         my_derivative = self.derivative()
-        second_derivative = self.derivative().to_lambda()
-        return laguerre_method(self.to_lambda(), my_derivative.to_lambda(), second_derivative, x0, epsilon, nmax)
+        second_derivative_expression = my_derivative.derivative()
+        second_derivative = (
+            (lambda _, constant=second_derivative_expression.try_evaluate(): constant)
+            if second_derivative_expression.num_of_variables == 0
+            else second_derivative_expression.to_lambda()
+        )
+        degree = len(self.coefficients()) - 1
+        return laguerre_method(self.to_lambda(), my_derivative.to_lambda(), second_derivative, x0, degree, epsilon, nmax)
 
     def halleys(self, initial_value=0, epsilon=1e-05, nmax=10000):
         """
@@ -1033,15 +1071,19 @@ class Poly(IExpression, IPlottable):
         :param epsilon:
         :return:
         """
+        from kiwicalc.numeric.roots import halleys_method
+
         f_0 = self
         f_1 = f_0.derivative()
         f_2 = f_1.derivative()
         f_0 = self.to_lambda()
         f_1 = f_1.to_lambda()
-        f_2 = f_2.to_lambda()
+        f_2 = (lambda _, constant=f_2.try_evaluate(): constant) if f_2.num_of_variables == 0 else f_2.to_lambda()
         return halleys_method(f_0, f_1, f_2, initial_value, epsilon, nmax)
 
     def newton(self, initial_value=0, epsilon=1e-05, nmax=10000):
+        from kiwicalc.numeric.roots import newton_raphson
+
         return newton_raphson(self.to_lambda(), self.derivative().to_lambda(), initial_value, epsilon, nmax)
 
     def __str__(self):
@@ -1191,12 +1233,14 @@ class Poly(IExpression, IPlottable):
             raise ValueError('Cannot plot a function with more than two variables_dict (As for this version)')
 
     def to_Function(self):
+        from kiwicalc.functions.function import Function
+
         return Function(self.__str__())
 
     def gcd(self):
         """Greatest common divisor of the expressions: for example, for the expression 3x^2 and 6x,
         the result would be 3x"""
-        gcd_coefficient = gcd(self.coefficients())
+        gcd_coefficient = abs(gcd([expression.coefficient for expression in self._expressions]))
         if any((not expression.variables_dict for expression in self._expressions)):
             return Mono(gcd_coefficient)
         gcd_algebraic = Mono(gcd_coefficient)

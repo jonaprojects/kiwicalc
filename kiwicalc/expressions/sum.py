@@ -140,6 +140,7 @@ class ExpressionSum(IExpression, IPlottable, IScatterable):
             for my_expression in self._expressions:
                 for other_expression in other._expressions:
                     final_expressions.append(my_expression * other_expression)
+            self._expressions = final_expressions
             result = self.to_poly()
             if result is not None:
                 return result
@@ -200,6 +201,8 @@ class ExpressionSum(IExpression, IPlottable, IScatterable):
             for my_expression in self._expressions:
                 my_expression /= other
             return self
+        if not isinstance(other, IExpression):
+            raise TypeError(f"Invalid type {type(other)} for dividing with 'ExpressionSum' class.")
         other_evaluation = other.try_evaluate()
         if other_evaluation is not None:
             if other == 0:
@@ -209,8 +212,6 @@ class ExpressionSum(IExpression, IPlottable, IScatterable):
             return self
         if isinstance(other, (ExpressionSum, Poly, TrigoExprs)):
             return Fraction(self, other)
-        if not isinstance(other, (int, float, IExpression)):
-            raise TypeError(f"Invalid type {type(other)} for dividing with 'ExpressionSum' class.")
         for my_expression in self._expressions:
             my_expression /= other
         result = self.to_poly()
@@ -319,15 +320,18 @@ class ExpressionSum(IExpression, IPlottable, IScatterable):
     def to_dict(self):
         return {'type': 'ExpressionSum', 'expressions': [expression.to_dict() for expression in self._expressions]}
 
-    def from_dict(self):
-        pass
+    @staticmethod
+    def from_dict(given_dict: dict):
+        if given_dict.get('type', '').strip().lower() != 'expressionsum':
+            raise ValueError("ExpressionSum.from_dict() expected an ExpressionSum serialization payload")
+        return ExpressionSum([create_from_dict(expression) for expression in given_dict['expressions']], copy=False)
 
     def __eq__(self, other: Union[IExpression, int, float]):
         """Tries to figure out whether the expressions are equal. May not apply to special cases such as trigonometric
         identities"""
         if isinstance(other, (int, float)):
-            if len(self._expressions) == 1:
-                return self._expressions[0] == other
+            evaluation = self.try_evaluate()
+            return evaluation is not None and evaluation == other
         elif isinstance(other, IExpression):
             if isinstance(other, ExpressionSum):
                 if len(self._expressions) != len(other._expressions):

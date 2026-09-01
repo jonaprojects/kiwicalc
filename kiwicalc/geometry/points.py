@@ -56,7 +56,7 @@ class Point:
         elif len(self._coordinates) == 3:
             fig = plt.figure(figsize=(4, 4))
             ax = fig.add_subplot(111, projection='3d')
-            ax.scatter2d(self._coordinates[0], self._coordinates[1], self._coordinates[2])
+            ax.scatter(self._coordinates[0], self._coordinates[1], self._coordinates[2])
         if show:
             plt.show()
 
@@ -85,7 +85,7 @@ class Point:
 
     def __radd__(self, other: 'Union[Iterable, Point]'):
         if isinstance(other, Iterable):
-            other = Point(Iterable)
+            other = Point(other)
         if isinstance(other, Point):
             return other.__add__(self)
         else:
@@ -96,7 +96,7 @@ class Point:
 
     def __rsub__(self, other: 'Union[Point,PointCollection]'):
         if isinstance(other, Iterable):
-            other = Point(Iterable)
+            other = Point(other)
         if isinstance(other, Point):
             return other.__sub__(self)
         else:
@@ -110,9 +110,9 @@ class Point:
                     other = other_evaluation
             for index in range(len(self._coordinates)):
                 self._coordinates[index] *= other
-                return self
+            return self
         elif isinstance(other, Point):
-            return reduce(lambda tuple1, tuple2: tuple1[0] * tuple2[0] + tuple1[1] * tuple2[1], zip(self._coordinates, other._coordinates))
+            return sum(coord1 * coord2 for coord1, coord2 in zip(self._coordinates, other._coordinates))
         elif isinstance(other, PointCollection):
             raise NotImplementedError("This feature isn't implemented yet in this version")
 
@@ -166,7 +166,9 @@ class Point:
         return '(' + ','.join((coordinate.__str__() for coordinate in self._coordinates)) + ')'
 
     def __copy__(self):
-        return Point(self._coordinates)
+        if type(self) is Point:
+            return Point(self._coordinates)
+        return type(self)(*self._coordinates)
 
     def __len__(self):
         return len(self._coordinates)
@@ -430,7 +432,7 @@ class Circle(IPlottable):
                 return False
             if y < center_y_eval - radius_eval:
                 return False
-            return True
+            return (x - center_x_eval) ** 2 + (y - center_y_eval) ** 2 <= radius_eval ** 2
         else:
             raise ValueError('This feature is only supported for Circles without any additional parameters')
 

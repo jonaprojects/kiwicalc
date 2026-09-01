@@ -485,18 +485,24 @@ class Abs(IExpression, IPlottable, IScatterable):
         warnings.warn('Derivatives are still experimental, and might not work for other algebraic expressionsrather than polynomials.')
         num_of_variables = len(self.variables)
         if num_of_variables == 0:
-            return lambda x: self.try_evaluate()
+            return Mono(0)
         assert num_of_variables == 1, 'Use partial derivatives of expressions with several variables.'
-        positive_expression = self._coefficient * self._expression ** self._power
-        try:
-            positive_derivative = positive_expression.derivative()
-        except:
-            return None
-        negative_derivative = -positive_derivative
+        coefficient = self._coefficient.try_evaluate()
+        power = self._power.try_evaluate()
+        if coefficient is None or power is None:
+            raise NotImplementedError('Abs derivatives with variable coefficients or powers are not supported')
+        if coefficient == 0 or power == 0:
+            return Mono(0)
+
+        inside_derivative = self._expression.derivative()
+        if isinstance(inside_derivative, (int, float)):
+            inside_derivative = Mono(inside_derivative)
+        magnitude = Abs(self._expression, power=power - 1)
+        sign = Fraction(self._expression, Abs(self._expression))
+        derivative = ExpressionMul((coefficient * power, magnitude, sign, inside_derivative))
         if get_derivatives:
-            return (positive_derivative, negative_derivative)
-        positive_derivative, negative_derivative = (positive_derivative.to_lambda(), positive_derivative.to_lambda())
-        return lambda x: positive_derivative(x) if x > 0 else negative_derivative(x) if x < 0 else 0
+            return (derivative, -derivative)
+        return derivative
 
     def integral(self, other):
         pass
@@ -695,16 +701,14 @@ class Exponent(IExpression):
                 return self._coefficient.derivative()
             if coefficient_eval is not None:
                 if power_eval is not None:
-                    expression = (coefficient_eval * self._base ** power_eval).derivative()
-                    if hasattr(expression, 'derivative'):
-                        return expression.derivative()
-                    warnings.warn("This kind of derivative isn't supported yet...")
-                    return None
+                    base_derivative = self._base.derivative()
+                    return coefficient_eval * power_eval * self._base ** (power_eval - 1) * base_derivative
                 elif base_eval is not None:
                     if base_eval < 0:
                         warnings.warn(f'The derivative of this expression is undefined')
                         return None
-                    return self * self._coefficient.derivative() * ln(base_eval)
+                    power_derivative = self._power.derivative()
+                    return self * power_derivative * ln(base_eval)
         else:
             raise ValueError('For derivatives with more than 1 variable, use partial derivatives')
 

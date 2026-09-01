@@ -349,17 +349,17 @@ class TrigoExpr(IExpression, IPlottable, IScatterable):
             return evaluated_coefficient
         if evaluated_coefficient is None or any((None in (inside, degree) for [method, inside, degree] in self._expressions)):
             return False
-        my_sum = 0
+        result = evaluated_coefficient
         for method, inside, degree in self._expressions:
             if isinstance(inside, IExpression):
                 inside = inside.try_evaluate()
                 if inside is None:
                     return None
             if method is None:
-                my_sum += inside
+                result *= inside
             else:
-                my_sum += method.value[0](inside ** degree)
-        return my_sum
+                result *= method.value[0](inside) ** degree
+        return result
 
     def derivative(self):
         length = len(self._expressions)
@@ -378,7 +378,7 @@ class TrigoExpr(IExpression, IPlottable, IScatterable):
                                 return self._coefficient * temp[1].derivative() * Cos(temp[1])
                             elif temp[0] == TrigoMethods.COS:
                                 return -self._coefficient * temp[1].derivative() * Sin(temp[1])
-                            elif temp == TrigoMethods.TAN:
+                            elif temp[0] == TrigoMethods.TAN:
                                 return self._coefficient * temp[1].derivative() * Sec(temp[1]) ** 2
                             elif temp[0] == TrigoMethods.COT:
                                 return -self._coefficient * temp[1].derivative() * Csc(temp[1]) ** 2
@@ -886,13 +886,17 @@ class TrigoExprs(ExpressionSum, IPlottable, IScatterable):
             expressions = TrigoExprs_from_str(expressions, get_list=True)
         if isinstance(expressions, Iterable):
             expressions_list = []
-            for index, expression in enumerate(expressions):
-                try:
-                    matching_index = next((index for index, existing in enumerate(expressions_list) if equal_ignore_order(existing.expressions, expression.expressions)))
-                    expressions_list[matching_index]._coefficient += expression.coefficient
-                except StopIteration:
-                    expressions_list.append(expression)
-            super(TrigoExprs, self).__init__([self._transform_expression(expression, dtype=dtype) for expression in expressions_list])
+            for expression in expressions:
+                transformed = self._transform_expression(expression, dtype=dtype)
+                if isinstance(transformed, TrigoExpr):
+                    try:
+                        matching_index = next((index for index, existing in enumerate(expressions_list) if isinstance(existing, TrigoExpr) and equal_ignore_order(existing.expressions, transformed.expressions)))
+                        expressions_list[matching_index]._coefficient += transformed.coefficient
+                    except StopIteration:
+                        expressions_list.append(transformed)
+                else:
+                    expressions_list.append(transformed)
+            super(TrigoExprs, self).__init__(expressions_list)
         else:
             raise TypeError(f'Unexpected  type {type(expressions)} in TrigoExpr.__init__(). Expected an iterable collection or a string.')
 
@@ -1123,7 +1127,7 @@ class TrigoExprs(ExpressionSum, IPlottable, IScatterable):
 
     @staticmethod
     def from_dict(given_dict: dict):
-        return TrigoExprs([TrigoExpr.from_dict(sub_dict) for sub_dict in given_dict['expressions']])
+        return TrigoExprs([create_from_dict(sub_dict) for sub_dict in given_dict['data']])
 
     def __eq__(self, other):
         result = super(TrigoExprs, self).__eq__(other)

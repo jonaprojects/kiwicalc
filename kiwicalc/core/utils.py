@@ -122,12 +122,18 @@ def taylor_polynomial(func: 'Union[Function, Poly, Mono]', n: int, a: float, var
     """This feature is under testing and development at the moment."""
     from kiwicalc.expressions.var import Var
     from kiwicalc.expressions.poly import Poly
-    mono_expressions = [func(a)]
+
+    def evaluate_at(expression):
+        if isinstance(expression, IExpression):
+            return expression.when(**{var: a}).try_evaluate()
+        return expression(a)
+
+    mono_expressions = [evaluate_at(func)]
     current_var = Var(var)
     ith_derivative = func
     for i in range(n):
         ith_derivative = ith_derivative.derivative()
-        expression = ith_derivative(a) / factorial(i + 1) * (current_var - a) ** (i + 1)
+        expression = evaluate_at(ith_derivative) / factorial(i + 1) * (current_var - a) ** (i + 1)
         mono_expressions.append(expression)
     return Poly(mono_expressions)
 
@@ -178,7 +184,9 @@ def handle_parenthesis(expression: str):
     """
     new_expression = ''
     for character_index in range(len(expression)):
-        if expression[character_index] == '(' and character_index > 0 and (expression[character_index - 1] not in ('+', '-', '*', '/', '%')):
+        if (expression[character_index] == '(' and character_index > 0
+                and expression[character_index - 1] not in ('+', '-', '*', '/', '%')
+                and not new_expression.endswith('*')):
             new_expression += '*'
         new_expression += expression[character_index]
         if expression[character_index] == ')' and character_index < len(expression) - 1 and (expression[character_index + 1] not in ('+', '-', '*', '/', '%', '!')):
@@ -414,12 +422,12 @@ def handle_abs(expression: str):
     for old, new in results.items():
         if is_evaluatable(new):
             before_index = copy.find(old) - 1
-            if before_index > 0 and copy[before_index].isalpha() or copy[before_index].isdigit():
+            if before_index >= 0 and (copy[before_index].isalpha() or copy[before_index].isdigit()):
                 copy = copy.replace(old, f'*{abs(eval(new))}')
             copy = copy.replace(old, str(abs(eval(new))))
         else:
             before_index = copy.find(old) - 1
-            if before_index > 0 and copy[before_index].isalpha() or copy[before_index].isdigit():
+            if before_index >= 0 and (copy[before_index].isalpha() or copy[before_index].isdigit()):
                 copy = copy.replace(old, f'*abs({new})')
             copy = copy.replace(old, f'abs({new})')
     return copy
@@ -427,24 +435,21 @@ def handle_abs(expression: str):
 def handle_factorial(expression):
     if '!' not in expression:
         return expression
-    copy1 = expression.replace(' ', '')
-    results = [res for res in re.findall(f'([a-zA-Z0-9]+!|[a-zA-Z0-9]*\\([^!]+\\)!)', copy1)]
-    for result in results:
-        if result.startswith('(') and result.endswith(')'):
-            result = result[1:-1]
-        new = f'factorial({result[:-1]})'
-        if is_evaluatable(result[:-1]):
-            before_index = copy1.find(result) - 1
-            value = factorial(eval(result[:-1]))
-            if before_index > 0 and copy1[before_index].isalpha() or copy1[before_index].isdigit():
-                copy1 = copy1.replace(result, f'*{value}')
-            copy1 = copy1.replace(result, str(value))
+    compact = expression.replace(' ', '')
+    pattern = re.compile(r'(\([^()!]+\)|[a-zA-Z0-9_.]+)!')
+
+    def replace_factorial(match):
+        token = match.group(1)
+        content = token[1:-1] if token.startswith('(') else token
+        if is_evaluatable(content):
+            replacement = str(factorial(eval(content)))
         else:
-            before_index = copy1.find(result) - 1
-            if before_index > 0 and copy1[before_index].isalpha() or copy1[before_index].isdigit():
-                copy1 = copy1.replace(result, f'*{new}')
-            copy1 = copy1.replace(result, f'{new}')
-    return copy1
+            replacement = f'factorial({content})'
+        if match.start() > 0 and (match.string[match.start() - 1].isalnum() or match.string[match.start() - 1] == ')'):
+            replacement = f'*{replacement}'
+        return replacement
+
+    return pattern.sub(replace_factorial, compact)
 
 def handle_trigo_calculation(expression: str):
     """ getting the result of a single trigonometric operation, e.g : sin(90) -> 1"""
@@ -455,7 +460,7 @@ def handle_trigo_calculation(expression: str):
     if coef == '' or coef is None or coef == '+':
         coef = 1
     elif coef == '-':
-        coef = 1
+        coef = -1
     else:
         coef = float(coef)
     parameter = expression[start_index] if expression[start_index].isdigit() or expression[start_index] == '-' else ''
@@ -463,7 +468,7 @@ def handle_trigo_calculation(expression: str):
         parameter += expression[i]
     if is_evaluatable(parameter):
         parameter = float(eval(parameter))
-    parameter = -float(parameter) if expression[0] == '-' else float(parameter)
+    parameter = float(parameter)
     return round_decimal(coef * TRIGONOMETRY_CONSTANTS[selected_operation](parameter))
 
 def handle_trigo_expression(expression: str):

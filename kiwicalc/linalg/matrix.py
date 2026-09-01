@@ -167,15 +167,15 @@ class Matrix:
     def subtract_from_all(self, expression):
         for row in self._matrix:
             for index in range(len(row)):
-                row[index] += expression
+                row[index] -= expression
 
     def apply_to_all(self, f: Callable):
         for row_index, row in enumerate(self._matrix):
             if isinstance(row, list):
                 for index, item in enumerate(row):
                     row[index] = f(item)
-                else:
-                    self._matrix[row_index] = f(row)
+            else:
+                self._matrix[row_index] = f(row)
 
     def gauss(self) -> None:
         """
@@ -328,7 +328,7 @@ class Matrix:
 
     def __isub__(self, other: 'Union[IExpression, int, float, Matrix, np.array]'):
         if isinstance(other, (int, float, IExpression)):
-            self.subtract_from_all(-other)
+            self.subtract_from_all(other)
             return self
         elif isinstance(other, Matrix):
             if self.shape != other.shape:
@@ -558,7 +558,7 @@ class Matrix:
 
     def filter_by_indices(self, predicate: Callable[[int, int], bool]):
         """get a filtered matrix based on the indices duos, starting from (0,0)"""
-        return [[copy_expression(item) for column_index, item in row if predicate(row_index, column_index)] for row_index, row in self._matrix]
+        return [[copy_expression(item) for column_index, item in enumerate(row) if predicate(row_index, column_index)] for row_index, row in enumerate(self._matrix)]
 
     def __getitem__(self, item: Union[Callable[[Any], bool], int, Iterable[int]]):
         if isinstance(item, int):
@@ -580,7 +580,7 @@ class Matrix:
         return column(self._matrix, index)
 
     def reversed_columns(self) -> 'Matrix':
-        return Matrix(matrix=list(reversed([column(self._matrix, i) for i in range(self.num_of_rows)])))
+        return Matrix(matrix=[list(reversed(row)) for row in self._matrix])
 
     def reversed_rows(self) -> 'Matrix':
         """
@@ -608,7 +608,7 @@ class Matrix:
                 yield (i, j)
 
     def __reversed__(self):
-        pass
+        return self.reversed_rows()
 
     def inverseWithNumpy(self, verbose=False):
         """ Returns the inverse of the matrix"""
@@ -667,9 +667,9 @@ class Matrix:
             return None
         return unit_matrix
 
-    def __len__(self) -> Tuple[int, int]:
-        """ Returns the lengths in this format: (num_of_rows,num_of_columns)"""
-        return (self._num_of_rows, self._num_of_columns)
+    def __len__(self) -> int:
+        """Return the number of rows, matching Python's collection protocol."""
+        return self._num_of_rows
 
     def __copy__(self) -> 'Matrix':
         if not isinstance(self._matrix[0], list):

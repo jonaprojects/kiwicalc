@@ -69,11 +69,12 @@ class TrigoMethods(Enum):
     ACOS = (acos,)
     TAN = (tan,)
     ATAN = (atan,)
-    COT = (atan,)
-    SEC = sec
-    CSC = csc
-    ASEC = asec
-    ACSC = acsc
+    COT = (cot,)
+    SEC = (sec,)
+    CSC = (csc,)
+    ACOT = (acot,)
+    ASEC = (asec,)
+    ACSC = (acsc,)
 
 def _TrigoMethodFromString(method_string: str):
     """ Method for internal use. DO NOT USE IT IF YOU'RE NOT IN THE KIWICALC DEVELOPERS TEAM"""

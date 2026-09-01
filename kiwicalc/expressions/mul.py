@@ -41,13 +41,14 @@ class ExpressionMul(IExpression, IPlottable, IScatterable):
     __slots__ = ['_coefficient', '_expressions']
 
     def __init__(self, expressions: Union[Iterable[Union[IExpression, float, int, str]], str], gen_copies=True):
+        self._coefficient = Mono(1)
         if isinstance(expressions, str):
             raise NotImplementedError
         else:
             self._expressions = list()
             for expression in expressions:
                 if isinstance(expression, (float, int)):
-                    self._expressions.append(Mono(expression))
+                    self._coefficient *= expression
                 elif isinstance(expression, IExpression):
                     if gen_copies:
                         self._expressions.append(expression.__copy__())
@@ -57,6 +58,7 @@ class ExpressionMul(IExpression, IPlottable, IScatterable):
                     raise NotImplementedError
                 else:
                     raise TypeError(f"Encountered an invalid type: '{type(expression)}', when creating a new Expression object.")
+            self.simplify()
 
     @property
     def expressions(self):
@@ -86,48 +88,70 @@ class ExpressionMul(IExpression, IPlottable, IScatterable):
         return variables
 
     def try_evaluate(self):
-        evaluated_expressions = [expression.try_evaluate() for expression in self._expressions]
-        if all(evaluated_expressions):
-            return sum(evaluated_expressions)
+        result = self._coefficient.try_evaluate()
+        if result is None:
+            return None
+        for expression in self._expressions:
+            evaluation = expression.try_evaluate()
+            if evaluation is None:
+                return None
+            result *= evaluation
+        return result
 
     def __split_expressions(self, num_of_expressions: int):
         return (ExpressionMul(self._expressions[:num_of_expressions // 2]), ExpressionMul(self._expressions[num_of_expressions // 2:]))
 
     def derivative(self):
-        print(f'calculating the derivative of {self}, num of expressions: {len(self._expressions)}')
         num_of_expressions = len(self._expressions)
         if num_of_expressions == 0:
-            return None
-        if num_of_expressions == 1:
-            return self._expressions[0].derivative()
-        elif num_of_expressions == 2:
-            first, second = (self._expressions[0], self._expressions[1])
-            return first.derivative() * second + second.derivative() * first
-        else:
-            expressionMul1, expressionMul2 = self.__split_expressions(num_of_expressions)
-            first_derivative, second_derivative = (expressionMul1.derivative(), expressionMul2.derivative())
-            if isinstance(first_derivative, (int, float)):
-                first_derivative = Mono(first_derivative)
-            if isinstance(second_derivative, (int, float)):
-                second_derivative = Mono(second_derivative)
-            return first_derivative * expressionMul2 + second_derivative * expressionMul1
+            return Mono(0)
+        coefficient = self._coefficient.try_evaluate()
+        coefficient = self._coefficient if coefficient is None else coefficient
+        terms = []
+        for derivative_index, expression in enumerate(self._expressions):
+            derivative = expression.derivative()
+            derivative_value = derivative.try_evaluate() if isinstance(derivative, IExpression) else derivative
+            derivative = derivative if derivative_value is None else derivative_value
+            factors = [coefficient, derivative]
+            factors.extend(
+                factor for index, factor in enumerate(self._expressions)
+                if index != derivative_index
+            )
+            terms.append(ExpressionMul(factors))
+        result = ExpressionSum(terms, copy=False)
+        polynomial = result.to_poly()
+        return polynomial if polynomial is not None else result
 
     def __copy__(self):
-        return ExpressionMul(self._expressions)
+        copied = ExpressionMul(self._expressions)
+        copied._coefficient = self._coefficient.__copy__()
+        return copied
 
     def __neg__(self):
         copy_of_self = self.__copy__()
-        copy_of_self._coefficient *= 1
+        copy_of_self._coefficient *= -1
         return copy_of_self
 
     def __iadd__(self, other):
         return ExpressionSum((self, other))
 
     def __isub__(self, other):
-        return ExpressionSum((self, other.__neg__()))
+        return ExpressionSum((self, -other))
 
     def __imul__(self, other):
-        self._expressions.append(other)
+        if isinstance(other, (int, float)):
+            self._coefficient *= other
+        elif isinstance(other, IExpression):
+            evaluation = other.try_evaluate()
+            if evaluation is not None:
+                self._coefficient *= evaluation
+            elif isinstance(other, ExpressionMul):
+                self._coefficient *= other._coefficient
+                self._expressions.extend(expression.__copy__() for expression in other._expressions)
+            else:
+                self._expressions.append(other.__copy__())
+        else:
+            raise TypeError(f"Invalid type {type(other)} for multiplying an ExpressionMul")
         return self
 
     def __itruediv__(self, other):
@@ -137,6 +161,7 @@ class ExpressionMul(IExpression, IPlottable, IScatterable):
         return Fraction(other, self)
 
     def __ipow__(self, power):
+        self._coefficient **= power
         for index, expression in enumerate(self._expressions):
             self._expressions[index] = expression.__pow__(power)
         return self
@@ -145,7 +170,11 @@ class ExpressionMul(IExpression, IPlottable, IScatterable):
         return Exponent(other, self)
 
     def __str__(self) -> str:
-        accumulator = f''
+        if self._coefficient == 0:
+            return '0'
+        if not self._expressions:
+            return str(self._coefficient)
+        accumulator = '' if self._coefficient == 1 else '-' if self._coefficient == -1 else f'{self._coefficient}*'
         for index, expression in enumerate(self._expressions):
             content = expression.__str__()
             if index > 0 and (not content.startswith('-')):
@@ -164,6 +193,8 @@ class ExpressionMul(IExpression, IPlottable, IScatterable):
             if None not in (my_evaluation, other_evaluation):
                 return my_evaluation == other_evaluation
             if isinstance(other, ExpressionMul):
+                if self._coefficient != other._coefficient:
+                    return False
                 if len(self._expressions) != len(other._expressions):
                     return False
                 return all(e in other._expressions for e in self._expressions)
@@ -178,10 +209,19 @@ class ExpressionMul(IExpression, IPlottable, IScatterable):
         return not self.__eq__(other)
 
     def to_dict(self):
-        pass
+        return {
+            'type': 'ExpressionMul',
+            'coefficient': self._coefficient.to_dict(),
+            'expressions': [expression.to_dict() for expression in self._expressions],
+        }
 
-    def from_dict(self):
-        pass
+    @staticmethod
+    def from_dict(given_dict: dict):
+        if given_dict.get('type', '').strip().lower() != 'expressionmul':
+            raise ValueError("ExpressionMul.from_dict() expected an ExpressionMul serialization payload")
+        result = ExpressionMul([create_from_dict(expression) for expression in given_dict['expressions']], gen_copies=False)
+        result._coefficient = create_from_dict(given_dict['coefficient'])
+        return result
 
 
 from kiwicalc.expressions.var import Var

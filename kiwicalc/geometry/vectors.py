@@ -26,6 +26,8 @@ class Vector:
         :param start_coordinate: The coordinate that represents the origin of the vector on an axis system.
         :param end_coordinate: The coordinate that represents the end of the vector on an axis system.
         """
+        if direction_vector is None and (start_coordinate is None or end_coordinate is None):
+            raise ValueError('A vector requires a direction, or both a start and end coordinate.')
         if start_coordinate is not None and end_coordinate is not None:
             if len(start_coordinate) != len(end_coordinate):
                 raise ValueError('Cannot handle with vectors with different dimensions in this version.')
@@ -39,10 +41,14 @@ class Vector:
                 raise TypeError(f"Couldn't convert from type {type(start_coordinate)} to list.expected types were tuple,list, set, and dict.")
             self._direction_vector = list([end_coordinate[i] - start_coordinate[i] for i in range(len(start_coordinate))])
         elif direction_vector is not None and start_coordinate is not None:
+            if len(direction_vector) != len(start_coordinate):
+                raise ValueError('Direction and start coordinate must have the same dimensions.')
             self._start_coordinate = list(start_coordinate)
             self._direction_vector = list(direction_vector)
             self._end_coordinate = [self._start_coordinate[i] + self._direction_vector[i] for i in range(len(self._start_coordinate))]
         elif direction_vector is not None and end_coordinate is not None:
+            if len(direction_vector) != len(end_coordinate):
+                raise ValueError('Direction and end coordinate must have the same dimensions.')
             self._end_coordinate = list(end_coordinate)
             self._direction_vector = list(direction_vector)
             self._start_coordinate = [self._end_coordinate[i] - self._direction_vector[i] for i in range(len(self._end_coordinate))]
@@ -103,6 +109,8 @@ class Vector:
         if isinstance(other, Iterable):
             other = Vector(other)
         if isinstance(other, Vector):
+            if len(self._direction_vector) != len(other._direction_vector):
+                raise ValueError('Cannot calculate a scalar product for vectors with different dimensions.')
             scalar_result = 0
             for a, b in zip(self._direction_vector, other._direction_vector):
                 scalar_result += a * b
@@ -153,6 +161,8 @@ class Vector:
             num_of_dimensions = random.randint(2, 9)
         direction = [random.randint(numbers_range[0], numbers_range[1]) for _ in range(num_of_dimensions)]
         start = [random.randint(numbers_range[0], numbers_range[1]) for _ in range(num_of_dimensions)]
+        if cls in (Vector2D, Vector3D):
+            return cls(*direction, start_coordinate=start)
         return cls(direction_vector=direction, start_coordinate=start)
 
     def general_point(self, var_name: str='x'):
@@ -240,6 +250,8 @@ class Vector:
         return self.multiply(other)
 
     def power_by_vector(self, other: 'Union[Iterable, Vector]'):
+        from kiwicalc.linalg.matrix import Matrix
+
         if not isinstance(other, (Iterable, Vector)):
             raise TypeError(f"Invalid type '{type(other)} to raise a vector by another vector ( vector1 ** vector2 )'")
         if isinstance(other, Iterator):
@@ -414,10 +426,12 @@ class VectorCollection:
 
     @vectors.setter
     def vectors(self, vectors):
-        if isinstance(vectors, (list, set, tuple, Vector)):
+        if isinstance(vectors, Vector):
             vectors = VectorCollection(vectors)
+        elif isinstance(vectors, (list, set, tuple)):
+            vectors = VectorCollection(*vectors)
         if isinstance(vectors, VectorCollection):
-            self.__vectors = vectors
+            self.__vectors = list(vectors.vectors)
         else:
             raise TypeError(f'Unexpected type {type(vectors)} in the setter property of vectors in class VectorCollection.\nExpected types VectorCollection, Vector, tuple, list, set')
 
@@ -507,7 +521,7 @@ class VectorCollection:
 
     def find(self, vec: Vector):
         for index, vector in enumerate(self.__vectors):
-            if vector.__eq__(vector) or vector is vec:
+            if vector == vec or vector is vec:
                 return index
         return -1
 
@@ -540,12 +554,11 @@ class VectorCollection:
         return self.__copy__().__iadd__(other)
 
     def __imul__(self, other):
-        if isinstance(other, Vector):
-            pass
-        elif isinstance(other, VectorCollection):
-            pass
-        else:
-            pass
+        if isinstance(other, (int, float, IExpression)):
+            for index in range(len(self.__vectors)):
+                self.__vectors[index] *= other
+            return self
+        raise TypeError(f'Invalid type {type(other)} for multiplying a VectorCollection object.')
 
     def __mul__(self, other):
         return self.__copy__().__imul__(other)
@@ -556,7 +569,8 @@ class VectorCollection:
         if other == 0:
             raise ValueError('Cannot divide a VectorCollection object by 0')
         for i in range(len(self.__vectors)):
-            self.__vectors[i] /= other
+            self.__vectors[i] *= 1 / other
+        return self
 
     def __truediv__(self, other):
         return self.__copy__().__itruediv__(other)
@@ -575,7 +589,7 @@ class VectorCollection:
             if isinstance(other, Iterable):
                 if isinstance(other[0], Iterable):
                     try:
-                        other = VectorCollection(other)
+                        other = VectorCollection(*other)
                     except (ValueError, TypeError):
                         try:
                             other = Vector(other)
@@ -610,10 +624,10 @@ class VectorCollection:
         return self.__vectors.__setitem__(key, value)
 
     def __delitem__(self, key):
-        return self.__delitem__(key)
+        return self.__vectors.__delitem__(key)
 
     def __copy__(self):
-        return VectorCollection(self.__vectors)
+        return VectorCollection(*(vector.__copy__() for vector in self.__vectors))
 
     def __contains__(self, other: Vector):
         if isinstance(other, Vector):

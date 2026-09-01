@@ -197,7 +197,7 @@ class Root(IExpression, IPlottable, IScatterable):
         if other == 1:
             return self
         if other == 0:
-            pass
+            return Mono(1)
         root_division = self._root / other
         if isinstance(root_division, IExpression):
             evaluated_division = root_division.try_evaluate()
@@ -303,17 +303,18 @@ class Root(IExpression, IPlottable, IScatterable):
             new_power = 1 / root_evaluation - 1
             new_root = 1 / new_power
             inside_derivative = self._inside.derivative()
+            derivative_coefficient = coefficient_evaluation / root_evaluation
             if new_power > 1:
-                monomial = Mono(coefficient=coefficient_evaluation, variables_dict={inside_variables: new_power})
+                monomial = Mono(coefficient=derivative_coefficient, variables_dict={inside_variables: new_power})
                 monomial *= inside_derivative
                 return monomial
             elif new_power == 0:
-                inside_derivative *= coefficient_evaluation
+                inside_derivative *= derivative_coefficient
                 return inside_derivative
             else:
                 if new_root == 1:
-                    return coefficient_evaluation * self._inside
-                inside_derivative *= coefficient_evaluation
+                    return derivative_coefficient * self._inside
+                inside_derivative *= derivative_coefficient
                 if new_root < 0:
                     return Fraction(numerator=inside_derivative, denominator=Root(coefficient=1, root_by=abs(new_root), inside=self._inside.__copy__()))
                 else:

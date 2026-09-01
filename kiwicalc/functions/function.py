@@ -154,6 +154,8 @@ class Function(IPlottable, IScatterable):
         elif self.__num_of_variables == 1:
             if contains_from_list(list(TRIGONOMETRY_CONSTANTS.keys()), self.__func_expression):
                 self.__classification = self.Classification.trigonometric
+            elif f'**{self.__variables[0]}' in self.__func_expression:
+                self.__classification = self.Classification.exponent
             elif f'{self.__variables[0]}**2' in self.__func_expression:
                 self.__classification = Function.Classification.quadratic
             elif f'{self.__variables[0]}**' in self.__func_expression:
@@ -220,6 +222,7 @@ class Function(IPlottable, IScatterable):
         """
         if self.__num_of_variables > 1:
             warnings.warn('Cannot give the range of functions with more than one variable!')
+            return
         for val in decimal_range(start, end, step):
             yield (val, self.compute_value(val))
 
@@ -231,7 +234,13 @@ class Function(IPlottable, IScatterable):
         from kiwicalc.expressions.factory import create
         try:
             my_type = self.__classification
-            poly_types = [self.Classification.linear, self.Classification.quadratic, self.Classification.polynomial, self.Classification.linear_several_parameters]
+            poly_types = [
+                self.Classification.linear,
+                self.Classification.quadratic,
+                self.Classification.polynomial,
+                self.Classification.linear_several_parameters,
+                self.Classification.non_linear_several_parameters,
+            ]
             if my_type in poly_types:
                 return Poly(self.__func_expression)
             elif my_type == self.Classification.trigonometric:
@@ -239,7 +248,8 @@ class Function(IPlottable, IScatterable):
             elif my_type == self.Classification.logarithmic:
                 return Log(self.__func_expression)
             elif my_type in (self.Classification.exponent, self.Classification.exponent_several_parameters):
-                return Exponent(self.__func_expression)
+                base, power = self.__func_expression.split('**', maxsplit=1)
+                return Exponent(Poly(base), Poly(power))
             else:
                 raise ValueError
         except:
@@ -277,7 +287,9 @@ class Function(IPlottable, IScatterable):
             my_expression = self.toIExpression()
             if my_expression is None or not hasattr(my_expression, 'partial_derivative'):
                 return None
-            return Function(my_expression.partial_derivative(variables).__str__())
+            derivative = my_expression.partial_derivative(variables)
+            signature = ','.join(self.__variables)
+            return Function(f'f({signature})={derivative}')
 
     def integral(self) -> 'Optional[Union[Function, int, float]]':
         """Computing the integral of the function. Currently without adding C"""
@@ -308,12 +320,15 @@ class Function(IPlottable, IScatterable):
         return Function.from_dict(json.loads(json_string))
 
     def trapz(self, a: float, b: float, N: int):
+        from kiwicalc.numeric.calculus import trapz
         return trapz(self.__lambda_expression, a, b, N)
 
     def simpson(self, a: float, b: float, N: int):
+        from kiwicalc.numeric.calculus import simpson
         return simpson(self.__lambda_expression, a, b, N)
 
     def reinman(self, a: float, b: float, N: int):
+        from kiwicalc.numeric.calculus import reinman
         return reinman(self.__lambda_expression, a, b, N)
 
     def range(self, start: float, end: float, step: float, round_results: bool=False):
@@ -367,7 +382,7 @@ class Function(IPlottable, IScatterable):
                 return self.compute_value(random_number)
             return Point2D(random_number, self.compute_value(random_number))
         else:
-            values = [random.randint(a, b) for _ in range(self.num_of_variables)] if custom_values is None else custom_values
+            values = [random.randint(a, b) for _ in range(self.num_of_variables)] if custom_values is None else list(custom_values)
             if not as_point:
                 if as_tuple:
                     return (values, self.compute_value(*values))
@@ -467,7 +482,9 @@ class Function(IPlottable, IScatterable):
             if isinstance(func_object, str) or is_lambda(func_object):
                 func_object = Function(func_object)
             if isinstance(func_object, Function):
-                values, results = func_object.range_gen(start, end, step)
+                pairs = list(func_object.range_gen(start, end, step))
+                values = [value for value, _ in pairs]
+                results = [result for _, result in pairs]
                 plt.plot(values, results)
             else:
                 raise TypeError(f'Invalid type for a function: type {type(func_object)} ')
@@ -489,8 +506,7 @@ class Function(IPlottable, IScatterable):
             warnings.warn('The use of this method for finding roots is not recommended!')
         if len(val_range) != 2:
             raise IndexError('The range of values must be an iterable containing 2 items: the minimum value, and the maximum.\nFor example, (0,10) ')
-        values, results = self.range_gen(val_range[0], val_range[1], step)
-        matching_values = [(value, result) for value, result in zip(values, results) if values is not None and result is not None and (abs(result) < epsilon)]
+        matching_values = [(value, result) for value, result in self.range_gen(val_range[0], val_range[1], step) if value is not None and result is not None and (abs(result) < epsilon)]
         return [(round_decimal(value), round_decimal(result)) for value, result in matching_values]
 
     def newton(self, initial_value: float):
@@ -501,6 +517,8 @@ class Function(IPlottable, IScatterable):
         :return: The closest root of the function to the given initial value.
 
         """
+        from kiwicalc.numeric.roots import newton_raphson
+
         if self.__lambda_expression is not None:
             return newton_raphson(self.__lambda_expression, self.derivative().__lambda_expression, initial_value)
         return newton_raphson(self, self.derivative(), initial_value)
@@ -532,20 +550,27 @@ class Function(IPlottable, IScatterable):
         """
         tries to find the max and min points
         """
+        from kiwicalc.equations.single import solve_polynomial
+
         if self.__classification not in (self.Classification.quadratic, self.Classification.polynomial, self.Classification.linear):
             raise NotImplementedError
         first_derivative = self.derivative()
+        if not isinstance(first_derivative, Function) or first_derivative.num_of_variables == 0:
+            return ([], [])
         second_derivative = first_derivative.derivative()
-        derivative_roots = aberth_method(first_derivative.lambda_expression, second_derivative.lambda_expression, first_derivative.coefficients())
-        derivative_roots = (root for root in derivative_roots if abs(root.imag) < 1e-06)
+        derivative_roots = solve_polynomial(first_derivative.coefficients()) or []
+        derivative_roots = (complex(root) for root in derivative_roots if abs(complex(root).imag) < 1e-06)
         max_points, min_points = ([], [])
         for derivative_root in list(derivative_roots):
-            val = second_derivative(derivative_root.real)
             value = derivative_root.real
+            if isinstance(second_derivative, Function):
+                val = second_derivative(value) if second_derivative.num_of_variables else second_derivative()
+            else:
+                val = second_derivative
             result = round_decimal(self.lambda_expression(value))
-            if val.real > 0:
+            if complex(val).real > 0:
                 min_points.append((value, result))
-            elif val.real < 0:
+            elif complex(val).real < 0:
                 max_points.append((value, result))
         return (max_points, min_points)
 
@@ -557,7 +582,10 @@ class Function(IPlottable, IScatterable):
             return FunctionChain(self, other_func)
         else:
             try:
-                return FunctionChain(self, Function(other_func))
+                parsed_function = Function(other_func)
+                if parsed_function.lambda_expression is None:
+                    raise ValueError(f'Invalid value {other_func} when creating a FunctionChain object')
+                return FunctionChain(self, parsed_function)
             except ValueError:
                 raise ValueError(f'Invalid value {other_func} when creating a FunctionChain object')
             except TypeError:
@@ -610,7 +638,7 @@ class Function(IPlottable, IScatterable):
         if isinstance(other, str):
             other = Function(other)
         if isinstance(other, Function):
-            if other.__num_of_variables != other.__num_of_variables:
+            if self.__num_of_variables != other.__num_of_variables:
                 return False
             for _ in range(3):
                 values, results = self.random(as_tuple=True)
@@ -624,10 +652,10 @@ class Function(IPlottable, IScatterable):
                 return False
             for _ in range(3):
                 values = [random.randint(1, 10) for _ in range(other_num_of_variables)]
-                my_results, other_results = (self.compute_value(*values), other.compute_value(*values))
+                my_results, other_results = (self.compute_value(*values), other(*values))
                 if my_results != other_results:
                     return False
-            return self.__lambda_expression.__code__.co_code == other.__lambda_expression.__code__.co_code
+            return self.__lambda_expression.__code__.co_code == other.__code__.co_code
         else:
             raise TypeError(f'Invalid type {type(other)} for equating, allowed types: Function,str,lambda expression')
 
@@ -710,7 +738,7 @@ class FunctionCollection(IPlottable, IScatterable):
 
     @property
     def num_of_functions(self):
-        return self._functions
+        return len(self._functions)
 
     @property
     def variables(self):
@@ -746,7 +774,7 @@ class FunctionCollection(IPlottable, IScatterable):
             self._functions.append(function)
 
     def values(self, *args, **kwargs):
-        pass
+        return [function(*args, **kwargs) for function in self._functions]
 
     def random_function(self):
         return random.choice(self._functions)
@@ -788,7 +816,10 @@ class FunctionCollection(IPlottable, IScatterable):
             raise StopIteration
 
     def __getitem__(self, item):
-        return FunctionCollection(*self._functions.__getitem__(item))
+        selected = self._functions.__getitem__(item)
+        if isinstance(item, slice):
+            return FunctionCollection(*selected)
+        return selected
 
     def __str__(self):
         return '\n'.join((f'{index + 1}. {function.__str__()}' for index, function in enumerate(self._functions)))

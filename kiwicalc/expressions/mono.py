@@ -68,7 +68,7 @@ class Mono(IExpression, IPlottable, IScatterable):
 
     @property
     def num_of_variables(self):
-        return len(self.__variables)
+        return 0 if self.__variables is None else len(self.__variables)
 
     @coefficient.setter
     def coefficient(self, new_coefficient: float):

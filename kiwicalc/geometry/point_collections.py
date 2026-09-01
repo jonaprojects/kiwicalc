@@ -204,6 +204,7 @@ class Point2DCollection(PointCollection):
 
     def linear_regression(self, get_tuple=False):
         if len(self._points[0].coordinates) == 2:
+            from kiwicalc.core.utils import linear_regression
             return linear_regression([point.coordinates[0] for point in self._points], [point.coordinates[1] for point in self._points], get_tuple)
 
 class Point3DCollection(PointCollection):
