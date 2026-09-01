@@ -37,6 +37,16 @@ __all__ = [
     'Point', 'Point1D', 'Point2D', 'Point3D', 'Point4D', 'Line2D', 'Circle',
     'PointCollection', 'Point1DCollection', 'Point2DCollection', 'Point3DCollection', 'Point4DCollection',
     'Vector', 'Vector2D', 'Vector3D', 'VectorCollection',
+    'Curve2D', 'TransformedCurve2D', 'ParametricCurve2D', 'PolarCurve2D', 'ImplicitCurve2D',
+    'BezierCurve2D', 'CatmullRomSpline2D', 'Ellipse', 'Arc', 'Parabola',
+    'Hyperbola', 'ArchimedeanSpiral', 'LogarithmicSpiral', 'LissajousCurve2D',
+    'Cardioid', 'RoseCurve', 'Cycloid', 'Epicycloid', 'Hypocycloid',
+    'Superellipse', 'Catenary', 'Involute',
+    'Curve3D', 'TransformedCurve3D', 'ParametricCurve3D', 'BezierCurve3D', 'CatmullRomSpline3D',
+    'Line3D', 'Helix', 'LissajousCurve3D', 'TorusKnot', 'TrefoilKnot', 'FigureEightKnot',
+    'Surface3D', 'ExplicitSurface3D', 'ParametricSurface3D',
+    'Sphere', 'Ellipsoid', 'Cylinder', 'Cone', 'Torus',
+    'Paraboloid', 'HyperbolicParaboloid', 'Hyperboloid',
     # Linear Algebra
     'Matrix', 'Surface', 'column', 'mav', 'msv', 'mrv',
     # Sequences
@@ -51,8 +61,11 @@ __all__ = [
     'gradient_descent', 'gradient_ascent',
     # Plotting
     'plot_function', 'plot_functions', 'plot_function_3d', 'plot_functions_3d',
-    'scatter_function', 'scatter_functions', 'scatter_dots', 'scatter_dots_3d',
+    'scatter_function', 'scatter_functions', 'scatter_function_3d', 'scatter_functions_3d',
+    'scatter_dots', 'scatter_dots_3d',
     'plot_vector_2d', 'plot_vector_3d', 'plot_complex', 'plot_multiple',
+    'plot_curve_2d', 'scatter_curve_2d', 'plot_implicit_curve_2d',
+    'plot_curve_3d', 'scatter_curve_3d', 'plot_surface_3d',
     'Graph', 'Graph2D', 'Graph3D',
     # PDF
     'PDFWorksheet', 'PDFPage', 'PDFExercise', 'worksheet', 'create_pdf', 'create_pages'

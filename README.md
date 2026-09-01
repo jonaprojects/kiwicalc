@@ -95,18 +95,62 @@ x = kw.Var("x")
 (kw.Sin(x) + 0.25*x).plot(start=-10, stop=10)
 ```
 
+Curves and graphs use the same simple plotting style:
+
+```python
+graph = kw.Graph2D()
+graph.add(kw.Ellipse(3, 2), label="ellipse", color="royalblue")
+graph.add(kw.ArchimedeanSpiral(), label="spiral", color="orange")
+graph.plot(legend=True, equal_aspect=True)
+```
+
+Parametric, polar, implicit, Bézier, and spline curves are available in 2D, along
+with named curves such as cardioids, rose curves, cycloids, superellipses,
+catenaries, and involutes. Curves have chainable transformations and numerical
+analysis helpers:
+
+```python
+curve = kw.Cardioid().scale(2).rotate(0.4).translate(1, 2)
+print(curve.point_at(0.25), curve.tangent_at(0.25), curve.arc_length())
+
+graph = kw.Graph2D([curve])
+graph.mark(curve.point_at(0.25), label="sample point")
+graph.vertical_line(1, linestyle="--")
+graph.plot(legend=True, equal_aspect=True)
+```
+
+Set `sampling="adaptive"` on a parametric or polar curve when you want its
+sampling density to follow its shape. Space curves and surfaces—including
+trefoil and figure-eight knots, paraboloids, hyperbolic paraboloids, and
+hyperboloids—compose naturally in 3D:
+
+```python
+graph = kw.Graph3D()
+graph.add(kw.Helix(turns=5), label="helix", color="purple")
+graph.add(kw.Sphere(2), alpha=0.2, color="skyblue")
+graph.plot(legend=True)
+```
+
+Supported curves, surfaces, and composed graphs can also be saved and restored:
+
+```python
+graph.export_json("graph.json")
+restored = kw.Graph.from_json("graph.json")
+restored.plot()
+```
+
 ## What is included?
 
 - Symbolic monomials, polynomials, fractions, roots, logarithms, trigonometry, factorials, and composite expressions
 - Linear, quadratic, cubic, quartic, polynomial, and system solving
 - Numerical root-finding, integration, differentiation, and optimization methods
 - Callable functions, function collections, and function chains
-- Matrices, vectors, points, lines, circles, surfaces, and point collections
+- Matrices, vectors, points, lines, conic sections, curves, surfaces, and point collections
 - Two- and three-dimensional plotting with Matplotlib
 - Arithmetic, geometric, and recursive sequences
 - Probability trees
 - PDF exercise and worksheet generation
-- JSON serialization for supported expression types
+- JSON serialization for supported expressions, curves, surfaces, and composed graphs
 
 ## Documentation and learning resources
 
@@ -117,7 +161,7 @@ x = kw.Var("x")
 
 ## Development
 
-The current suite contains 944 passing tests with 94.19% line coverage and 91.31% branch coverage. CI requires both coverage metrics to remain at or above 90%.
+The current suite contains 1,135 passing tests with 94.14% line coverage and 90.52% branch coverage. CI requires both coverage metrics to remain at or above 90%.
 
 Create an isolated environment and install the project with its development tools:
 

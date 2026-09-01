@@ -5,8 +5,13 @@ __pycache__/
 .pytest_cache/
 .coverage
 coverage.xml
+coverage.json
 htmlcov/
+.tmp-*/
 
 build/
 dist/
 .venv/
+
+# Local demonstrations and generated example artifacts
+examples/

@@ -303,7 +303,7 @@ class Line2D(IPlottable):
         my_lambda = self.to_lambda()
         if my_lambda is None:
             return None
-        plot_function(my_lambda, start=start, stop=stop, step=step, ymin=ymin, ymax=ymax, title=title, show_axis=show_axis, show=show, fig=fig, formatText=formatText, ax=ax, values=values)
+        return plot_function(my_lambda, start=start, stop=stop, step=step, ymin=ymin, ymax=ymax, title=title, show_axis=show_axis, show=show, fig=fig, formatText=formatText, ax=ax, values=values)
 
     def scatter(self, start: float=-10, stop: float=10, step: float=0.05, ymin: float=-10, ymax: float=10, title=None, show_axis=True, show=True, fig=None, ax=None, formatText=True, values=None):
         from kiwicalc.plotting.plots import scatter_function
@@ -459,19 +459,23 @@ class Circle(IPlottable):
         else:
             raise ValueError("Can't determine whether a circle is inside another, when one or more of them are expressed via parameters")
 
-    def plot(self, fig=None, ax=None):
+    def plot(self, fig=None, ax=None, show=True, **style):
         radius_eval = self._radius.try_evaluate()
         center_x_eval = self.center_x.try_evaluate()
         center_y_eval = self.center_y.try_evaluate()
         if None in (radius_eval, center_x_eval, center_y_eval):
             raise ValueError('Can only plot circles with real numbers (and not algebraic expressions)')
-        circle1 = plt.Circle((center_x_eval, center_y_eval), radius_eval, color='r', fill=False)
+        style.setdefault('color', 'r')
+        style.setdefault('fill', False)
+        circle1 = plt.Circle((center_x_eval, center_y_eval), radius_eval, **style)
         if None in (fig, ax):
             fig, ax = plt.subplots()
         ax.add_patch(circle1)
         ax.set_aspect('equal', adjustable='datalim')
         ax.plot()
-        plt.show()
+        if show:
+            plt.show()
+        return circle1
 
     def to_lambda(self):
         warnings.warn('This is an experimental feature!')

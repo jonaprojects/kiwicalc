@@ -378,9 +378,9 @@ class Vector2D(Vector, IPlottable):
     def y_step(self):
         return self._direction_vector[1]
 
-    def plot(self, show=True, arrow_length_ratio: float=0.05):
+    def plot(self, show=True, arrow_length_ratio: float=0.05, fig=None, ax=None):
         from kiwicalc.plotting.plots import plot_vector_2d
-        plot_vector_2d(self._start_coordinate[0], self._start_coordinate[1], self._direction_vector[0], self._direction_vector[1], show=show)
+        return plot_vector_2d(self._start_coordinate[0], self._start_coordinate[1], self._direction_vector[0], self._direction_vector[1], show=show, fig=fig, ax=ax)
 
 class Vector3D(Vector, IPlottable):
 
