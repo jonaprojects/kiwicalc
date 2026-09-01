@@ -62,7 +62,7 @@ def decimal_range(start: float, stop: float, step: float=1):
 
 def extract_coefficient(coefficient: str) -> float:
     """[method for inside use]"""
-    return -1 if coefficient == '-' else 1 if coefficient in ('+', '') else float(coefficient)
+    return -1 if coefficient == '-' else 1 if coefficient in (None, '+', '') else float(coefficient)
 
 def format_coefficient(coefficient: 'Union[int, float, IExpression]') -> str:
     if coefficient == 1:

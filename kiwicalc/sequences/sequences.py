@@ -38,7 +38,7 @@ class Sequence(ABC):
         return reduce(lambda a, b: a * b, (self.in_index(i) for i in range(start, end)))
 
     def product_first_n(self, end: int):
-        return self.product_in_range(0, end)
+        return self.product_in_range(1, end + 1)
 
     def sum_in_range(self, start: int, end: int):
         return sum((self.in_index(current_index) for current_index in range(start, end)))
@@ -215,7 +215,7 @@ class RecursiveSeq(Sequence):
         :param accumulate: If set to true, results of computations will be saved to shorten execution time ( on the expense of the allocated memory).
         :return: Returns the nth element of the series.
         """
-        if len(self.__indices) > len(self.__first_values) - 1:
+        if len(self.__indices) > len(self.__first_values):
             raise ValueError(f'Not enough initial values were entered for the series, got {len(self.__first_values)}, expected at least {len(self.__indices)} values')
         if n in self.__first_values:
             return self.__first_values[n]

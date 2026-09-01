@@ -177,10 +177,13 @@ class Vector:
         return lst
 
     def intersection(self, other: 'Union[Vector, VectorCollection, Surface]', get_points=False):
-        if self._direction_vector == other._direction_vector:
-            print('The vectors have the same directions, unhandled case for now')
-            return
+        from kiwicalc.equations.system import LinearSystem
+        from kiwicalc.linalg.spaces import Surface
+
         if isinstance(other, Vector):
+            if self._direction_vector == other._direction_vector:
+                print('The vectors have the same directions, unhandled case for now')
+                return
             my_general, other_general = (self.general_point('t'), other.general_point('s'))
             solutions_dict = LinearSystem((f'{expr1}={expr2}' for expr1, expr2 in zip(my_general, other_general))).get_solutions()
             if not solutions_dict:
@@ -188,9 +191,10 @@ class Vector:
             t, s = (solutions_dict['t'], solutions_dict['s'])
             for expression in my_general:
                 expression.assign(t=t)
+            coordinates = [expression.try_evaluate() for expression in my_general]
             if get_points:
-                return Point((expression.expressions[0].coefficient for expression in my_general))
-            return [expression.expressions[0].coefficient for expression in my_general]
+                return Point(coordinates)
+            return coordinates
         elif isinstance(other, VectorCollection):
             return any((self.intersection(other_vector) for other_vector in other.vectors))
         elif isinstance(other, Surface):
@@ -445,16 +449,18 @@ class VectorCollection:
             for item in vector:
                 if isinstance(item, Vector):
                     self.__vectors.append(item)
-                elif isinstance(item, Iterable):
-                    self.__vectors.append(Vector(item))
                 elif isinstance(item, VectorCollection):
                     self.__vectors.extend(item)
+                elif isinstance(item, Iterable):
+                    self.__vectors.append(Vector(item))
                 else:
                     raise TypeError(f'Invalid type {type(vector)} for appending into a VectorCollection')
         else:
             raise TypeError(f'Invalid type {type(vector)} for appending into a VectorCollection')
 
     def plot(self):
+        from kiwicalc.plotting.plots import plot_vector_3d
+
         num_of_vectors = len(self.__vectors)
         if num_of_vectors > 0:
             if len(self.__vectors[0].start_coordinate) == 3:

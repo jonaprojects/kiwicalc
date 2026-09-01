@@ -6,7 +6,7 @@ from typing import Union, Tuple, List, Optional, Any, Callable, Iterator, Iterab
 import numpy as np
 import matplotlib.pyplot as plt
 
-from kiwicalc.core.utils import decimal_range, is_number
+from kiwicalc.core.utils import decimal_range, is_number, round_decimal
 from kiwicalc.core.operators import (
     Operator, GreaterThan, LessThan, GreaterOrEqual, LessOrEqual,
     GREATER_THAN, GREATER_OR_EQUAL, LESS_THAN, LESS_OR_EQUAL,
@@ -101,6 +101,8 @@ class Range:
         if self.__minimum == np.inf or self.__maximum == -np.inf:
             return False
         expression_eval = self.__expression.try_evaluate() if expression_eval is None else expression_eval
+        if self.__minimum == -np.inf and self.__maximum == np.inf:
+            return True
         if self.__minimum != -np.inf:
             minimum_evaluation = self.__minimum.try_evaluate() if min_eval is None else min_eval
             if self.__maximum != np.inf:

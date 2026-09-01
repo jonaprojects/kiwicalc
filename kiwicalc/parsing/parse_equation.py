@@ -8,7 +8,7 @@ from kiwicalc.core.constants import allowed_characters
 from kiwicalc.core.utils import (
     clean_from_spaces, extract_coefficient, format_coefficient,
     format_free_number, is_number, contains_from_list, round_decimal,
-    handle_abs
+    handle_abs, handle_factorial
 )
 from kiwicalc.parsing.parse_expression import (
     split_expression, ParseExpression, extract_variables_from_expression,
@@ -58,7 +58,7 @@ def add_or_sub_coefficients(first_coefficients, second_coefficients, mode='add',
     elif mode == 'sub':
         for index in range(len(first_coefficients)):
             first_coefficients[index] -= second_coefficients[index]
-    while first_coefficients[0] == 0:
+    while first_coefficients and first_coefficients[0] == 0:
         del first_coefficients[0]
     return first_coefficients
 
@@ -86,17 +86,11 @@ def subtract_dicts(dict1: dict, dict2: dict) -> dict:
 
 def linear_expression_to_dict(expression: str, variables: Iterable) -> dict:
     """alternative way to """
-    expression = clean_from_spaces(expression)
-    my_dict = dict()
-    if expression[-1] != ' ':
-        expression += ' '
-    matches = list(re.finditer(f'([-+]?\\d+[.,]?\\d*)?\\*?([a-zA-Z]+)', expression))
-    for variable in variables:
-        my_dict[variable] = sum((extract_coefficient(match.group(1)) for match in matches if match.group(2) == variable))
-    matches = re.finditer(f'([-+]?\\d+[.,]?\\d*)[-+\\s]', expression)
-    numbers_sum = sum((extract_coefficient(match.group(1)) for match in matches))
-    my_dict['number'] = numbers_sum
-    return my_dict
+    parsed = ParseExpression.parse_linear(expression, variables)
+    return {
+        **{variable: parsed[variable] for variable in variables},
+        'number': parsed['free'],
+    }
 
 def equation_to_one_side(equation: str) -> str:
     """ Move all of the items of the equation to one side"""
@@ -117,7 +111,7 @@ def simplify_expression(expression: str, variables: Iterable[str], format_abs=Fa
     if format_abs:
         expression = handle_abs(expression)
     if format_factorial:
-        expression = handle_abs(expression)
+        expression = handle_factorial(expression)
     expr = expression.replace('-', '+-').replace(' ', '')
     expressions = [num for num in expr.split('+') if num != '' and num is not None]
     if isinstance(variables, dict):
@@ -168,5 +162,8 @@ class ParseEquation:
     @staticmethod
     def parse_quadratic(equation: str, strict_syntax=False):
         if strict_syntax:
-            return ParseExpression.parse_quadratic(equation, strict_syntax=True)
+            coefficients = ParseEquation.parse_polynomial(equation)
+            if len(coefficients) != 3:
+                raise ValueError('Strict quadratic syntax requires a degree-2 equation')
+            return coefficients
         return ParseEquation.parse_polynomial(equation)

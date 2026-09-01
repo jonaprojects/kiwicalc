@@ -80,7 +80,13 @@ class PointCollection:
         if len(self._points) <= 1:
             return 0
         pairs = combinations(self._points, 2)
-        p1, p2 = max(pairs, key=lambda p1, p2: sum(((coord1 - coord2) ** 2 for coord1, coord2 in zip(p1.coordinates, p2.coordinates))))
+        p1, p2 = max(
+            pairs,
+            key=lambda pair: sum(
+                (coord1 - coord2) ** 2
+                for coord1, coord2 in zip(pair[0].coordinates, pair[1].coordinates)
+            ),
+        )
         max_distance = sqrt(sum(((coord1 - coord2) ** 2 for coord1, coord2 in zip(p1.coordinates, p2.coordinates))))
         if get_points:
             return (max_distance, (p1, p2))
@@ -91,7 +97,13 @@ class PointCollection:
         if len(self._points) <= 1:
             return 0
         pairs = combinations(self._points, 2)
-        p1, p2 = min(pairs, key=lambda p1, p2: sum(((coord1 - coord2) ** 2 for coord1, coord2 in zip(p1.coordinates, p2.coordinates))))
+        p1, p2 = min(
+            pairs,
+            key=lambda pair: sum(
+                (coord1 - coord2) ** 2
+                for coord1, coord2 in zip(pair[0].coordinates, pair[1].coordinates)
+            ),
+        )
         min_distance = sqrt(sum(((coord1 - coord2) ** 2 for coord1, coord2 in zip(p1.coordinates, p2.coordinates))))
         if get_points:
             return (min_distance, (p1, p2))

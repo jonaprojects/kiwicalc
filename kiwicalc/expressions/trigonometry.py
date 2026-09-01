@@ -56,9 +56,12 @@ class TrigoExpr(IExpression, IPlottable, IScatterable):
         self._coefficient = None
         self._expressions: list = []
         if isinstance(coefficient, TrigoExpr):
-            self._coefficient = coefficient._coefficient
-            self._expressions = coefficient._expressions.copy()
-        if isinstance(coefficient, str):
+            self._coefficient = coefficient._coefficient.__copy__()
+            self._expressions = [
+                [method, copy_expression(inside), copy_expression(power)]
+                for method, inside, power in coefficient._expressions
+            ]
+        elif isinstance(coefficient, str):
             self._coefficient, self._expressions = TrigoExpr_from_str(coefficient, get_tuple=True, dtype=dtype)
         else:
             if isinstance(coefficient, (int, float)):
@@ -70,7 +73,10 @@ class TrigoExpr(IExpression, IPlottable, IScatterable):
             if expressions is None:
                 self._expressions = None
             else:
-                self._expressions = [list(expression) for expression in expressions]
+                self._expressions = [
+                    [method, copy_expression(inside), copy_expression(power)]
+                    for method, inside, power in expressions
+                ]
 
     @property
     def coefficient(self):
@@ -97,6 +103,8 @@ class TrigoExpr(IExpression, IPlottable, IScatterable):
     def __add_or_sub(self, other, operation: str='+'):
         if other == 0:
             return self
+        if isinstance(other, str):
+            other = TrigoExprs(other)
         if isinstance(other, (int, float, str)):
             if isinstance(other, (int, float)):
                 my_evaluation = self.try_evaluate()
@@ -104,15 +112,16 @@ class TrigoExpr(IExpression, IPlottable, IScatterable):
                     if operation == '+':
                         return TrigoExprs((self, TrigoExpr(other)))
                     return TrigoExprs((self, -TrigoExpr(other)))
-                else:
+                elif operation == '+':
                     return Mono(my_evaluation + other)
+                return Mono(my_evaluation - other)
         elif isinstance(other, IExpression):
             other_evaluation = other.try_evaluate()
             my_evaluation = self.try_evaluate()
             if None not in (other_evaluation, my_evaluation):
                 if operation == '+':
                     return Mono(other_evaluation + my_evaluation)
-                return Mono(other_evaluation - my_evaluation)
+                return Mono(my_evaluation - other_evaluation)
             if isinstance(other, TrigoExpr):
                 if self._expressions == other._expressions:
                     if operation == '+':
@@ -237,6 +246,8 @@ class TrigoExpr(IExpression, IPlottable, IScatterable):
         elif isinstance(other, TrigoExprs):
             if len(other.expressions) == 1:
                 self.__mul_trigo(other.expressions[0])
+                self.simplify()
+                return self
             else:
                 return other.__mul__(self)
         elif isinstance(other, IExpression):
@@ -279,7 +290,7 @@ class TrigoExpr(IExpression, IPlottable, IScatterable):
                             else:
                                 self._expressions[0][0] = TrigoMethods.TAN
                                 other_copy = other.__copy__()
-                                other_copy._expressions[0][0] -= my_power
+                                other_copy._expressions[0][2] -= my_power
                                 return Fraction(self.__copy__(), other_copy, gen_copies=False)
                         elif self._expressions[0][0] == TrigoMethods.COS and other._expressions[0][0] == TrigoMethods.SIN:
                             my_power, other_power = (self._expressions[0][2], other._expressions[0][2])
@@ -293,7 +304,7 @@ class TrigoExpr(IExpression, IPlottable, IScatterable):
                             else:
                                 self._expressions[0][0] = TrigoMethods.COT
                                 other_copy = other.__copy__()
-                                other_copy._expressions[0][0] -= my_power
+                                other_copy._expressions[0][2] -= my_power
                                 return Fraction(self.__copy__(), other_copy, gen_copies=False)
             for index, other_expression in enumerate(other._expressions):
                 try:
@@ -313,7 +324,7 @@ class TrigoExpr(IExpression, IPlottable, IScatterable):
                 return self
             return Fraction(self, other)
         elif isinstance(other, TrigoExprs):
-            pass
+            return Fraction(self, other)
         else:
             return Fraction(self, other)
 
@@ -337,7 +348,7 @@ class TrigoExpr(IExpression, IPlottable, IScatterable):
         self._coefficient.assign(**kwargs)
         for index, [method, inside, degree] in enumerate(self._expressions):
             inside.assign(**kwargs)
-            if (new_inside := inside.try_evaluate()):
+            if (new_inside := inside.try_evaluate()) is not None:
                 new_inside = method.value[0](new_inside) ** degree
                 self._expressions[index][0] = None
                 self._expressions[index][1] = Poly(new_inside)
@@ -504,7 +515,7 @@ class TrigoExpr(IExpression, IPlottable, IScatterable):
             return '0'
         accumulator = f'{self._coefficient.python_syntax()}*'
         if not self._expressions:
-            return accumulator
+            return accumulator[:-1]
         if accumulator == '1*':
             accumulator = ''
         elif accumulator == '-1*':
@@ -540,6 +551,26 @@ class TrigoExpr(IExpression, IPlottable, IScatterable):
             return True
         method1, expression1, power1 = first_sub
         method2, expression2, power2 = second_sub
+
+        # Constants can be compared directly.  This is both more accurate and
+        # considerably less error-prone than mixing radian and degree periods.
+        expression1_value = expression1.try_evaluate() if isinstance(expression1, IExpression) else expression1
+        expression2_value = expression2.try_evaluate() if isinstance(expression2, IExpression) else expression2
+        coefficient1_value = coef1.try_evaluate() if isinstance(coef1, IExpression) else coef1
+        coefficient2_value = coef2.try_evaluate() if isinstance(coef2, IExpression) else coef2
+        power1_value = power1.try_evaluate() if isinstance(power1, IExpression) else power1
+        power2_value = power2.try_evaluate() if isinstance(power2, IExpression) else power2
+        if None not in (
+            expression1_value, expression2_value, coefficient1_value,
+            coefficient2_value, power1_value, power2_value,
+        ):
+            try:
+                value1 = coefficient1_value * method1.value[0](expression1_value) ** power1_value
+                value2 = coefficient2_value * method2.value[0](expression2_value) ** power2_value
+                return math.isclose(value1, value2, rel_tol=1e-9, abs_tol=1e-9)
+            except (TypeError, ValueError, ZeroDivisionError):
+                return False
+
         expression_difference = expression1 - expression2
         evaluated_difference = expression_difference.try_evaluate()
         if evaluated_difference is not None:
@@ -564,8 +595,8 @@ class TrigoExpr(IExpression, IPlottable, IScatterable):
                 if expression_sum == pi:
                     if coef1 == -coef2:
                         return True
-            elif method1 is TrigoMethods.TAN or TrigoMethods.COT:
-                if evaluated_difference % pi == 0:
+            elif method1 in (TrigoMethods.TAN, TrigoMethods.COT):
+                if evaluated_difference is not None and evaluated_difference % pi == 0:
                     return True
                 if expression_sum == 0:
                     if coef1 == -coef2:
@@ -662,9 +693,9 @@ class Sin(TrigoExpr):
     @conversion_wrapper
     def to_cos(self):
         if self._expressions[0][2] == 1:
-            return Cos(90 - self._expressions[0][1]) * self._coefficient
+            return Cos(-self._expressions[0][1] + pi / 2) * self._coefficient
         elif self._expressions[0][2] == 2:
-            return 1 - Cos(self._expression[0][1]) ** 2
+            return self._coefficient * (1 + -(Cos(self._expressions[0][1]) ** 2))
 
     @conversion_wrapper
     def to_tan(self) -> 'Tan':
@@ -686,8 +717,9 @@ class Asin(TrigoExpr):
 
     def __init__(self, expression, dtype='poly'):
         if isinstance(expression, str):
-            super(Asin, self).__init__(coefficient=f'asin{expression}', dtype=dtype)
-        super(Asin, self).__init__(1, expressions=((TrigoMethods.ASIN, expression, 1),))
+            super(Asin, self).__init__(coefficient=f'asin({expression})', dtype=dtype)
+        else:
+            super(Asin, self).__init__(1, expressions=((TrigoMethods.ASIN, expression, 1),))
 
 class Cos(TrigoExpr):
 
@@ -757,7 +789,7 @@ class Atan(TrigoExpr):
 
     def __init__(self, expression, dtype='poly'):
         if isinstance(expression, str):
-            super(Atan, self).__init__(coefficient=f'atan{expression}', dtype=dtype)
+            super(Atan, self).__init__(coefficient=f'atan({expression})', dtype=dtype)
         else:
             super(Atan, self).__init__(1, expressions=((TrigoMethods.ATAN, expression, 1),))
 
@@ -765,7 +797,7 @@ class Cot(TrigoExpr):
 
     def __init__(self, expression, dtype='poly'):
         if isinstance(expression, str):
-            super(Cot, self).__init__(coefficient=f'cot{expression}', dtype=dtype)
+            super(Cot, self).__init__(coefficient=f'cot({expression})', dtype=dtype)
         else:
             super(Cot, self).__init__(1, expressions=((TrigoMethods.COT, expression, 1),))
 
@@ -821,7 +853,7 @@ class Acot(TrigoExpr):
 
     def __init__(self, expression, dtype='poly'):
         if isinstance(expression, str):
-            super(Acot, self).__init__(coefficient=f'asec({expression})', dtype=dtype)
+            super(Acot, self).__init__(coefficient=f'acot({expression})', dtype=dtype)
         else:
             super(Acot, self).__init__(1, expressions=((TrigoMethods.ACOT, expression, 1),))
 
@@ -861,7 +893,7 @@ class Csc(TrigoExpr):
     def to_sec(self) -> 'Sec':
         pass
 
-class ACsc:
+class ACsc(TrigoExpr):
 
     def __init__(self, expression, dtype='poly'):
         if isinstance(expression, str):
@@ -903,7 +935,7 @@ class TrigoExprs(ExpressionSum, IPlottable, IScatterable):
     def __add_TrigoExpr(self, other: TrigoExpr):
         """Add a TrigoExpr expression"""
         try:
-            index = next((index for index, expression in enumerate(self._expressions) if expression.expressions == other.expressions))
+            index = next((index for index, expression in enumerate(self._expressions) if isinstance(expression, TrigoExpr) and expression.expressions == other.expressions))
             self._expressions[index]._coefficient += other.coefficient
         except StopIteration:
             self._expressions.append(other)
@@ -911,10 +943,10 @@ class TrigoExprs(ExpressionSum, IPlottable, IScatterable):
     def __sub_TrigoExpr(self, other: TrigoExpr):
         """ Subtract a TrigoExpr expression"""
         try:
-            index = next((index for index, expression in enumerate(self._expressions) if expression.expressions == other.expressions))
+            index = next((index for index, expression in enumerate(self._expressions) if isinstance(expression, TrigoExpr) and expression.expressions == other.expressions))
             self._expressions[index]._coefficient -= other.coefficient
         except StopIteration:
-            self._expressions.append(other)
+            self._expressions.append(-other)
 
     def __iadd__(self, other: Union[int, float, IExpression]):
         print(f'adding {other} to {self}')
@@ -922,6 +954,8 @@ class TrigoExprs(ExpressionSum, IPlottable, IScatterable):
             return self
         if isinstance(other, str):
             other = TrigoExprs(other)
+        elif isinstance(other, (int, float)):
+            other = Mono(other)
         if isinstance(other, IExpression):
             my_evaluation, other_evaluation = (self.try_evaluate(), other.try_evaluate())
             if None not in (my_evaluation, other_evaluation):
@@ -941,6 +975,8 @@ class TrigoExprs(ExpressionSum, IPlottable, IScatterable):
     def __isub__(self, other: Union[int, float, IExpression]):
         if isinstance(other, str):
             other = TrigoExprs(other)
+        elif isinstance(other, (int, float)):
+            other = Mono(other)
         if isinstance(other, IExpression):
             my_evaluation, other_evaluation = (self.try_evaluate(), other.try_evaluate())
             if None not in (my_evaluation, other_evaluation):
@@ -951,7 +987,7 @@ class TrigoExprs(ExpressionSum, IPlottable, IScatterable):
             elif isinstance(other, TrigoExprs):
                 for other_expression in other._expressions:
                     self.__sub_TrigoExpr(other_expression)
-                    return self
+                return self
             else:
                 return ExpressionSum((self, other))
         else:
@@ -977,7 +1013,7 @@ class TrigoExprs(ExpressionSum, IPlottable, IScatterable):
         if isinstance(other, IExpression):
             return other.__sub__(self)
         elif isinstance(other, (int, float)):
-            pass
+            return -self + other
         else:
             raise TypeError(f'Invalid type while subtracting a TrigoExprs object: {type(other)} ')
 
@@ -1075,7 +1111,7 @@ class TrigoExprs(ExpressionSum, IPlottable, IScatterable):
             return self.__copy__()
         items = len(self._expressions)
         if items == 1:
-            return self._expressions[0].__copy__().__ipow__()
+            return self._expressions[0].__copy__().__ipow__(power)
         elif items == 2:
             expressions = []
             for k in range(power + 1):

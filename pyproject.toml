@@ -40,7 +40,7 @@ addopts = [
 ]
 
 [tool.coverage.run]
-branch = false
+branch = true
 source = ["kiwicalc"]
 
 [tool.coverage.report]

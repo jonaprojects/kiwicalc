@@ -133,7 +133,7 @@ def test_expression_sum_distribution_and_numeric_edges():
     assert evaluated + 4 == 9
     assert evaluated - 4 == 1
     assert (10 - evaluated).try_evaluate() == 5
-    assert kw.ExpressionSum([]) ** 2 is None
+    assert kw.ExpressionSum([]) ** 2 == 0
     assert kw.ExpressionSum([x]) ** 0 == 1
     with pytest.raises(ValueError, match="divide"):
         kw.ExpressionSum([x]) / 0

@@ -259,7 +259,7 @@ class ProbabilityTree:
 
     @staticmethod
     def biggest_probability_node(node: Node) -> Node:
-        return max(ZigZagGroupIter(node), key=operator.attrgetter(node.name.chance))
+        return max(PreOrderIter(node), key=lambda current: current.name.chance)
 
     def get_node_path(self, node: Union[str, Node]):
         accumulator = ''

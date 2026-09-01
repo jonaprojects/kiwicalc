@@ -50,7 +50,9 @@ class Factorial(IExpression, IPlottable, IScatterable):
             self._power = Mono(power)
         else:
             self._power = power.__copy__()
-        if isinstance(expression, (int, float)):
+        if expression is None:
+            self._expression = None
+        elif isinstance(expression, (int, float)):
             self._expression = Mono(expression)
         else:
             self._expression = expression.__copy__()
@@ -105,7 +107,7 @@ class Factorial(IExpression, IPlottable, IScatterable):
             if self._expression == other._expression and self._power == other._power:
                 self._coefficient -= other._coefficient
                 return self
-        return ExpressionSum((self, other))
+        return ExpressionSum((self, -other))
 
     def __imul__(self, other: Union[IExpression, int, float]):
         if self._expression == other - 1:
@@ -124,7 +126,7 @@ class Factorial(IExpression, IPlottable, IScatterable):
                     self._power += other._power
                     return self
                 else:
-                    return ExpressionSum((self, other))
+                    return ExpressionMul((self, other))
             other_evaluation = other.try_evaluate()
             if None not in (my_evaluation, other_evaluation):
                 return Mono(coefficient=my_evaluation * other_evaluation)
@@ -175,6 +177,7 @@ class Factorial(IExpression, IPlottable, IScatterable):
                     self._coefficient /= other._coefficient
                     self._power -= other._power
                     self.simplify()
+                    return self
             else:
                 return Fraction(self, other)
         else:
@@ -201,13 +204,16 @@ class Factorial(IExpression, IPlottable, IScatterable):
         return self.__copy__().__ipow__(power)
 
     def __neg__(self):
-        if self._expression is None:
-            return Factorial(coefficient=self._coefficient.__neg__(), expression=None, power=Mono(1))
-        return Factorial(coefficient=self._coefficient.__neg__(), expression=self._expression.__neg__(), power=self._power.__neg__())
+        return Factorial(
+            coefficient=-self._coefficient,
+            expression=self._expression,
+            power=self._power,
+        )
 
     def assign(self, **kwargs):
         self._coefficient.assign(**kwargs)
-        self._expression.assign(**kwargs)
+        if self._expression is not None:
+            self._expression.assign(**kwargs)
         self._power.assign(**kwargs)
         self.simplify()
 
@@ -337,7 +343,7 @@ class Abs(IExpression, IPlottable, IScatterable):
     def assign(self, **kwargs):
         self._coefficient.assign(**kwargs)
         self._expression.assign(**kwargs)
-        self._expression.assign(**kwargs)
+        self._power.assign(**kwargs)
 
     def to_dict(self):
         return {'type': 'Abs', 'coefficient': self._coefficient.to_dict(), 'expression': self._expression.to_dict(), 'power': self._power.to_dict()}
@@ -377,7 +383,7 @@ class Abs(IExpression, IPlottable, IScatterable):
                             else:
                                 self._coefficient -= other._coefficient
                             return self
-            return ExpressionSum((self, other))
+            return ExpressionSum((self, other if operation == '+' else -other))
 
     def __iadd__(self, other: Union[int, float, IExpression]):
         return self.__add_or_sub(other, operation='+')
@@ -588,7 +594,7 @@ class Exponent(IExpression):
                     return Mono(my_evaluation + other)
                 return Mono(my_evaluation - other)
         elif isinstance(other, IExpression):
-            other_evaluation = self.try_evaluate()
+            other_evaluation = other.try_evaluate()
             if None not in (my_evaluation, other_evaluation):
                 if operation == '+':
                     return Mono(my_evaluation + other_evaluation)
@@ -647,6 +653,10 @@ class Exponent(IExpression):
                     pass
                 else:
                     return ExpressionMul((self, other))
+            else:
+                return ExpressionMul((self, other))
+        else:
+            raise TypeError(f"Invalid type '{type(other)}' when multiplying an Exponent object.")
 
     def __mul__(self, other: Union[int, float, IExpression]):
         return self.__copy__().__imul__(other)

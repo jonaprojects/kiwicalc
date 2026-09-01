@@ -112,4 +112,5 @@ def test_root_symbolic_arithmetic_and_validation():
     assert first != kw.Root(x, 3, 2)
     assert first != None
     assert kw.Root.dependant_roots(kw.Root(x, 2), kw.Root(x, 3)) is None
-    assert isinstance(first * object(), TypeError)
+    with pytest.raises(TypeError):
+        first * object()

@@ -147,8 +147,10 @@ def solve_poly_system(equations: 'Union[Iterable[Union[str,Poly,Mono]],Iterable[
     :return: returns the results of the equation system, a dictionary with variables_dict as keys and their values.
     """
     if initial_vals is None:
-        variables = {extract_variables_from_expression(equation) for equation in equations}
-        initial_vals = Matrix(matrix=[0 for _ in range(len(variables))])
+        variables = set()
+        for equation in equations:
+            variables.update(extract_variables_from_expression(str(equation)))
+        initial_vals = {variable: 0 for variable in variables}
     variables, initial_values = (list(initial_vals.keys()), Matrix(matrix=initial_vals.values()))
     polynomials = [poly_from_str(equation_to_one_side(equation)) if isinstance(equation, str) else equation for equation in equations]
     jacobian_matrix = Matrix(matrix=generate_jacobian(polynomials, variables))

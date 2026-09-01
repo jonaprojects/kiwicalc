@@ -90,12 +90,13 @@ class ExpressionSum(IExpression, IPlottable, IScatterable):
         elif isinstance(other, IExpression):
             my_evaluation, other_evaluation = (self.try_evaluate(), other.try_evaluate())
             if None not in (my_evaluation, other_evaluation):
-                return Mono(my_evaluation + other_evaluation)
+                if operation == '+':
+                    return Mono(my_evaluation + other_evaluation)
+                return Mono(my_evaluation - other_evaluation)
             elif my_evaluation is not None:
                 if operation == '+':
                     return other.__add__(my_evaluation)
-                else:
-                    return other.__sub__(my_evaluation)
+                return Mono(my_evaluation).__sub__(other)
             elif other_evaluation is not None:
                 if operation == '+':
                     self._expressions.append(Mono(other_evaluation))
@@ -158,36 +159,28 @@ class ExpressionSum(IExpression, IPlottable, IScatterable):
     def __ipow__(self, power: Union[IExpression, int, float]):
         if isinstance(power, (int, float)):
             length = len(self._expressions)
-            if length == 0:
-                return None
             if power == 0:
                 return Mono(1)
+            if length == 0:
+                return Mono(0) if power > 0 else Fraction(1, Mono(0))
             if length == 1:
                 self._expressions[0] **= power
                 return self
-            if length == 2:
-                if 0 < power < 1:
-                    pass
-                elif power > 0:
-                    pass
-                else:
-                    pass
-            elif length > 2:
-                if 0 < power < 1:
-                    pass
-                elif power > 0:
-                    copy_of_self = self.__copy__()
-                    for index in range(power - 1):
-                        self.__imul__(copy_of_self)
-                    return self
-                else:
-                    return Fraction(1, self.__ipow__(abs(power)))
+            if isinstance(power, int) or isinstance(power, float) and power.is_integer():
+                integer_power = int(power)
+                if integer_power < 0:
+                    return Fraction(1, self.__ipow__(abs(integer_power)))
+                copy_of_self = self.__copy__()
+                result = self.__copy__()
+                for _ in range(integer_power - 1):
+                    result *= copy_of_self
+                return result
+            return Exponent(self, power)
         elif isinstance(power, IExpression):
             other_evaluation = power.try_evaluate()
             if other_evaluation is None:
-                pass
-            else:
-                return self.__ipow__(other_evaluation)
+                return Exponent(self, power)
+            return self.__ipow__(other_evaluation)
         else:
             raise TypeError(f"Invalid type '{type(power)}' for raising an 'ExpressionSum' object by a power")
 
@@ -296,6 +289,8 @@ class ExpressionSum(IExpression, IPlottable, IScatterable):
         return ExpressionSum((expression.__copy__() for expression in self._expressions))
 
     def __str__(self):
+        if not self._expressions:
+            return '0'
         accumulator = ''
         for expression in self._expressions:
             expression_string: str = expression.__str__()
@@ -307,6 +302,8 @@ class ExpressionSum(IExpression, IPlottable, IScatterable):
         return accumulator
 
     def python_syntax(self) -> str:
+        if not self._expressions:
+            return '0'
         accumulator = ''
         for expression in self._expressions:
             expression_string: str = expression.python_syntax()

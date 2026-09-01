@@ -91,7 +91,12 @@ class Log(IExpression, IPlottable, IScatterable):
     def variables(self):
         variables = set()
         for inside, base, power in self._expressions:
-            variables.update(inside.variables_dict)
+            variables.update(inside.variables)
+            if isinstance(base, IExpression):
+                variables.update(base.variables)
+            if isinstance(power, IExpression):
+                variables.update(power.variables)
+        variables.update(self._coefficient.variables)
         return variables
 
     def simplify(self):
@@ -122,12 +127,20 @@ class Log(IExpression, IPlottable, IScatterable):
             elif other_eval is None:
                 pass
             if len(self._expressions) == 1 == len(other._expressions) and (not isinstance(self._coefficient, Log)) and (not isinstance(other._coefficient, Log)) and (self._expressions[0][1] == other._expressions[0][1]):
-                if self._coefficient == other._coefficient:
+                if self._expressions[0] == other._expressions[0]:
+                    self._coefficient += other._coefficient
+                    return self
+                if self._coefficient == other._coefficient and self._expressions[0][2] == other._expressions[0][2] == 1:
                     self._expressions[0][0] *= other._expressions[0][0]
                     return self
-                else:
+                if self._expressions[0][2] == other._expressions[0][2] == 1:
                     try:
-                        self._expressions[0][0] *= other._expressions[0][0] ** other._expressions[0][2]
+                        self._expressions[0][0] = (
+                            self._expressions[0][0] ** self._coefficient
+                            * other._expressions[0][0] ** other._coefficient
+                        )
+                        self._coefficient = Mono(1)
+                        return self
                     except (TypeError, ValueError):
                         return ExpressionSum((self, other))
             for inner_list in other._expressions:
@@ -144,17 +157,15 @@ class Log(IExpression, IPlottable, IScatterable):
             if not self._expressions:
                 self._coefficient -= other
                 return self
-            return ExpressionSum(expressions=(self, Mono(other)))
+            return ExpressionSum(expressions=(self, Mono(-other)))
         elif isinstance(other, Log):
             if len(self._expressions) == 1 == len(other._expressions) and (not isinstance(self._coefficient, Log)) and (not isinstance(other._coefficient, Log)) and (self._expressions[0][1] == other._expressions[0][1]):
-                if self._coefficient == other._coefficient:
+                if self._expressions[0] == other._expressions[0]:
+                    self._coefficient -= other._coefficient
+                    return self
+                if self._coefficient == other._coefficient and self._expressions[0][2] == other._expressions[0][2] == 1:
                     self._expressions[0][0] /= other._expressions[0][0]
                     return self
-                else:
-                    try:
-                        self._expressions[0][0] /= other._expressions[0][0] ** other._expressions[0][2]
-                    except (TypeError, ValueError):
-                        return ExpressionSum((self, other))
         return ExpressionSum((self, other.__neg__()))
 
     def __sub__(self, other):
@@ -213,12 +224,18 @@ class Log(IExpression, IPlottable, IScatterable):
         return self
 
     def __neg__(self):
-        self._coefficient *= -1
-        return self
+        copy_of_self = self.__copy__()
+        copy_of_self._coefficient *= -1
+        return copy_of_self
 
     def assign(self, **kwargs):
+        self._coefficient.assign(**kwargs)
         for expression in self._expressions:
             expression[0].assign(**kwargs)
+            if isinstance(expression[1], IExpression):
+                expression[1].assign(**kwargs)
+            if isinstance(expression[2], IExpression):
+                expression[2].assign(**kwargs)
 
     def try_evaluate(self):
         """ return an int / float evaluation of the expression. If not possible, return None."""
@@ -227,19 +244,18 @@ class Log(IExpression, IPlottable, IScatterable):
             return None
         if not self._expressions:
             return round_decimal(evaluated_coefficient)
-        evaluated_inside = self._expressions[0][0].try_evaluate()
-        if not isinstance(self._expressions[0][1], (int, float)):
-            evaluated_base = self._expressions[0][1].try_evaluate()
-        else:
-            evaluated_base = self._expressions[0][1]
-        if evaluated_inside is None:
-            return None
-        power = self._expressions[0][2]
-        if isinstance(power, IExpression):
-            power = power.try_evaluate()
-            if power is None:
+        result = evaluated_coefficient
+        for inside, base, power in self._expressions:
+            evaluated_inside = inside.try_evaluate()
+            evaluated_base = base.try_evaluate() if isinstance(base, IExpression) else base
+            if evaluated_inside is None or evaluated_base is None:
                 return None
-        return round_decimal(evaluated_coefficient * log(evaluated_inside, evaluated_base) ** power)
+            if isinstance(power, IExpression):
+                power = power.try_evaluate()
+                if power is None:
+                    return None
+            result *= log(evaluated_inside, evaluated_base) ** power
+        return round_decimal(result)
 
     def _single_log_str(self, inside: IExpression, base, power_by) -> str:
         if power_by == 0:
@@ -281,7 +297,7 @@ class Log(IExpression, IPlottable, IScatterable):
         return f'{coefficient_str}{expression_str}'
 
     def to_dict(self):
-        return {'type': 'Log', 'data': {'coefficient': self._coefficient.to_dict() if hasattr(self._coefficient, 'to_dict') else self._coefficient, 'expressions': [[inside.to_dict() if hasattr(inside, 'to_dict') else inside, base.to_dict() if hasattr(base, 'to_dict') else base, power.to_dict() if hasattr('power', 'to_dict') else power] for [inside, base, power] in self._expressions]}}
+        return {'type': 'Log', 'data': {'coefficient': self._coefficient.to_dict() if hasattr(self._coefficient, 'to_dict') else self._coefficient, 'expressions': [[inside.to_dict() if hasattr(inside, 'to_dict') else inside, base.to_dict() if hasattr(base, 'to_dict') else base, power.to_dict() if hasattr(power, 'to_dict') else power] for [inside, base, power] in self._expressions]}}
 
     @staticmethod
     def from_dict(given_dict: dict):
@@ -315,11 +331,17 @@ class Log(IExpression, IPlottable, IScatterable):
             return my_evaluation is not None and my_evaluation == other
         elif isinstance(other, IExpression):
             other_evaluation = other.try_evaluate()
-            if my_evaluation == other_evaluation:
-                return True
+            if my_evaluation is not None and other_evaluation is not None:
+                return my_evaluation == other_evaluation
             if isinstance(other, Log):
-                if self._coefficient != other._coefficient:
-                    return False
+                if self._coefficient == other._coefficient and self._expressions == other._expressions:
+                    return True
+                if len(self._expressions) == len(other._expressions) == 1:
+                    my_inside, my_base, my_power = self._expressions[0]
+                    other_inside, other_base, other_power = other._expressions[0]
+                    if my_base == other_base and my_power == other_power == 1:
+                        return my_inside ** self._coefficient == other_inside ** other._coefficient
+                return False
             else:
                 return False
         else:

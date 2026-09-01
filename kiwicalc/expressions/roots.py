@@ -180,7 +180,7 @@ class Root(IExpression, IPlottable, IScatterable):
             else:
                 self._coefficient *= other
                 return self
-        return TypeError(f'Invalid type {type(other)} for multiplying roots.')
+        raise TypeError(f'Invalid type {type(other)} for multiplying roots.')
 
     def __mul__(self, other: Union[int, float, IExpression]):
         return self.__copy__().__imul__(other)
@@ -220,7 +220,7 @@ class Root(IExpression, IPlottable, IScatterable):
 
     def __itruediv__(self, other: Union[int, float, IExpression]):
         if other == 0:
-            return ZeroDivisionError('Cannot divide a Root object by 0')
+            raise ZeroDivisionError('Cannot divide a Root object by 0')
         if isinstance(other, (int, float)):
             self._coefficient /= other
             return self
@@ -301,17 +301,14 @@ class Root(IExpression, IPlottable, IScatterable):
         inside_variables = self._inside.variables
         if None not in (coefficient_evaluation, root_evaluation) and len(inside_variables) == 1:
             new_power = 1 / root_evaluation - 1
-            new_root = 1 / new_power
             inside_derivative = self._inside.derivative()
             derivative_coefficient = coefficient_evaluation / root_evaluation
-            if new_power > 1:
-                monomial = Mono(coefficient=derivative_coefficient, variables_dict={inside_variables: new_power})
-                monomial *= inside_derivative
-                return monomial
-            elif new_power == 0:
-                inside_derivative *= derivative_coefficient
-                return inside_derivative
+            if new_power == 0:
+                return derivative_coefficient * inside_derivative
+            elif new_power > 0:
+                return derivative_coefficient * self._inside ** new_power * inside_derivative
             else:
+                new_root = 1 / new_power
                 if new_root == 1:
                     return derivative_coefficient * self._inside
                 inside_derivative *= derivative_coefficient

@@ -367,7 +367,15 @@ class Matrix:
             self.divide_all(other)
             return self
         elif isinstance(other, (Matrix, Iterable)):
-            pass
+            other = other if isinstance(other, Matrix) else Matrix(other)
+            if self.shape != other.shape:
+                raise ValueError(f"Cannot divide matrices with different shapes: {self.shape} and {other.shape}")
+            for row_index, column_index in self.range():
+                divisor = other._matrix[row_index][column_index]
+                if divisor == 0:
+                    raise ZeroDivisionError('Cannot divide by a matrix containing zero')
+                self._matrix[row_index][column_index] /= divisor
+            return self
         else:
             raise TypeError(f"Invalid type '{type(other)} for dividing matrices'")
 
@@ -533,6 +541,8 @@ class Matrix:
             yield [self._matrix[index][column_index] for index in range(self.num_of_rows)]
 
     def multiply_element_wise(self, other: 'Union[Matrix, List[list], list]'):
+        if isinstance(other, list):
+            other = Matrix(other)
         if self.shape != other.shape:
             warnings.warn("If you want to execute matrix multiplication, use the '@' binary operator, or the __imatmul__(), __matmul__() methods")
             raise ValueError("Can't perform element-wise multiplication of matrices with different shapes. ")

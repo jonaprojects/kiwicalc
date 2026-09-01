@@ -475,10 +475,8 @@ class Mono(IExpression, IPlottable, IScatterable):
             return self._coefficient
         elif power == 0:
             return 0
-        elif power > 0:
+        elif power != 0:
             return Mono(self._coefficient * power, variables_dict={fetch_variable(self.__variables): power - 1})
-        elif power < 0:
-            return NotImplementedError
 
     def partial_derivative(self, variables: Iterable):
         if self.__variables is None:
@@ -509,10 +507,10 @@ class Mono(IExpression, IPlottable, IScatterable):
         variable, power = (fetch_variable(self.__variables), fetch_power(self.__variables))
         if power == 0:
             return Mono(round_decimal(self._coefficient), variables_dict={variable: 1})
-        elif power > 0:
+        elif power == -1:
+            return self._coefficient * Ln(Abs(Mono(1, variables_dict={variable: 1})))
+        elif power != -1:
             return Mono(round_decimal(self._coefficient / (power + 1)), variables_dict={variable: power + 1})
-        else:
-            return NotImplementedError
 
     def to_lambda(self):
         """

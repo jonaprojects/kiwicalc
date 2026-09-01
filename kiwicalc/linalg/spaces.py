@@ -56,7 +56,12 @@ class Surface:
         point object.
         """
         general_point = vector.general_point('t')
-        expression = self.__a * general_point[0] + self.__b * general_point[1] + self.__c + general_point[2] + self.__d
+        expression = (
+            self.__a * general_point[0]
+            + self.__b * general_point[1]
+            + self.__c * general_point[2]
+            + self.__d
+        )
         t_solution = LinearEquation(f'{expression} = 0', variables=('t',), calc_now=True).solution
         for polynomial in general_point:
             polynomial.assign(t=t_solution)
@@ -87,7 +92,7 @@ class Surface:
         if other is None:
             return False
         if isinstance(other, Surface):
-            return (self.__a, self.__b, self.__c, self.__c) == (other.__a, other.__b, other.__c, other.__d)
+            return (self.__a, self.__b, self.__c, self.__d) == (other.__a, other.__b, other.__c, other.__d)
         if isinstance(other, list):
             return [self.__a, self.__b, self.__c, self.__d] == other
         if isinstance(other, tuple):
