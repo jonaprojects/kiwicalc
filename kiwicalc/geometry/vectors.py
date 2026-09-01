@@ -185,9 +185,12 @@ class Vector:
                 print('The vectors have the same directions, unhandled case for now')
                 return
             my_general, other_general = (self.general_point('t'), other.general_point('s'))
-            solutions_dict = LinearSystem((f'{expr1}={expr2}' for expr1, expr2 in zip(my_general, other_general))).get_solutions()
-            if not solutions_dict:
-                print('Something went wrong, no solutions were found for t and s !')
+            try:
+                solutions_dict = LinearSystem(
+                    (f'{expr1}={expr2}' for expr1, expr2 in zip(my_general, other_general))
+                ).get_solutions()
+            except ValueError:
+                return None
             t, s = (solutions_dict['t'], solutions_dict['s'])
             for expression in my_general:
                 expression.assign(t=t)

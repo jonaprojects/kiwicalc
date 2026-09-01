@@ -86,10 +86,14 @@ def linear_regression(axes, y_values, get_values: bool=False):
     """
     if len(axes) != len(y_values):
         raise ValueError(f'Each x must have a corresponding y value ( Got {len(axes)} x values and {len(y_values)} y values ).')
+    if not axes:
+        raise ValueError('Linear regression requires at least one point')
     n = len(axes)
     sum_x, sum_y = (sum(axes), sum(y_values))
     sum_x_2, sum_xy = (sum((x ** 2 for x in axes)), sum((x * y for x, y in zip(axes, y_values))))
     denominator = n * sum_x_2 - sum_x ** 2
+    if denominator == 0:
+        raise ValueError('Linear regression requires at least two distinct x values')
     b = (sum_y * sum_x_2 - sum_x * sum_xy) / denominator
     a = (n * sum_xy - sum_x * sum_y) / denominator
     if get_values:
@@ -106,6 +110,10 @@ def lagrange_polynomial(axes, y_values):
     """
     from kiwicalc.expressions.var import Var
     from kiwicalc.expressions.poly import Poly
+    if len(axes) != len(y_values):
+        raise ValueError(f'Each x must have a corresponding y value ( Got {len(axes)} x values and {len(y_values)} y values ).')
+    if len(set(axes)) != len(axes):
+        raise ValueError('Lagrange interpolation requires distinct x values')
     x = Var('x')
     result = Poly(0)
     for i, xi in enumerate(axes):

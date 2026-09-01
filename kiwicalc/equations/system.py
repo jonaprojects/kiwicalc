@@ -1,5 +1,6 @@
 from __future__ import annotations
 import random
+import warnings
 from typing import Union, Tuple, List, Optional, Any, Callable, Dict, Set, Iterable
 import numpy as np
 from numpy.linalg import LinAlgError, solve
@@ -89,16 +90,10 @@ class LinearSystem:
         for example: {'x':6,'y':4}
         This comes handy later since you can access simply the solutions.
         """
-        values_matrix = self.to_matrix()
-        matrix_obj = Matrix(matrix=values_matrix)
-        matrix_obj.gauss()
-        answers = {}
-        keys = list(self.__variables_dict.keys())
-        i = 0
-        for row in matrix_obj.matrix:
-            answers[keys[i]] = -round_decimal(row[len(row) - 1])
-            i += 1
-        return answers
+        return solve_linear_system(
+            [equation.equation for equation in self.__equations],
+            variables=self.__variables or None,
+        )
 
     def simplify(self):
         pass
@@ -114,27 +109,40 @@ class LinearSystem:
 
 def solve_linear_system(equations, variables=None):
     """ Solve a system of linear equations via Guass-Elimination Method with matrices"""
+    equations = list(equations)
     if not variables:
-        variables = set()
+        inferred_variables = set()
         for equation in equations:
-            variables.update(extract_variables_from_expression(equation))
-    values_matrix = []
+            inferred_variables.update(extract_variables_from_expression(equation))
+        variables = sorted(inferred_variables)
+    else:
+        variables = list(variables)
+    if not variables:
+        raise ValueError('A linear system must contain at least one variable')
+    coefficients = []
+    constants = []
     for equation in equations:
         equal_index = equation.find('=')
+        if equal_index == -1:
+            raise ValueError("Invalid equation - expected two sides separated by '='")
         side1, side2 = (equation[:equal_index], equation[equal_index + 1:])
         first_dict = simplify_expression(side1, variables)
         second_dict = simplify_expression(side2, variables)
         result_dict = subtract_dicts(second_dict, first_dict)
-        values_matrix.append(list(result_dict.values()))
-    matrix_obj = Matrix(matrix=values_matrix)
-    matrix_obj.gauss()
-    answers = {}
-    keys = list(variables)
-    i = 0
-    for row in matrix_obj.matrix:
-        answers[keys[i]] = -round_decimal(row[len(row) - 1])
-        i += 1
-    return answers
+        coefficients.append([result_dict[variable] for variable in variables])
+        constants.append(-result_dict['number'])
+    coefficient_matrix = np.asarray(coefficients, dtype=float)
+    constant_vector = np.asarray(constants, dtype=float)
+    if coefficient_matrix.ndim != 2 or coefficient_matrix.shape[0] == 0:
+        raise ValueError('A linear system must contain at least one equation')
+    coefficient_rank = np.linalg.matrix_rank(coefficient_matrix)
+    augmented_rank = np.linalg.matrix_rank(np.column_stack((coefficient_matrix, constant_vector)))
+    if augmented_rank != coefficient_rank:
+        raise ValueError('The linear system is inconsistent and has no solution')
+    if coefficient_rank < len(variables):
+        raise ValueError('The linear system does not have a unique solution')
+    solution, _, _, _ = np.linalg.lstsq(coefficient_matrix, constant_vector, rcond=None)
+    return {variable: round_decimal(value) for variable, value in zip(variables, solution)}
 
 def solve_poly_system(equations: 'Union[Iterable[Union[str,Poly,Mono]],Iterable[Union[str, Poly, Mono]]]', initial_vals: dict=None, epsilon: float=1e-05, nmax: int=10000, show_steps=False):
     """
@@ -158,12 +166,16 @@ def solve_poly_system(equations: 'Union[Iterable[Union[str,Poly,Mono]],Iterable[
     for i in range(nmax):
         assignment_dictionary = dict(zip(variables, [row[0] for row in current_values_matrix.matrix]))
         assigned_jacobian = jacobian_matrix.mapped_matrix(lambda polynomial: polynomial.when(**assignment_dictionary).try_evaluate())
-        jacobian_inverse = assigned_jacobian.inverse()
         assigned_polynomials = Matrix(matrix=[[polynomial.when(**assignment_dictionary).try_evaluate()] for polynomial in polynomials])
         if all((abs(row[0]) < epsilon for row in assigned_polynomials.matrix)):
             return {variables[index]: row[0] for index, row in enumerate(current_values_matrix)}
+        jacobian_inverse = assigned_jacobian.inverse()
+        if jacobian_inverse is None:
+            raise ValueError('Cannot continue: the Jacobian is singular at the current approximation')
         interval_matrix = jacobian_inverse @ assigned_polynomials
         current_values_matrix -= interval_matrix
+    warnings.warn('The polynomial system solution might have not converged properly')
+    return {variables[index]: row[0] for index, row in enumerate(current_values_matrix)}
 
 def random_linear_system(variables, solutions_range: Tuple[int, int]=(-10, 10), coefficients_range: Tuple[int, int]=(-10, 10), digits_after=0, get_solutions=False):
     from kiwicalc.parsing.parse_expression import ParseExpression

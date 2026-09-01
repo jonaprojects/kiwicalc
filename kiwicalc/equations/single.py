@@ -52,6 +52,10 @@ def solve_quadratic(a: Union[str, float], b: float=None, c: float=None) -> tuple
     """ Solves a quadratic equation using computations of complex numbers ( utilizing the cmath library)"""
     if isinstance(a, str):
         return solve_quadratic_from_str(a)
+    if a == 0:
+        if b == 0:
+            return None if c == 0 else tuple()
+        return (-c / b,)
     discriminant = b ** 2 - 4 * a * c
     return ((-b + cmath.sqrt(discriminant)) / (2 * a), (-b - cmath.sqrt(discriminant)) / (2 * a))
 
@@ -59,6 +63,10 @@ def solve_quadratic_real(a: Union[str, float], b: float, c: float) -> Optional[U
     """returns onlu the real solutions of the quadratic equation"""
     if isinstance(a, str):
         return solve_quadratic_from_str(a, real=True)
+    if a == 0:
+        if b == 0:
+            return None
+        return -c / b
     discriminant = b ** 2 - 4 * a * c
     if discriminant < 0:
         return None
@@ -162,6 +170,11 @@ def solve_polynomial(coefficients, epsilon: float=1e-06, nmax: int=10000):
     """
     if isinstance(coefficients, str):
         return solve_polynomial(ParseEquation.parse_polynomial(coefficients))
+    coefficients = list(coefficients)
+    while coefficients and coefficients[0] == 0:
+        coefficients.pop(0)
+    if not coefficients:
+        return None
     if len(coefficients) == 1:
         return None
     if len(coefficients) == 2:

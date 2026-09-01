@@ -33,6 +33,9 @@ class Matrix:
                 if not isinstance(matrix, list):
                     matrix = list(matrix)
                 if len(matrix) > 0 and isinstance(matrix[0], Iterable) and not isinstance(matrix[0], str):
+                    expected_columns = len(matrix[0])
+                    if any(not isinstance(row, Iterable) or isinstance(row, str) or len(row) != expected_columns for row in matrix):
+                        raise ValueError('Matrix rows must all have the same length')
                     self._num_of_rows, self._num_of_columns = len(matrix), len(matrix[0])
                     self._matrix = [[copy_expression(item) for item in row] for row in matrix]
                 else:
@@ -103,7 +106,7 @@ class Matrix:
 
     def __get_starting_item(self, i: int):
         """ Get the index of the first element in a row that is not 0"""
-        for j in range(i, self._num_of_columns):
+        for j in range(i, self._num_of_rows):
             if self.matrix[j][i] != 0:
                 return j
         return -1
@@ -183,21 +186,25 @@ class Matrix:
         The gaussian elimination is a method for solving a set of linear equations. It is supported in this program
         via the LinearSystem class, but it uses the Matrix class for the solving process.
         """
-        number_of_zeroes = 0
-        for i in range(self._num_of_rows):
-            if i < self.num_of_columns and self.matrix[i][i] == 0:
-                index = self.__get_starting_item(i)
-                if index != -1:
-                    self.replace_rows(i, index)
-                else:
-                    del self._matrix[i]
-                    self._matrix.append([0] * self._num_of_columns)
-                    number_of_zeroes += 1
-            if self.matrix[i][i] != 0:
-                self.divide_row(self.matrix[i][i], i)
-            for j in range(self.num_of_rows):
-                if i != j:
-                    self.add_and_mul(j, i, -self.matrix[j][i])
+        pivot_row = 0
+        for pivot_column in range(self._num_of_columns):
+            if pivot_row >= self._num_of_rows:
+                break
+            candidate = next(
+                (row for row in range(pivot_row, self._num_of_rows)
+                 if self.matrix[row][pivot_column] != 0),
+                None,
+            )
+            if candidate is None:
+                continue
+            if candidate != pivot_row:
+                self.replace_rows(pivot_row, candidate)
+            pivot = self.matrix[pivot_row][pivot_column]
+            self.divide_row(pivot, pivot_row)
+            for row in range(self._num_of_rows):
+                if row != pivot_row and self.matrix[row][pivot_column] != 0:
+                    self.add_and_mul(row, pivot_row, -self.matrix[row][pivot_column])
+            pivot_row += 1
 
     def __test_gauss(self) -> None:
         """
@@ -245,21 +252,28 @@ class Matrix:
         if self._num_of_rows == 2:
             return self._matrix[0][0] * self._matrix[1][1] - self._matrix[1][0] * self._matrix[0][1]
         d: float = 1
-        if not rank:
-            other = self.__copy__()
-        else:
-            other = self
-        for i in range(other._num_of_rows):
-            if i < other._num_of_rows and other.matrix[i][i] == 0:
+        other = self if rank else self.__copy__()
+        for column_index in range(other._num_of_columns):
+            pivot_row = next(
+                (row for row in range(column_index, other._num_of_rows)
+                 if other.matrix[row][column_index] != 0),
+                None,
+            )
+            if pivot_row is None:
+                if rank:
+                    other.gauss()
+                return 0
+            if pivot_row != column_index:
+                other.replace_rows(column_index, pivot_row)
                 d = -d
-            if other.matrix[i][i] != 0:
-                d *= other._matrix[i][i]
-                other.divide_row(other.matrix[i][i], i)
-            for j in range(other.num_of_rows):
-                if i != j:
-                    other.add_and_mul(j, i, -other.matrix[j][i])
-        if any((other.__zero_line(row) for row in other._matrix)):
-            d = 0
+            pivot = other.matrix[column_index][column_index]
+            d *= pivot
+            other.divide_row(pivot, column_index)
+            for row in range(column_index + 1, other.num_of_rows):
+                if other.matrix[row][column_index] != 0:
+                    other.add_and_mul(row, column_index, -other.matrix[row][column_index])
+        if rank:
+            other.gauss()
         return d
 
     def yield_items(self):
@@ -490,6 +504,8 @@ class Matrix:
         else:
             new_matrix = [[expression for expression in row if predicate(expression)] for row in self._matrix]
         if get_list:
+            return new_matrix
+        if new_matrix and any(len(row) != len(new_matrix[0]) for row in new_matrix):
             return new_matrix
         return Matrix(matrix=new_matrix)
 

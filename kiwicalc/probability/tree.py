@@ -241,21 +241,30 @@ class ProbabilityTree:
         :return: returns the probability up to that path or node
         :rtype: float
         """
-        probability = 1
-        if isinstance(path, (list, tuple, str)):
-            if isinstance(path, str):
-                path = path.split('/')
-            if path is None:
-                path = self.__root.name.identifier
-            nodes = [[node.name for node in children] for children in ZigZagGroupIter(self.__root, filter_=lambda n: n.name.identifier in path)]
-            probability: float = 1
-            for node in nodes:
-                for occurrence in node:
-                    probability *= occurrence.chance
-        elif isinstance(path, Node):
-            for node in path.iter_path_reverse():
-                probability *= node.name.chance
-        return round(probability, 5)
+        if path is None:
+            path = self.__root
+        if isinstance(path, Node):
+            if path.root is not self.__root:
+                raise ValueError('The node does not belong to this probability tree')
+            nodes = path.path
+        elif isinstance(path, (list, tuple, str)):
+            identifiers = path.split('/') if isinstance(path, str) else list(path)
+            identifiers = [identifier for identifier in identifiers if identifier != '']
+            if identifiers and identifiers[0] == self.__root.name.identifier:
+                identifiers.pop(0)
+            current = self.__root
+            nodes = [current]
+            for identifier in identifiers:
+                current = next(
+                    (child for child in current.children if child.name.identifier == identifier),
+                    None,
+                )
+                if current is None:
+                    raise ValueError(f"Invalid probability path: node '{identifier}' is not a child on this path")
+                nodes.append(current)
+        else:
+            raise TypeError(f"Expected a path or Node, got {type(path)}")
+        return round(reduce(operator.mul, (node.name.chance for node in nodes), 1), 5)
 
     @staticmethod
     def biggest_probability_node(node: Node) -> Node:

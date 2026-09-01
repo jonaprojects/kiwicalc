@@ -85,6 +85,9 @@ def newton_raphson(f_0: Callable, f_1: Callable, initial_value: float=0, epsilon
         if abs(f_x) <= epsilon:
             return initial_value
         f_tag = f_1(initial_value)
+        if f_tag == 0:
+            warnings.warn('Newton-Raphson failed because the derivative is zero')
+            return initial_value
         initial_value -= f_x / f_tag
     warnings.warn('The solution might have not converged properly')
     return initial_value
@@ -109,7 +112,11 @@ def halleys_method(f_0: Callable, f_1: Callable, f_2: Callable, initial_value: f
             return current_x
         f_prime = f_1(current_x)
         f_double_prime = f_2(current_x)
-        current_x = current_x - 2 * f * f_prime / (2 * f_prime ** 2 - f * f_double_prime)
+        denominator = 2 * f_prime ** 2 - f * f_double_prime
+        if denominator == 0:
+            warnings.warn("Halley's method failed because its update denominator is zero")
+            return current_x
+        current_x = current_x - 2 * f * f_prime / denominator
     warnings.warn('The solution might have not converged properly')
     return current_x
 
