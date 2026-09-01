@@ -443,7 +443,7 @@ class LinearEquation(Equation):
             accumulator += f"\x1b[93m{second_side.replace('+', ' +').replace('-', ' -')}\x1b[0m\n"
             accumulator += '\x1b[1m2. Second Step: sum all the numbers in both sides\x1b[0m\n'
             first_expression = simplify_expression(expression=first_side, variables=variables)
-            second_expression = simplify_expression(expression=first_side, variables=variables)
+            second_expression = simplify_expression(expression=second_side, variables=variables)
             accumulator += f"\x1b[93m{first_expression['number']}\x1b[0m"
             accumulator += ' = '
             accumulator += f"\x1b[93m{second_expression['number']}\x1b[0m\n"
@@ -610,11 +610,13 @@ class LinearEquation(Equation):
         Generates a PDF page with random __equations
         :return:
         """
+        from kiwicalc.pdf.worksheet import create_pdf
         equations = [LinearEquation.random_equation(values, items_per_side, after_point, get_solutions) for _ in range(num_of_equations)]
         return create_pdf(path=path, title=title, lines=equations)
 
     @staticmethod
     def random_worksheets(path: str, num_of_pages: int=2, equations_per_page=20, values=(1, 20), items_per_side=(4, 8), after_point=1, get_solutions=False, titles=None):
+        from kiwicalc.pdf.worksheet import create_pages
         if get_solutions:
             lines = []
             for i in range(num_of_pages):
@@ -647,6 +649,7 @@ class LinearEquation(Equation):
         :param equations: the __equations to print out
         :return: returns True if the creation is successful, else False.
         """
+        from kiwicalc.pdf.worksheet import create_pdf
         return create_pdf('test', title=title, lines=equations)
 
     @staticmethod
@@ -755,6 +758,7 @@ class QuadraticEquation(Equation):
 
     @staticmethod
     def random_worksheet(path=None, title='Quadratic Equations Worksheet', num_of_equations=20, solutions_range=(-15, 15), digits_after: int=0, get_solutions=True):
+        from kiwicalc.pdf.worksheet import create_pdf
         lines = []
         if get_solutions:
             equations, solutions = ([], [])
@@ -774,6 +778,7 @@ class QuadraticEquation(Equation):
 
     @staticmethod
     def random_worksheets(path=None, num_of_pages=2, equations_per_page=20, titles=None, solutions_range=(-15, 15), digits_after: int=0, get_solutions=False):
+        from kiwicalc.pdf.worksheet import create_pages
         if titles is None:
             if get_solutions:
                 titles = ['Quadratic Equations Worksheet', 'Solutions'] * num_of_pages
@@ -939,6 +944,8 @@ class PolyEquation(Equation):
         return extract_dict_from_equation(self._equation)
 
     def plot_solutions(self, start: float=-10, stop: float=10, step: float=0.01, ymin: float=-10, ymax=10, title: str=None, show_axis=True, show=True):
+        from kiwicalc.functions.function import Function
+        from kiwicalc.plotting.plots import plot_functions
         first_func = Function(self.first_side)
         second_func = Function(self.second_side)
         plot_functions([first_func, second_func], start=start, stop=stop, step=step, ymin=ymin, ymax=ymax, title=title, show_axis=show_axis, show=show)

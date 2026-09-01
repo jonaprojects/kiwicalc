@@ -335,6 +335,9 @@ class Poly(IExpression, IPlottable):
             self._expressions = [Mono(expressions)]
         elif isinstance(expressions, Mono):
             self._expressions = [expressions.__copy__()]
+        elif isinstance(expressions, Poly):
+            self._expressions = [mono_expression.__copy__() for mono_expression in expressions._expressions]
+            self.simplify()
         elif isinstance(expressions, Iterable):
             self._expressions = []
             for expression in expressions:
@@ -349,11 +352,6 @@ class Poly(IExpression, IPlottable):
                 else:
                     warnings.warn(f"Couldn't process expression '{expression} with invalid type {type(expression)}'")
             self.simplify()
-        elif isinstance(expressions, Poly):
-            self._expressions: List[Mono] = [mono_expression.__copy__() for mono_expression in expressions._expressions]
-            self.simplify()
-        elif isinstance(expressions, Mono):
-            self._expressions: List[Mono] = [expressions.__copy__()]
         else:
             raise TypeError(f'Invalid type {type(expressions)} in Poly.__init__(). Allowed types: list,tuple,Mono,Poly,str,int,float ')
 
@@ -478,7 +476,10 @@ class Poly(IExpression, IPlottable):
         return Poly([-expression for expression in self.expressions])
 
     def __imul__(self, other: Union[int, float, IExpression]):
-        if other == 0:
+        from kiwicalc.geometry.vectors import Vector
+        from kiwicalc.linalg.matrix import Matrix
+
+        if isinstance(other, (int, float)) and other == 0:
             return Mono(coefficient=0)
         if isinstance(other, (int, float)):
             for index, expression in enumerate(self._expressions):
@@ -565,6 +566,16 @@ class Poly(IExpression, IPlottable):
                     if get_remainder:
                         return (new_expression, other._expressions[0])
                     return new_expression + other._expressions[0] / other
+                dividend_lead = temp_expressions._expressions[0]
+                divisor_lead = other._expressions[0]
+                dividend_powers = dividend_lead.variables_dict or {}
+                divisor_powers = divisor_lead.variables_dict or {}
+                if any(dividend_powers.get(variable, 0) < power for variable, power in divisor_powers.items()):
+                    temp_expressions.simplify()
+                    temp_expressions.sort()
+                    if get_remainder:
+                        return (new_expression, temp_expressions)
+                    return new_expression + Fraction(temp_expressions, other)
                 first_item = temp_expressions._expressions[0] / other._expressions[0]
                 new_expression += first_item.__copy__()
                 subtraction_expressions = first_item * other
@@ -672,6 +683,8 @@ class Poly(IExpression, IPlottable):
                     power = power._expressions[0].coefficient
                 else:
                     raise ValueError('Cannot perform power with an algebraic exponent')
+        if isinstance(power, float) and power.is_integer():
+            power = int(power)
         if power == 0:
             return Poly(1)
         elif power == 1:
@@ -717,6 +730,10 @@ class Poly(IExpression, IPlottable):
         if isinstance(other, str):
             other = Poly(other)
         if isinstance(other, (int, float, Mono)):
+            my_evaluation = self.try_evaluate()
+            other_evaluation = other if isinstance(other, (int, float)) else other.try_evaluate()
+            if my_evaluation is not None and other_evaluation is not None:
+                return my_evaluation == other_evaluation
             if len(self._expressions) != 1:
                 return False
             return self._expressions[0].__eq__(other)
@@ -730,7 +747,7 @@ class Poly(IExpression, IPlottable):
             if my_num_of_variables == 0:
                 if len(self._expressions) != len(other._expressions):
                     return False
-                return self._expressions[0] == other._expressions[1]
+                return self._expressions[0] == other._expressions[0]
             elif my_num_of_variables == 1:
                 return self._expressions == other._expressions
             else:
@@ -921,7 +938,7 @@ class Poly(IExpression, IPlottable):
                 return (Range(expression=x, limits=(-np.inf, np.inf), operators=(LESS_THAN, LESS_THAN)), None)
             elif coefficients[0] < 0:
                 return (None, Range(expression=x, limits=(-np.inf, np.inf), operators=(LESS_THAN, LESS_THAN)))
-        elif num_of_coefficients == 2:
+        elif num_of_coefficients == 3:
             first = Range(expression=x, limits=(-np.inf, extremums_axes[0]), operators=(LESS_THAN, LESS_THAN))
             second = Range(expression=x, limits=(extremums_axes[0], np.inf), operators=(LESS_THAN, LESS_THAN))
             if coefficients[0] > 0:
@@ -1267,8 +1284,6 @@ def synthetic_division(coefficients: list, number: float):
         result = value
     if new_list[-1] == 0:
         del new_list[-1]
-    if new_list is None:
-        return []
     return (new_list, result)
 
 

@@ -212,7 +212,7 @@ class Root(IExpression, IPlottable, IScatterable):
             return self._inside ** (1 / evaluated_division)
         elif evaluated_division == 1:
             return self._inside
-        self._root = evaluated_division
+        self._root = Mono(evaluated_division)
         return self
 
     def __pow__(self, power):
@@ -239,7 +239,7 @@ class Root(IExpression, IPlottable, IScatterable):
                     if my_root_evaluation and other_root_evaluation:
                         self._coefficient /= other._coefficient
                         power_difference = 1 / my_root_evaluation - 1 / other_root_evaluation
-                        self._root = 1 / power_difference
+                        self._root = Mono(1 / power_difference)
                         return self
             else:
                 return Fraction(self, other)

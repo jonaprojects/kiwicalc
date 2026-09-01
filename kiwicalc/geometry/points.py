@@ -299,16 +299,17 @@ class Line2D(IPlottable):
         pass
 
     def plot(self, start: float=-6, stop: float=6, step: float=0.3, ymin: float=-10, ymax: float=10, title: str=None, formatText: bool=False, show_axis: bool=True, show: bool=True, fig=None, ax=None, values=None):
-        from kiwicalc.plotting.plots import plot_function, scatter_function
+        from kiwicalc.plotting.plots import plot_function
         my_lambda = self.to_lambda()
         if my_lambda is None:
-            pass
+            return None
         plot_function(my_lambda, start=start, stop=stop, step=step, ymin=ymin, ymax=ymax, title=title, show_axis=show_axis, show=show, fig=fig, formatText=formatText, ax=ax, values=values)
 
     def scatter(self, start: float=-10, stop: float=10, step: float=0.05, ymin: float=-10, ymax: float=10, title=None, show_axis=True, show=True, fig=None, ax=None, formatText=True, values=None):
+        from kiwicalc.plotting.plots import scatter_function
         lambda_expression = self.to_lambda()
         if not lambda_expression:
-            pass
+            return None
         if title is None:
             title = self.__str__()
         scatter_function(lambda_expression, start=start, stop=stop, step=step, ymin=ymin, ymax=ymax, title=title, show_axis=show_axis, show=show, fig=fig, ax=ax, values=values)

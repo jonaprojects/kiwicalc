@@ -31,7 +31,7 @@ def extract_possible_solutions(most_significant_coef: float, free_number: float)
     return {}
 
 def __find_solutions(coefficients, possible_solutions):
-    from kiwicalc.equations.single import solve_polynomial
+    from kiwicalc.equations.single import solve_polynomial, solve_quadratic_real
     solutions = set()
     copy = coefficients.copy()
     if copy[-1] == 0:
@@ -110,6 +110,8 @@ def halleys_method(f_0: Callable, f_1: Callable, f_2: Callable, initial_value: f
         f_prime = f_1(current_x)
         f_double_prime = f_2(current_x)
         current_x = current_x - 2 * f * f_prime / (2 * f_prime ** 2 - f * f_double_prime)
+    warnings.warn('The solution might have not converged properly')
+    return current_x
 
 def secant_method(f: Callable, n_0: float=1, n_1: float=0, epsilon: float=1e-05, nmax=100000):
     """
@@ -121,13 +123,27 @@ def secant_method(f: Callable, n_0: float=1, n_1: float=0, epsilon: float=1e-05,
     :param epsilon:
     :return:
     """
-    d = (n_0 - n_1) / (f(n_0) - f(n_1)) * f(n_0)
-    for i in range(100000):
-        if abs(d) <= epsilon:
-            break
+    f_0 = f(n_0)
+    if abs(f_0) <= epsilon:
+        return n_0
+    f_1 = f(n_1)
+    if abs(f_1) <= epsilon:
+        return n_1
+    for _ in range(nmax):
+        denominator = f_0 - f_1
+        if denominator == 0:
+            warnings.warn('The secant method failed because the function values are equal')
+            return n_0
+        d = (n_0 - n_1) / denominator * f_0
         n_1 = n_0
         n_0 -= d
-        d = (n_0 - n_1) / (f(n_0) - f(n_1)) * f(n_0)
+        if abs(d) <= epsilon:
+            return n_0
+        f_1 = f_0
+        f_0 = f(n_0)
+        if abs(f_0) <= epsilon:
+            return n_0
+    warnings.warn('The solution might have not converged properly')
     return n_0
 
 def inverse_interpolation(f: Callable, x0: float, x1: float, x2: float, epsilon: float=1e-05, nmax: int=100000):
@@ -321,15 +337,17 @@ def steffensen_method(f: Callable, initial: float, epsilon: float=1e-06, nmax=10
     :return: returns an approximation of the root.
     """
     x = initial
-    for i in range(100000):
+    for _ in range(nmax):
         fx = f(x)
         if abs(fx) < epsilon:
             break
         gx = f(x + fx) / fx - 1
         if gx == 0:
             warnings.warn('Failed using the steffensen method!')
-            break
+            return x
         x -= fx / gx
+    else:
+        warnings.warn('The solution might have not converged properly')
     return x
 
 def bisection_method(f: Callable, a: float, b: float, epsilon: float=1e-05, nmax: int=10000):
@@ -361,6 +379,10 @@ def bisection_method(f: Callable, a: float, b: float, epsilon: float=1e-05, nmax
     elif a == b:
         raise ValueError('a and b cannot be equal! a must be smaller than b')
     fa, fb = (f(a), f(b))
+    if abs(fa) <= epsilon:
+        return a
+    if abs(fb) <= epsilon:
+        return b
     if not (fa < 0 < fb or fb < 0 < fa):
         raise ValueError('a and b must be of opposite signs')
     for i in range(nmax):
@@ -368,8 +390,9 @@ def bisection_method(f: Callable, a: float, b: float, epsilon: float=1e-05, nmax
         fc = f(c)
         if fc == 0 or (b - a) / 2 < epsilon:
             return c
-        if fc * f(a) > 0:
+        if fc * fa > 0:
             a = c
+            fa = fc
         else:
             b = c
     return None

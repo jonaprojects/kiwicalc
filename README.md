@@ -122,7 +122,9 @@ python -m venv .venv
 # Windows PowerShell: .\.venv\Scripts\Activate.ps1
 # macOS/Linux: source .venv/bin/activate
 python -m pip install --editable ".[dev]"
-python -m pytest --cov=kiwicalc --cov-report=term-missing
+python -m pytest --cov=kiwicalc --cov-report=term-missing --cov-report=json:coverage.json
+python scripts/check_line_coverage.py coverage.json 90
+python scripts/check_branch_coverage.py coverage.json 90
 ```
 
 Pull requests and pushes to `main` run the test suite on Linux and Windows. Published GitHub Releases are built, validated, and uploaded to PyPI through Trusted Publishing when the release tag matches the version in `pyproject.toml`.

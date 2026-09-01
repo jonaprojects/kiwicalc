@@ -285,15 +285,15 @@ class PolyFraction(Fraction):
             elif (division_result := self._denominator.__truediv__(other._denominator, get_remainder=True))[1] == 0:
                 self._numerator += other._numerator * division_result[0]
                 return self
-            elif (division_result := (other._denominator / self._denominator))[1] == 0:
+            elif (division_result := other._denominator.__truediv__(self._denominator, get_remainder=True))[1] == 0:
                 self._numerator *= division_result[0]
                 self._denominator *= division_result[0]
                 self._numerator += other._numerator
                 return self
             else:
-                raise NotImplemented
+                raise NotImplementedError
         else:
-            raise NotImplemented
+            raise NotImplementedError
 
     def __radd__(self, other):
         new_copy = self.__copy__()
@@ -304,18 +304,18 @@ class PolyFraction(Fraction):
             if self._denominator == other._denominator:
                 self._numerator -= other._numerator
                 return self
-            elif (division_result := (self._denominator / other._denominator))[1] == 0:
+            elif (division_result := self._denominator.__truediv__(other._denominator, get_remainder=True))[1] == 0:
                 self._numerator -= other._numerator * division_result[0]
                 return self
-            elif (division_result := (other._denominator / self._denominator))[1] == 0:
+            elif (division_result := other._denominator.__truediv__(self._denominator, get_remainder=True))[1] == 0:
                 self._numerator *= division_result[0]
                 self._denominator *= division_result[0]
                 self._numerator -= other._numerator
                 return self
             else:
-                raise NotImplemented
+                raise NotImplementedError
         else:
-            raise NotImplemented
+            raise NotImplementedError
 
     def __sub__(self, other):
         new_copy = self.__copy__()

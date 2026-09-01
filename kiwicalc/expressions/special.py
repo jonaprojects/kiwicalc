@@ -602,7 +602,7 @@ class Exponent(IExpression):
             elif other_evaluation is not None:
                 if operation == '+':
                     return ExpressionSum((self, Mono(other_evaluation)))
-                return ExpressionSum((self, Mono(-other)))
+                return ExpressionSum((self, Mono(-other_evaluation)))
             elif not isinstance(other, Exponent):
                 if operation == '+':
                     return ExpressionSum((self, other))

@@ -280,7 +280,7 @@ class Mono(IExpression, IPlottable, IScatterable):
                 my_variables, other_variables = (self.variables, other.variables)
                 if my_variables != other_variables:
                     return PolyFraction(self, other)
-                if any((my_value < other_value for my_value, other_value in zip(self.__variables.values(), self.__variables.values()))):
+                if any((my_value < other_value for my_value, other_value in zip(self.__variables.values(), other.__variables.values()))):
                     return PolyFraction(self, other)
                 my_keys = [] if self.__variables in (None, {}) else list(self.variables)
                 keys = my_keys + list(other.variables)
@@ -526,6 +526,8 @@ class Mono(IExpression, IPlottable, IScatterable):
 
         :return: A Function object, corresponding to the  Mono object
         """
+        from kiwicalc.functions.function import Function
+
         return Function(self.python_syntax())
 
 

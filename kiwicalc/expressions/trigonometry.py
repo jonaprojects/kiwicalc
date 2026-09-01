@@ -472,7 +472,7 @@ class TrigoExpr(IExpression, IPlottable, IScatterable):
             pass
 
     def __single_partial(self, variable: str):
-        relevant_expressions = [], irrelevant_expressions = []
+        relevant_expressions, irrelevant_expressions = [], []
         for mini_expression in self._expressions:
             if mini_expression[1] is not None and mini_expression[1].contains_variable(variable):
                 relevant_expressions.append(mini_expression)
@@ -605,9 +605,9 @@ class TrigoExpr(IExpression, IPlottable, IScatterable):
                     if coef1 == -coef2:
                         return True
         if ((first_method := method1) is TrigoMethods.SIN and (second_method := method2) is TrigoMethods.COS or ((second_method := method1) is TrigoMethods.COS and (first_method := method2) is TrigoMethods.SIN)) or ((first_method := method1) is TrigoMethods.CSC and (second_method := method2) is TrigoMethods.SEC or ((second_method := method1) is TrigoMethods.SEC and (first_method := method2) is TrigoMethods.CSC)):
-            if evaluated_difference == pi / 2 and coef1 == coef2:
+            if evaluated_difference is not None and math.isclose(evaluated_difference, pi / 2, abs_tol=1e-5) and coef1 == coef2:
                 return True
-        if evaluated_difference == -pi / 2 and coef1 == -coef2:
+        if evaluated_difference is not None and math.isclose(evaluated_difference, 3 * pi / 2, abs_tol=1e-5) and coef1 == -coef2:
             return True
         else:
             return False

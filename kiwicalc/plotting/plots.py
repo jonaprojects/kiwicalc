@@ -72,7 +72,23 @@ def scatter_function_3d(func: 'Union[Callable, str, IExpression]', start: float=
     scatter_dots_3d(X, Y, Z, fig=fig, ax=ax, title=title, show=show, xlabel=xlabel, ylabel=ylabel, zlabel=zlabel, write_labels=write_labels)
 
 def scatter_functions_3d(functions: 'Iterable[Union[Callable, str, IExpression]]', start: float=-5, stop: float=5, step: float=0.1, xlabel: str='X Values', ylabel: str='Y Values', zlabel: str='Z Values'):
-    pass
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    x = y = np.arange(start, stop, step)
+    meshgrid = np.meshgrid(x, y)
+    for func in functions:
+        scatter_function_3d(
+            func,
+            show=False,
+            write_labels=False,
+            fig=fig,
+            ax=ax,
+            meshgrid=meshgrid,
+        )
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.set_zlabel(zlabel)
+    plt.show()
 
 def plot_function(func: Union[Callable, str], start: float=-10, stop: float=10, step: float=0.01, ymin: float=-10, ymax: float=10, title=None, show_axis=True, show=True, fig=None, ax=None, formatText=False, values=None):
     if None in (fig, ax):
