@@ -4,7 +4,8 @@ from math import ceil, sqrt
 import cmath
 import warnings
 from itertools import combinations, cycle
-from typing import Union, Tuple, List, Optional, Any, Callable, Iterable
+from pathlib import Path
+from typing import Union, Tuple, List, Optional, Any, Callable, Iterable, Sequence
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
@@ -15,8 +16,22 @@ from kiwicalc.core.utils import (
     format_matplot
 )
 from kiwicalc.core.ranges import values_in_range
+from kiwicalc.geometry.curves import Curve2D
 from kiwicalc.geometry.points import Circle, process_to_points
 from kiwicalc.functions.function import Function
+from kiwicalc.plotting.axis import (
+    axis_label, configure_minor_ticks, configure_ticks, normalize_units,
+    set_axes_at_origin,
+)
+from kiwicalc.plotting.themes import PlotTheme, ThemeInput, apply_theme, get_theme
+from kiwicalc.plotting.motion import GraphAnimation, GraphInteraction
+
+
+FillBoundary = Union[int, float, str, Callable[[float], Any], IExpression, Function, Curve2D]
+FieldInput = Union[int, float, str, Callable[[float, float], Any], IExpression, Function]
+AxisRange = Optional[Iterable[float]]
+FieldDensity = Union[int, Sequence[int]]
+ContourLevels = Union[int, Iterable[float]]
 
 
 def _figure_and_axes(fig=None, ax=None, projection=None):
@@ -405,6 +420,13 @@ class Graph:
         self._decorations = []
         self._restored_view = {}
         self._has_plotted = False
+        self._theme = None
+        self._axis_options = {}
+        self._secondary_axis_specs = []
+        self._secondary_axes = []
+        self._colorbars = []
+        self._animations = []
+        self._interactions = []
 
     @property
     def items(self):
@@ -412,11 +434,18 @@ class Graph:
 
     @property
     def fig(self):
+        self._ensure_figure()
         return self._fig
 
     @property
     def ax(self):
+        self._ensure_figure()
         return self._ax
+
+    def _ensure_figure(self):
+        """Create deferred plotting state when a graph implementation needs it."""
+        if self._fig is None or self._ax is None:
+            raise RuntimeError(f"{type(self).__name__} has no figure or axes")
 
     @property
     def artists(self):
@@ -449,7 +478,65 @@ class Graph:
         self._item_options.clear()
         self._artists.clear()
         self._decorations.clear()
+        for colorbar in self._colorbars:
+            try:
+                colorbar.remove()
+            except (KeyError, ValueError):
+                pass
+        self._colorbars.clear()
+        for animation in self._animations:
+            animation.pause()
+        self._animations.clear()
+        for interaction in self._interactions:
+            interaction.disconnect()
+            try:
+                interaction.slider.ax.remove()
+            except (KeyError, ValueError):
+                pass
+        self._interactions.clear()
         return self
+
+    def theme(self, theme: ThemeInput = None, **overrides):
+        """Choose a graph-local theme and return this graph for chaining."""
+        self._theme = get_theme(theme, **overrides)
+        return self
+
+    def configure_axes(self, **options):
+        """Store axis options for later ``plot`` calls and return this graph."""
+        allowed = {
+            'xlabel', 'ylabel', 'zlabel', 'units', 'x_ticks', 'y_ticks', 'z_ticks',
+            'origin', 'minor_ticks', 'minor_grid', 'xscale', 'yscale', 'zscale',
+            'pi_step', 'degree_step',
+        }
+        unknown = set(options) - allowed
+        if unknown:
+            names = ', '.join(sorted(unknown))
+            raise ValueError(f"Unknown axis option(s): {names}")
+        self._axis_options.update(options)
+        return self
+
+    def save(self, path, *, dpi=300, transparent=False, tight=True, format=None, **kwargs):
+        """Save this graph as PNG, SVG, or PDF and return the resulting path."""
+        self._ensure_figure()
+        output = Path(path)
+        chosen_format = (format or output.suffix.lstrip('.') or 'png').lower()
+        if chosen_format not in {'png', 'svg', 'pdf'}:
+            raise ValueError("Graph export format must be PNG, SVG, or PDF")
+        if output.suffix and output.suffix.lstrip('.').lower() != chosen_format:
+            raise ValueError("Graph export format must match the file extension")
+        if not output.suffix:
+            output = output.with_suffix(f'.{chosen_format}')
+        output.parent.mkdir(parents=True, exist_ok=True)
+        save_options = dict(dpi=dpi, transparent=transparent, format=chosen_format)
+        if tight:
+            save_options['bbox_inches'] = 'tight'
+        save_options.update(kwargs)
+        self._fig.savefig(output, **save_options)
+        return output
+
+    def export(self, path, **kwargs):
+        """Alias for :meth:`save`."""
+        return self.save(path, **kwargs)
 
     def to_dict(self):
         from kiwicalc.serialization import graph_to_dict
@@ -481,7 +568,7 @@ class Graph:
                 value = candidate.read_text(encoding='utf-8')
         return Graph.from_dict(json.loads(value))
 
-    def plot(self):
+    def plot(self, *args: Any, **kwargs: Any):
         raise NotImplementedError
 
     def scatter(self):
@@ -490,8 +577,11 @@ class Graph:
 class Graph2D(Graph):
 
     def __init__(self, objs: Iterable[IPlottable]=tuple()):
-        fig, ax = create_grid()
-        super(Graph2D, self).__init__(objs, fig, ax)
+        super(Graph2D, self).__init__(objs, None, None)
+
+    def _ensure_figure(self):
+        if self._fig is None or self._ax is None:
+            self._fig, self._ax = create_grid()
 
     def mark(self, point, label=None, **style):
         from kiwicalc.geometry.points import Point2D
@@ -524,7 +614,231 @@ class Graph2D(Graph):
         self._decorations.append(dict(kind='horizontal', value=float(y), label=label, style=dict(style)))
         return self
 
-    def fill_between(self, first, second=0, values=None, label=None, **style):
+    def _explain(self, kind, **options):
+        options['kind'] = kind
+        self._decorations.append(options)
+        return self
+
+    def show_roots(self, function, *, domain=None, samples=1201, label=True, **style):
+        """Mark the real roots visible in ``domain`` (or the plotted domain)."""
+        return self._explain('roots', source=function, domain=domain, samples=samples, label=label, style=dict(style))
+
+    def show_intersections(self, first, second, *, domain=None, samples=1201, label=True, **style):
+        """Mark intersections between two function-like objects."""
+        return self._explain('intersections', first=first, second=second, domain=domain, samples=samples, label=label, style=dict(style))
+
+    def show_extrema(self, function, *, domain=None, samples=1201, label=True, **style):
+        """Mark and classify local minima and maxima."""
+        return self._explain('extrema', source=function, domain=domain, samples=samples, label=label, style=dict(style))
+
+    def show_inflections(self, function, *, domain=None, samples=1201, label=True, **style):
+        """Mark approximate inflection points."""
+        return self._explain('inflections', source=function, domain=domain, samples=samples, label=label, style=dict(style))
+
+    def tangent(self, function_or_curve, at, *, span=None, label='tangent', **style):
+        """Draw a tangent at x=``at`` or normalized curve position ``at``."""
+        return self._explain('tangent', source=function_or_curve, at=float(at), span=span, label=label, style=dict(style))
+
+    def normal(self, function_or_curve, at, *, span=None, label='normal', **style):
+        """Draw a normal at x=``at`` or normalized curve position ``at``."""
+        return self._explain('normal', source=function_or_curve, at=float(at), span=span, label=label, style=dict(style))
+
+    def secant(self, function, between, *, label='secant', **style):
+        """Draw the secant segment between two x coordinates."""
+        between = tuple(between)
+        if len(between) != 2:
+            raise ValueError("between must contain two x coordinates")
+        return self._explain('secant', source=function, between=between, domain=None, label=label, style=dict(style))
+
+    def show_asymptotes(self, function, *, domain=None, vertical='auto', horizontal='auto', samples=1201, **style):
+        """Draw automatic or explicitly supplied vertical/horizontal asymptotes."""
+        return self._explain('asymptotes', source=function, domain=domain, samples=samples, vertical=vertical, horizontal=horizontal, style=dict(style))
+
+    def show_monotonicity(self, function, *, domain=None, samples=1201, colors=('#54a24b', '#e45756'), **style):
+        """Shade increasing regions green and decreasing regions red."""
+        return self._explain('monotonicity', source=function, domain=domain, samples=samples, colors=tuple(colors), style=dict(style))
+
+    def shade_solution(self, function, relation='>=', other=0, *, domain=None, samples=1201, label=None, **style):
+        """Shade where ``function relation other`` is true."""
+        return self._explain('solution', source=function, other=other, relation=relation, domain=domain, samples=samples, label=label, style=dict(style))
+
+    def riemann_sum(self, function, interval, *, rectangles=8, method='midpoint', **style):
+        """Show a left, right, midpoint, or trapezoidal integration estimate."""
+        interval = tuple(interval)
+        if len(interval) != 2:
+            raise ValueError("interval must contain two bounds")
+        return self._explain('riemann', source=function, interval=interval, rectangles=rectangles, method=method, domain=interval, style=dict(style))
+
+    def slope_triangle(self, function, at, *, run=1, label=True, **style):
+        """Draw rise and run legs using the local derivative at x=``at``."""
+        return self._explain('slope_triangle', source=function, at=float(at), run=float(run), domain=None, label=label, style=dict(style))
+
+    def show_derivative(self, function, *, domain=None, samples=1201, label='derivative', **style):
+        """Overlay a numerical derivative."""
+        return self._explain('derivative', source=function, domain=domain, samples=samples, label=label, style=dict(style))
+
+    def show_integral(self, function, *, domain=None, samples=1201, constant=0, label='integral', **style):
+        """Overlay a cumulative numerical integral."""
+        return self._explain('integral', source=function, domain=domain, samples=samples, constant=constant, label=label, style=dict(style))
+
+    def vector_field(
+        self, u: FieldInput, v: FieldInput, *, x_range: AxisRange=None,
+        y_range: AxisRange=None, density: FieldDensity=20,
+        normalize: bool=False, color: Any='magnitude', colorbar: bool=False,
+        colorbar_label: Optional[str]='Magnitude', **style: Any,
+    ) -> 'Graph2D':
+        """Draw vectors ``(u(x, y), v(x, y))`` over a rectangular domain."""
+        return self._explain(
+            'vector_field', u=u, v=v, x_range=x_range, y_range=y_range,
+            density=density, normalize=bool(normalize), color=color,
+            colorbar=bool(colorbar), colorbar_label=colorbar_label,
+            style=dict(style),
+        )
+
+    def slope_field(
+        self, derivative: FieldInput, *, x_range: AxisRange=None,
+        y_range: AxisRange=None, density: FieldDensity=20,
+        normalize: bool=True, color: Any='black', **style: Any,
+    ) -> 'Graph2D':
+        """Draw the direction field for ``dy/dx = derivative(x, y)``."""
+        return self._explain(
+            'slope_field', source=derivative, x_range=x_range, y_range=y_range,
+            density=density, normalize=bool(normalize), color=color,
+            colorbar=False, style=dict(style),
+        )
+
+    def gradient_field(
+        self, function: FieldInput, *, x_range: AxisRange=None,
+        y_range: AxisRange=None, density: FieldDensity=20,
+        normalize: bool=False, color: Any='magnitude', colorbar: bool=False,
+        colorbar_label: Optional[str]='Gradient magnitude', **style: Any,
+    ) -> 'Graph2D':
+        """Draw the numerical gradient of a scalar function ``f(x, y)``."""
+        return self._explain(
+            'gradient_field', source=function, x_range=x_range, y_range=y_range,
+            density=density, normalize=bool(normalize), color=color,
+            colorbar=bool(colorbar), colorbar_label=colorbar_label,
+            style=dict(style),
+        )
+
+    def streamlines(
+        self, u: FieldInput, v: FieldInput, *, x_range: AxisRange=None,
+        y_range: AxisRange=None, samples: int=60, density: float=1.0,
+        color: Any='magnitude', colorbar: bool=False,
+        colorbar_label: Optional[str]='Magnitude', **style: Any,
+    ) -> 'Graph2D':
+        """Draw continuous flow lines for a two-dimensional vector field."""
+        return self._explain(
+            'streamlines', u=u, v=v, x_range=x_range, y_range=y_range,
+            samples=samples, stream_density=density, color=color,
+            colorbar=bool(colorbar), colorbar_label=colorbar_label,
+            style=dict(style),
+        )
+
+    def contour_map(
+        self, function: FieldInput, *, x_range: AxisRange=None,
+        y_range: AxisRange=None, levels: ContourLevels=10,
+        filled: bool=False, labels: bool=False, samples: int=100,
+        colorbar: bool=False, colorbar_label: Optional[str]=None,
+        label_size: float=8, **style: Any,
+    ) -> 'Graph2D':
+        """Draw line or filled contours of a scalar function ``f(x, y)``."""
+        return self._explain(
+            'contour_map', source=function, x_range=x_range, y_range=y_range,
+            levels=levels, filled=bool(filled), labels=bool(labels),
+            samples=samples, colorbar=bool(colorbar),
+            colorbar_label=colorbar_label, label_size=label_size,
+            style=dict(style),
+        )
+
+    contour = contour_map
+    streamplot = streamlines
+
+    def animate_parameter(
+        self, function: Any, frames: Iterable[float], *, parameter: str='a',
+        start: float=-10, stop: float=10, samples: int=400,
+        values: Optional[Iterable[float]]=None, interval: float=50,
+        repeat: bool=True, blit: bool=False, label: Optional[str]=None,
+        title: Any=None, show: bool=True, line_style: Optional[dict]=None,
+        **plot_options: Any,
+    ) -> 'GraphAnimation':
+        """Animate ``function(x, parameter)`` across a sequence of frames."""
+        from kiwicalc.plotting.motion import animate_parameter
+        return animate_parameter(
+            self, function, frames, parameter=parameter, start=start, stop=stop,
+            samples=samples, values=values, interval=interval, repeat=repeat,
+            blit=blit, label=label, title=title, show=show,
+            line_style=line_style, **plot_options,
+        )
+
+    def interactive_parameter(
+        self, function: Any, parameter_range: Iterable[float], *,
+        parameter: str='a', initial: Optional[float]=None,
+        step: Optional[float]=None, start: float=-10, stop: float=10,
+        samples: int=400, values: Optional[Iterable[float]]=None,
+        label: Optional[str]=None, title: Any=None, show: bool=True,
+        line_style: Optional[dict]=None, **plot_options: Any,
+    ) -> 'GraphInteraction':
+        """Create a live slider for ``function(x, parameter)``."""
+        from kiwicalc.plotting.motion import interactive_parameter
+        return interactive_parameter(
+            self, function, parameter_range, parameter=parameter,
+            initial=initial, step=step, start=start, stop=stop,
+            samples=samples, values=values, label=label, title=title,
+            show=show, line_style=line_style, **plot_options,
+        )
+
+    animate = animate_parameter
+    interact = interactive_parameter
+
+    def secondary_xaxis(self, forward, inverse, *, label=None, unit=None, location='top'):
+        """Add a converted secondary x-axis, such as radians to degrees."""
+        if not callable(forward) or not callable(inverse):
+            raise TypeError("forward and inverse must both be callable")
+        self._secondary_axis_specs.append(dict(
+            axis='x', forward=forward, inverse=inverse, label=label,
+            unit=unit, location=location,
+        ))
+        return self
+
+    def secondary_yaxis(self, forward, inverse, *, label=None, unit=None, location='right'):
+        """Add a converted secondary y-axis."""
+        if not callable(forward) or not callable(inverse):
+            raise TypeError("forward and inverse must both be callable")
+        self._secondary_axis_specs.append(dict(
+            axis='y', forward=forward, inverse=inverse, label=label,
+            unit=unit, location=location,
+        ))
+        return self
+
+    def _render_secondary_axes(self, theme):
+        for secondary in self._secondary_axes:
+            secondary.remove()
+        self._secondary_axes = []
+        for spec in self._secondary_axis_specs:
+            factory = self._ax.secondary_xaxis if spec['axis'] == 'x' else self._ax.secondary_yaxis
+            secondary = factory(spec['location'], functions=(spec['forward'], spec['inverse']))
+            label = axis_label(spec['label'], spec['unit'])
+            if spec['axis'] == 'x':
+                secondary.set_xlabel(label)
+            else:
+                secondary.set_ylabel(label)
+            if theme is not None:
+                secondary.tick_params(colors=theme.foreground, labelsize=theme.font_size)
+                axis_object = secondary.xaxis if spec['axis'] == 'x' else secondary.yaxis
+                axis_object.label.set_color(theme.foreground)
+                axis_object.label.set_fontsize(theme.label_size)
+            self._secondary_axes.append(secondary)
+
+    def fill_between(
+        self,
+        first: FillBoundary,
+        second: FillBoundary = 0,
+        values: Optional[Iterable[float]] = None,
+        label: Optional[str] = None,
+        **style: Any,
+    ) -> 'Graph2D':
+        """Fill the area between two numbers, functions, expressions, or curves."""
         self._decorations.append(dict(kind='fill', first=first, second=second, values=values, label=label, style=dict(style)))
         return self
 
@@ -555,45 +869,93 @@ class Graph2D(Graph):
             return np.asarray(results)
         raise TypeError("fill_between accepts numbers, functions, expressions, strings, or Curve2D objects")
 
-    def plot(self, start: float=-10, stop: float=10, step: float=0.01, ymin: float=-10, ymax: float=10, text=None, show_axis=True, show=True, formatText=False, values=None, legend=None, grid=None, xlim=None, ylim=None, equal_aspect=None, return_artists=False):
+    def plot(
+        self, start: float=-10, stop: float=10, step: float=0.01,
+        ymin: float=-10, ymax: float=10, title: Optional[str]=None,
+        show_axis: bool=True, show: bool=True, formatText: bool=False,
+        values: Optional[Iterable[float]]=None, legend: Optional[bool]=None,
+        grid: Optional[bool]=None, xlim: AxisRange=None, ylim: AxisRange=None,
+        equal_aspect: Optional[bool]=None, return_artists: bool=False,
+        text: Optional[str]=None, theme: ThemeInput=None,
+        xlabel: Optional[str]=None, ylabel: Optional[str]=None, units: Any=None,
+        x_ticks: Any=None, y_ticks: Any=None, origin: Optional[bool]=None,
+        minor_ticks: Optional[bool]=None, minor_grid: Optional[bool]=None,
+        xscale: Optional[str]=None, yscale: Optional[str]=None,
+        pi_step: Optional[float]=None, degree_step: Optional[float]=None,
+    ):
+        """Render the graph, using ``title`` only when an explicit title is wanted.
+
+        ``text`` remains available as a backwards-compatible alias for ``title``.
+        """
+        self._ensure_figure()
         from kiwicalc.geometry.curves import Curve2D, ImplicitCurve2D
         from kiwicalc.geometry.points import Line2D, Point2D
         from kiwicalc.geometry.vectors import Vector2D
 
+        if title is not None and text is not None:
+            raise ValueError("Use either title or text, not both")
+        if theme is not None:
+            self._theme = get_theme(theme)
+        elif self._theme is None and self._restored_view.get('theme'):
+            self._theme = get_theme(self._restored_view['theme'])
+        resolved_theme = self._theme
+        apply_theme(self._fig, self._ax, resolved_theme)
+
+        supplied_axis_options = {
+            key: value for key, value in {
+                'xlabel': xlabel, 'ylabel': ylabel, 'units': units,
+                'x_ticks': x_ticks, 'y_ticks': y_ticks, 'origin': origin,
+                'minor_ticks': minor_ticks, 'minor_grid': minor_grid,
+                'xscale': xscale, 'yscale': yscale, 'pi_step': pi_step,
+                'degree_step': degree_step,
+            }.items() if value is not None
+        }
+        self._axis_options.update(supplied_axis_options)
+        axis_options = dict(self._restored_view.get('axis_options', {}))
+        axis_options.update(self._axis_options)
         if values is None:
             values = list(decimal_range(start=start, stop=stop, step=step))
-        if show_axis:
-            draw_axis(self._ax)
-        if text is None and self._restored_view.get('title'):
-            graph_title = self._restored_view['title']
-        elif text is None:
-            if len(self._items) >= 3:
-                graph_title = ', '.join([obj.__str__() for obj in self._items[:3]]) + '...'
-            else:
-                graph_title = ', '.join((obj.__str__() for obj in self._items))
-        else:
-            graph_title = text
+        requested_title = title if title is not None else text
+        graph_title = self._restored_view.get('title') if requested_title is None else requested_title
         if graph_title:
             self._ax.set_title(f'${format_matplot(graph_title)}$' if formatText else graph_title)
         self._artists = []
+        for colorbar in self._colorbars:
+            try:
+                colorbar.remove()
+            except (KeyError, ValueError):
+                pass
+        self._colorbars = []
         for obj, options in self._entries():
             if not options['visible']:
                 continue
-            label, style = options['label'], options['style']
+            label, style = options['label'], dict(options['style'])
             if isinstance(obj, ImplicitCurve2D):
+                if resolved_theme is not None:
+                    style.setdefault('linewidths', resolved_theme.line_width)
                 artist = plot_implicit_curve_2d(obj, show=False, fig=self._fig, ax=self._ax, label=label, **style)
             elif isinstance(obj, Curve2D):
+                if resolved_theme is not None:
+                    style.setdefault('linewidth', resolved_theme.line_width)
                 artist = plot_curve_2d(obj, show=False, fig=self._fig, ax=self._ax, label=label, **style)
             elif isinstance(obj, Function):
+                if resolved_theme is not None:
+                    style.setdefault('linewidth', resolved_theme.line_width)
                 artist = plot_function(obj.lambda_expression, values=values, ymin=ymin, ymax=ymax, show_axis=False, show=False, fig=self._fig, ax=self._ax, label=label, **style)
             elif isinstance(obj, IExpression):
+                if resolved_theme is not None:
+                    style.setdefault('linewidth', resolved_theme.line_width)
                 artist = plot_function(obj.to_lambda(), values=values, ymin=ymin, ymax=ymax, show_axis=False, show=False, fig=self._fig, ax=self._ax, label=label, **style)
             elif isinstance(obj, Line2D):
+                if resolved_theme is not None:
+                    style.setdefault('linewidth', resolved_theme.line_width)
                 if obj.to_lambda() is None:
                     artist = self._ax.axvline(obj._point1.x, label=label, **style)
                 else:
                     artist = plot_function(obj.to_lambda(), values=values, ymin=ymin, ymax=ymax, show_axis=False, show=False, fig=self._fig, ax=self._ax, label=label, **style)
             elif isinstance(obj, Circle):
+                if resolved_theme is not None:
+                    style.setdefault('linewidth', resolved_theme.line_width)
                 radius = obj.radius.try_evaluate()
                 center_x, center_y = obj.center_x.try_evaluate(), obj.center_y.try_evaluate()
                 if None in (radius, center_x, center_y):
@@ -604,10 +966,16 @@ class Graph2D(Graph):
                 self._ax.add_patch(artist)
                 self._ax.set_aspect('equal', adjustable='datalim')
             elif isinstance(obj, Point2D):
+                if resolved_theme is not None:
+                    style.setdefault('s', resolved_theme.marker_size ** 2)
                 artist = self._ax.scatter([obj.x], [obj.y], label=label, **style)
             elif isinstance(obj, Vector2D):
+                if resolved_theme is not None:
+                    style.setdefault('linewidth', resolved_theme.line_width)
                 artist = self._ax.arrow(obj._start_coordinate[0], obj._start_coordinate[1], obj.x_step, obj.y_step, label=label, **style)
             elif callable(obj) or isinstance(obj, str):
+                if resolved_theme is not None:
+                    style.setdefault('linewidth', resolved_theme.line_width)
                 artist = plot_function(obj, values=values, ymin=ymin, ymax=ymax, show_axis=False, show=False, fig=self._fig, ax=self._ax, label=label, **style)
             else:
                 raise TypeError(f'{type(obj).__name__} cannot be plotted on Graph2D')
@@ -626,7 +994,7 @@ class Graph2D(Graph):
                 artist = self._ax.axvline(decoration['value'], label=decoration['label'], **decoration['style'])
             elif kind == 'horizontal':
                 artist = self._ax.axhline(decoration['value'], label=decoration['label'], **decoration['style'])
-            else:
+            elif kind == 'fill':
                 fill_values = decoration['values']
                 if fill_values is None:
                     fill_values = values
@@ -634,18 +1002,92 @@ class Graph2D(Graph):
                 first_y = self._fill_values(decoration['first'], x_values)
                 second_y = self._fill_values(decoration['second'], x_values)
                 artist = self._ax.fill_between(x_values, first_y, second_y, label=decoration['label'], **decoration['style'])
+            else:
+                from kiwicalc.plotting.fields import FIELD_KINDS, render as render_field
+                if kind in FIELD_KINDS:
+                    default_x_range = xlim if xlim is not None else self._restored_view.get('xlim', (start, stop))
+                    default_y_range = ylim if ylim is not None else self._restored_view.get('ylim', (ymin, ymax))
+                    field_artists, colorbar = render_field(self._ax, decoration, default_x_range, default_y_range, resolved_theme)
+                    self._artists.extend(field_artists)
+                    if colorbar is not None:
+                        self._colorbars.append(colorbar)
+                else:
+                    from kiwicalc.plotting.explanations import render
+                    self._artists.extend(render(self._ax, decoration, values))
+                continue
             self._artists.append(artist)
         xlim = xlim if xlim is not None else self._restored_view.get('xlim', (start, stop))
         ylim = ylim if ylim is not None else self._restored_view.get('ylim', (ymin, ymax))
-        grid = self._restored_view.get('grid', False) if grid is None else grid
+        if grid is None:
+            grid = self._restored_view.get('grid', resolved_theme.grid if resolved_theme else False)
         legend = self._restored_view.get('legend', False) if legend is None else legend
         if equal_aspect is None:
             equal_aspect = self._restored_view.get('equal_aspect')
+        if equal_aspect is None:
+            equal_aspect = any(
+                isinstance(obj, Circle) and options['visible']
+                for obj, options in self._entries()
+            )
+
+        xscale = axis_options.get('xscale', self._restored_view.get('xscale', 'linear'))
+        yscale = axis_options.get('yscale', self._restored_view.get('yscale', 'linear'))
+        self._ax.set_xscale(xscale)
+        self._ax.set_yscale(yscale)
         self._ax.set_xlim(*xlim)
         self._ax.set_ylim(*ylim)
-        self._ax.grid(bool(grid))
+
+        units = normalize_units(axis_options.get('units'), ('x', 'y'))
+        xlabel = axis_options.get('xlabel', self._restored_view.get('xlabel', ''))
+        ylabel = axis_options.get('ylabel', self._restored_view.get('ylabel', ''))
+        self._ax.set_xlabel(axis_label(xlabel, units[0]))
+        self._ax.set_ylabel(axis_label(ylabel, units[1]))
+
+        origin = axis_options.get('origin', bool(show_axis))
+        if origin and (xscale != 'linear' or yscale != 'linear'):
+            raise ValueError("origin-centered axes require linear x and y scales")
+        set_axes_at_origin(self._ax, bool(origin))
+
+        pi_step = axis_options.get('pi_step', math.pi / 2)
+        degree_step = axis_options.get('degree_step', math.pi / 4)
+        configure_ticks(self._ax.xaxis, axis_options.get('x_ticks'), unit=units[0], pi_step=pi_step, degree_step=degree_step)
+        configure_ticks(self._ax.yaxis, axis_options.get('y_ticks'), unit=units[1], pi_step=pi_step, degree_step=degree_step)
+
+        if axis_options.get('minor_ticks') is None:
+            minor_ticks = resolved_theme.minor_grid if resolved_theme else False
+        else:
+            minor_ticks = bool(axis_options['minor_ticks'])
+        if xscale == 'linear':
+            configure_minor_ticks(self._ax.xaxis, minor_ticks)
+        else:
+            self._ax.minorticks_on() if minor_ticks else self._ax.minorticks_off()
+        if yscale == 'linear':
+            configure_minor_ticks(self._ax.yaxis, minor_ticks)
+        else:
+            self._ax.minorticks_on() if minor_ticks else self._ax.minorticks_off()
+
+        if axis_options.get('minor_grid') is None:
+            minor_grid = resolved_theme.minor_grid if resolved_theme else False
+        else:
+            minor_grid = bool(axis_options['minor_grid'])
+        grid_style = {}
+        minor_grid_style = {}
+        if resolved_theme is not None:
+            grid_style = dict(color=resolved_theme.grid_color, alpha=resolved_theme.grid_alpha)
+            minor_grid_style = dict(color=resolved_theme.grid_color, alpha=resolved_theme.minor_grid_alpha)
+            apply_theme(self._fig, self._ax, resolved_theme)
+        if grid:
+            self._ax.grid(True, which='major', **grid_style)
+        else:
+            self._ax.grid(False, which='major')
+        if minor_grid:
+            self._ax.grid(True, which='minor', **minor_grid_style)
+        else:
+            self._ax.grid(False, which='minor')
         if equal_aspect is True:
             self._ax.set_aspect('equal', adjustable='box')
+        else:
+            self._ax.set_aspect('auto')
+        self._render_secondary_axes(resolved_theme)
         if legend:
             self._ax.legend()
         if show:
@@ -661,26 +1103,52 @@ class Graph3D(Graph):
         ax = fig.add_subplot(111, projection='3d')
         super(Graph3D, self).__init__(objs, fig, ax)
 
-    def _finish(self, xlabel, ylabel, zlabel, title, legend, grid, xlim, ylim, zlim, show, return_artists):
+    def _finish(self, xlabel, ylabel, zlabel, title, legend, grid, xlim, ylim, zlim,
+                show, return_artists, resolved_theme=None, axis_options=None):
         view = self._restored_view
+        axis_options = axis_options or {}
         xlabel = view.get('xlabel', xlabel)
         ylabel = view.get('ylabel', ylabel)
         zlabel = view.get('zlabel', zlabel)
         title = view.get('title', title) if title is None else title
         legend = view.get('legend', False) if legend is None else legend
-        grid = view.get('grid', False) if grid is None else grid
+        grid = view.get('grid') if grid is None and 'grid' in view else grid
         xlim = view.get('xlim') if xlim is None else xlim
         ylim = view.get('ylim') if ylim is None else ylim
         zlim = view.get('zlim') if zlim is None else zlim
-        self._ax.set_xlabel(xlabel)
-        self._ax.set_ylabel(ylabel)
-        self._ax.set_zlabel(zlabel)
+        units = normalize_units(axis_options.get('units'), ('x', 'y', 'z'))
+        xlabel = axis_options.get('xlabel', xlabel)
+        ylabel = axis_options.get('ylabel', ylabel)
+        zlabel = axis_options.get('zlabel', zlabel)
+        self._ax.set_xlabel(axis_label(xlabel, units[0]))
+        self._ax.set_ylabel(axis_label(ylabel, units[1]))
+        self._ax.set_zlabel(axis_label(zlabel, units[2]))
         if title:
             self._ax.set_title(title)
+        apply_theme(self._fig, self._ax, resolved_theme)
+        if grid is None:
+            grid = resolved_theme.grid if resolved_theme else False
         self._ax.grid(bool(grid))
+        minor_grid = axis_options.get('minor_grid')
+        if minor_grid is None:
+            minor_grid = resolved_theme.minor_grid if resolved_theme else False
+        self._ax.grid(bool(minor_grid), which='minor')
+        self._ax.set_xscale(axis_options.get('xscale', view.get('xscale', 'linear')))
+        self._ax.set_yscale(axis_options.get('yscale', view.get('yscale', 'linear')))
+        self._ax.set_zscale(axis_options.get('zscale', view.get('zscale', 'linear')))
         for setter, limits in ((self._ax.set_xlim, xlim), (self._ax.set_ylim, ylim), (self._ax.set_zlim, zlim)):
             if limits is not None:
                 setter(*limits)
+        pi_step = axis_options.get('pi_step', math.pi / 2)
+        degree_step = axis_options.get('degree_step', math.pi / 4)
+        for axis, name, unit in (
+            (self._ax.xaxis, 'x_ticks', units[0]),
+            (self._ax.yaxis, 'y_ticks', units[1]),
+            (self._ax.zaxis, 'z_ticks', units[2]),
+        ):
+            configure_ticks(axis, axis_options.get(name), unit=unit, pi_step=pi_step, degree_step=degree_step)
+        if axis_options.get('minor_ticks'):
+            self._ax.minorticks_on()
         if legend:
             self._ax.legend()
         if show:
@@ -689,10 +1157,28 @@ class Graph3D(Graph):
         if return_artists:
             return self.artists
 
-    def plot(self, functions=None, start: float=-5, stop: float=5, step: float=0.1, xlabel: str='X Values', ylabel: str='Y Values', zlabel: str='Z Values', show=True, title=None, legend=None, grid=None, xlim=None, ylim=None, zlim=None, return_artists=False):
+    def plot(self, functions=None, start: float=-5, stop: float=5, step: float=0.1, xlabel: str='X Values', ylabel: str='Y Values', zlabel: str='Z Values', show=True, title=None, legend=None, grid=None, xlim=None, ylim=None, zlim=None, return_artists=False, theme: ThemeInput=None, units=None, x_ticks=None, y_ticks=None, z_ticks=None, minor_ticks=None, minor_grid=None, xscale=None, yscale=None, zscale=None, pi_step=None, degree_step=None):
         from kiwicalc.geometry.curves import Curve3D
         from kiwicalc.geometry.surfaces import Surface3D
         from kiwicalc.geometry.vectors import Vector3D
+
+        if theme is not None:
+            self._theme = get_theme(theme)
+        elif self._theme is None and self._restored_view.get('theme'):
+            self._theme = get_theme(self._restored_view['theme'])
+        resolved_theme = self._theme
+        apply_theme(self._fig, self._ax, resolved_theme)
+        supplied_axis_options = {
+            key: value for key, value in {
+                'units': units, 'x_ticks': x_ticks, 'y_ticks': y_ticks,
+                'z_ticks': z_ticks, 'minor_ticks': minor_ticks,
+                'minor_grid': minor_grid, 'xscale': xscale, 'yscale': yscale,
+                'zscale': zscale, 'pi_step': pi_step, 'degree_step': degree_step,
+            }.items() if value is not None
+        }
+        self._axis_options.update(supplied_axis_options)
+        axis_options = dict(self._restored_view.get('axis_options', {}))
+        axis_options.update(self._axis_options)
 
         if functions is not None:
             self._artists = plot_functions_3d(functions=functions, start=start, stop=stop, step=step, xlabel=xlabel, ylabel=ylabel, zlabel=zlabel, show=False, fig=self._fig, ax=self._ax)
@@ -703,6 +1189,8 @@ class Graph3D(Graph):
                     continue
                 label, style = options['label'], dict(options['style'])
                 if isinstance(obj, Curve3D):
+                    if resolved_theme is not None:
+                        style.setdefault('linewidth', resolved_theme.line_width)
                     artist = plot_curve_3d(obj, show=False, fig=self._fig, ax=self._ax, label=label, **style)
                 elif isinstance(obj, Surface3D):
                     wireframe = style.pop('wireframe', False)
@@ -718,10 +1206,24 @@ class Graph3D(Graph):
                 else:
                     raise TypeError(f'{type(obj).__name__} cannot be plotted on Graph3D')
                 self._artists.append(artist)
-        return self._finish(xlabel, ylabel, zlabel, title, legend, grid, xlim, ylim, zlim, show, return_artists)
+        return self._finish(xlabel, ylabel, zlabel, title, legend, grid, xlim, ylim, zlim, show, return_artists, resolved_theme, axis_options)
 
-    def scatter(self, functions=None, start: float=-5, stop: float=5, step: float=0.1, xlabel: str='X Values', ylabel: str='Y Values', zlabel: str='Z Values', show=True, title=None, legend=None, grid=None, return_artists=False):
+    def scatter(self, functions=None, start: float=-5, stop: float=5, step: float=0.1, xlabel: str='X Values', ylabel: str='Y Values', zlabel: str='Z Values', show=True, title=None, legend=None, grid=None, return_artists=False, theme: ThemeInput=None, units=None, x_ticks=None, y_ticks=None, z_ticks=None, minor_ticks=None):
         from kiwicalc.geometry.curves import Curve3D
+
+        if theme is not None:
+            self._theme = get_theme(theme)
+        resolved_theme = self._theme
+        apply_theme(self._fig, self._ax, resolved_theme)
+        supplied_axis_options = {
+            key: value for key, value in {
+                'units': units, 'x_ticks': x_ticks, 'y_ticks': y_ticks,
+                'z_ticks': z_ticks, 'minor_ticks': minor_ticks,
+            }.items() if value is not None
+        }
+        self._axis_options.update(supplied_axis_options)
+        axis_options = dict(self._restored_view.get('axis_options', {}))
+        axis_options.update(self._axis_options)
 
         if functions is not None:
             self._artists = scatter_functions_3d(functions=functions, start=start, stop=stop, step=step, xlabel=xlabel, ylabel=ylabel, zlabel=zlabel, show=False, fig=self._fig, ax=self._ax)
@@ -733,4 +1235,4 @@ class Graph3D(Graph):
                 if not isinstance(obj, Curve3D):
                     raise TypeError(f'{type(obj).__name__} is not a scatterable 3D curve')
                 self._artists.append(scatter_curve_3d(obj, show=False, fig=self._fig, ax=self._ax, label=options['label'], **options['style']))
-        return self._finish(xlabel, ylabel, zlabel, title, legend, grid, None, None, None, show, return_artists)
+        return self._finish(xlabel, ylabel, zlabel, title, legend, grid, None, None, None, show, return_artists, resolved_theme, axis_options)

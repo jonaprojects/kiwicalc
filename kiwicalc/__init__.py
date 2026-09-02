@@ -67,6 +67,8 @@ __all__ = [
     'plot_curve_2d', 'scatter_curve_2d', 'plot_implicit_curve_2d',
     'plot_curve_3d', 'scatter_curve_3d', 'plot_surface_3d',
     'Graph', 'Graph2D', 'Graph3D',
+    'GraphAnimation', 'GraphInteraction',
+    'PlotTheme', 'THEMES', 'available_themes', 'get_theme',
     # PDF
     'PDFWorksheet', 'PDFPage', 'PDFExercise', 'worksheet', 'create_pdf', 'create_pages'
 ]

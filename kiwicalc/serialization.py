@@ -229,27 +229,34 @@ def graph_to_dict(graph):
 
     if not isinstance(graph, (Graph2D, Graph3D)):
         raise TypeError("Only Graph2D and Graph3D can be serialized")
+    if graph._secondary_axis_specs:
+        raise TypeError("Secondary axes use Python callables and cannot be serialized")
     entries = []
     for item, options in graph._entries():
         entries.append({"object": object_to_dict(item), "label": options["label"], "visible": options["visible"], "style": _value(options["style"])})
     decorations = []
     for decoration in graph._decorations:
         encoded = dict(decoration)
-        if encoded["kind"] == "fill":
-            encoded["first"] = object_to_dict(encoded["first"])
-            encoded["second"] = object_to_dict(encoded["second"])
+        object_fields = {"first", "second"} if encoded["kind"] == "fill" else {"source", "first", "second", "other", "u", "v"}
+        for field in object_fields & encoded.keys():
+            encoded[field] = object_to_dict(encoded[field])
         decorations.append(_value(encoded))
     view = {}
     if graph._has_plotted:
         view = {
             "title": graph.ax.get_title(), "xlim": graph.ax.get_xlim(), "ylim": graph.ax.get_ylim(),
+            "xlabel": graph.ax.get_xlabel(), "ylabel": graph.ax.get_ylabel(),
             "legend": graph.ax.get_legend() is not None,
             "grid": any(line.get_visible() for line in (*graph.ax.get_xgridlines(), *graph.ax.get_ygridlines())),
             "equal_aspect": graph.ax.get_aspect() == 1.0,
+            "xscale": graph.ax.get_xscale(), "yscale": graph.ax.get_yscale(),
+            "axis_options": _value(graph._axis_options),
         }
+        if graph._theme is not None:
+            view["theme"] = graph._theme.to_dict()
     if isinstance(graph, Graph3D) and graph._has_plotted:
         view["zlim"] = graph.ax.get_zlim()
-        view.update(xlabel=graph.ax.get_xlabel(), ylabel=graph.ax.get_ylabel(), zlabel=graph.ax.get_zlabel())
+        view.update(zlabel=graph.ax.get_zlabel(), zscale=graph.ax.get_zscale())
     return _value({"type": type(graph).__name__, "items": entries, "decorations": decorations, "view": view})
 
 
@@ -268,6 +275,15 @@ def graph_from_dict(data):
         elif kind == "vertical": graph.vertical_line(decoration["value"], decoration.get("label"), **decoration.get("style", {}))
         elif kind == "horizontal": graph.horizontal_line(decoration["value"], decoration.get("label"), **decoration.get("style", {}))
         elif kind == "fill": graph.fill_between(object_from_dict(decoration["first"]), object_from_dict(decoration["second"]), decoration.get("values"), decoration.get("label"), **decoration.get("style", {}))
+        else:
+            from kiwicalc.plotting.explanations import EXPLANATION_KINDS
+            from kiwicalc.plotting.fields import FIELD_KINDS
+            if kind not in EXPLANATION_KINDS | FIELD_KINDS:
+                raise ValueError(f"Unknown graph decoration kind: {kind!r}")
+            restored = dict(decoration)
+            for field in {"source", "first", "second", "other", "u", "v"} & restored.keys():
+                restored[field] = object_from_dict(restored[field])
+            graph._decorations.append(restored)
     graph._restored_view = dict(data.get("view", {}))
     return graph
 

@@ -104,6 +104,29 @@ graph.add(kw.ArchimedeanSpiral(), label="spiral", color="orange")
 graph.plot(legend=True, equal_aspect=True)
 ```
 
+Graphs also provide scoped visualization themes and math-aware axes without
+changing Matplotlib's global settings:
+
+```python
+import numpy as np
+
+graph = (
+    kw.Graph2D([lambda x: np.sin(x)])
+    .theme("classroom")
+    .secondary_xaxis(np.degrees, np.radians, label="Angle", unit="deg")
+)
+graph.plot(
+    title="Sine wave",
+    xlabel="Angle", ylabel="Amplitude", units=("rad", None),
+    x_ticks="pi", xlim=(0, 2*np.pi), minor_ticks=True, minor_grid=True,
+)
+graph.save("sine-wave.svg")
+```
+
+Built-in themes include `classroom`, `projector`, `publication`, `engineering`,
+and `colorblind`. Tick modes include `pi`, `degrees`, `scientific`, and
+`engineering`; graphs can be exported directly as PNG, SVG, or PDF.
+
 Parametric, polar, implicit, Bézier, and spline curves are available in 2D, along
 with named curves such as cardioids, rose curves, cycloids, superellipses,
 catenaries, and involutes. Curves have chainable transformations and numerical
@@ -118,6 +141,65 @@ graph.mark(curve.point_at(0.25), label="sample point")
 graph.vertical_line(1, linestyle="--")
 graph.plot(legend=True, equal_aspect=True)
 ```
+
+Graphs also include math-aware explanation helpers for teaching and engineering
+visuals. They accept formulas, `Function` objects, expressions, or callables:
+
+```python
+f = "x^3 - 3*x"
+graph = (
+    kw.Graph2D()
+    .add(f, label="f(x)")
+    .show_roots(f)
+    .show_extrema(f)
+    .tangent(f, at=1)
+    .slope_triangle(f, at=1, run=0.6)
+)
+graph.plot(title="Understanding a cubic", xlim=(-3, 3), ylim=(-5, 5), legend=True)
+```
+
+Additional helpers cover intersections, inflection points, normal and secant
+lines, asymptotes, monotonic regions, inequality shading, Riemann sums, and
+derivative or integral overlays.
+
+Scientific fields use the same graph and theme API, with no additional plotting
+dependency:
+
+```python
+flow = (
+    kw.Graph2D()
+    .theme("engineering")
+    .streamlines(lambda x, y: -y, lambda x, y: x, colorbar=True)
+    .contour_map(lambda x, y: x*x + y*y, levels=8, colors="gray")
+)
+flow.plot(title="Rotational flow", xlim=(-3, 3), ylim=(-3, 3), equal_aspect=True)
+```
+
+`vector_field`, `gradient_field`, and `slope_field` add quiver-style diagrams;
+`streamlines` displays continuous flow; and `contour_map` supports line or
+filled contours, numeric labels, and optional themed colorbars.
+
+Parameterized animation and interaction are also built in:
+
+```python
+animation = kw.Graph2D().theme("classroom").animate(
+    "f(x,a)=a*sin(x)",
+    frames=np.linspace(0.5, 3, 40),
+    parameter="a",
+    title="Amplitude = {a:.2f}",
+)
+
+control = kw.Graph2D().interact(
+    "f(x,k)=sin(k*x)",
+    parameter_range=(0.5, 5),
+    parameter="k", initial=1, step=0.1,
+)
+```
+
+Animation controllers support pause, resume, GIF/video saving, and embeddable
+HTML. Interaction controllers expose their slider value and can be updated
+programmatically with `set_value`. Live notebook sliders use Matplotlib's
+interactive backend when available; no widget package is required by KiwiCalc.
 
 Set `sampling="adaptive"` on a parametric or polar curve when you want its
 sampling density to follow its shape. Space curves and surfaces—including
@@ -147,6 +229,7 @@ restored.plot()
 - Callable functions, function collections, and function chains
 - Matrices, vectors, points, lines, conic sections, curves, surfaces, and point collections
 - Two- and three-dimensional plotting with Matplotlib
+- Scoped visualization themes, intelligent mathematical axes, secondary axes, and figure export
 - Arithmetic, geometric, and recursive sequences
 - Probability trees
 - PDF exercise and worksheet generation
@@ -161,7 +244,7 @@ restored.plot()
 
 ## Development
 
-The current suite contains 1,135 passing tests with 94.14% line coverage and 90.52% branch coverage. CI requires both coverage metrics to remain at or above 90%.
+The current suite contains 1,216 passing tests with 94.05% line coverage and 90.23% branch coverage. CI requires both coverage metrics to remain at or above 90%.
 
 Create an isolated environment and install the project with its development tools:
 
