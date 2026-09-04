@@ -146,6 +146,21 @@ def test_oversized_question_does_not_strand_heading(tmp_path, monkeypatch):
     assert None in first or any(text and 'Long question' in text for text in first)
 
 
+def test_page_title_does_not_overlap_first_kept_paragraph(tmp_path, monkeypatch):
+    drawn = []
+    original = layout.Paragraph.drawOn
+    def record(paragraph, canvas, x, y, _sW=0):
+        drawn.append((paragraph.text, y))
+        return original(paragraph, canvas, x, y, _sW)
+    monkeypatch.setattr(layout.Paragraph, 'drawOn', record)
+    layout.render_pages(tmp_path/'title-spacing.pdf', ['Solutions'],
+                        [[PDFParagraph('First answer.', number=1, role='solution')]],
+                        style=kw.PDFStyle(keep_questions_together=True))
+    title_y = next(y for text, y in drawn if text == 'Solutions')
+    answer_y = next(y for text, y in drawn if text == 'First answer.')
+    assert title_y > answer_y
+
+
 def test_header_footer_margin_validation_and_disabled_labels(tmp_path):
     with pytest.raises(ValueError, match='Header/footer'):
         layout.render_pages(tmp_path/'crowded.pdf', ['Title'], [['Text']],

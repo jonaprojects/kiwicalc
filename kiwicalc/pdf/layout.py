@@ -6,6 +6,7 @@ from .formatting import format_math, PDFText
 from .style import PDFStyle
 from .footer import PDFFooter
 from .blocks import PDFParagraph, PDFHeading, PDFAnswerSpace
+from .arrays import PDFArray
 from reportlab.platypus.paraparser import ParaParser
 
 from reportlab.lib.pagesizes import A4, letter
@@ -155,7 +156,10 @@ def render_pages(path, titles, pages, *, style=None, theme=None, **overrides):
                               fontSize=design.title_size, leading=design.title_size*line_height,
                               textColor=toColor(design.heading_color),
                               alignment=alignment[design.title_alignment],
-                              spaceAfter=design.heading_spacing, keepWithNext=True)
+                              # Inline math can rise above the following text
+                              # baseline; reserve half a body line of clearance.
+                              spaceAfter=design.heading_spacing+font_size*.5,
+                              keepWithNext=True)
     story = []
     for index, (title, lines) in enumerate(zip(titles, pages)):
         if index:
@@ -163,6 +167,7 @@ def render_pages(path, titles, pages, *, style=None, theme=None, **overrides):
         story.append(Paragraph(escape(str(title)), heading))
         if not lines:
             story.append(Spacer(1, 1))
+        previous_was_heading = True
         for line in lines:
             if isinstance(line, PDFAnswerSpace):
                 if line.height > doc.height-12:
@@ -208,20 +213,25 @@ def render_pages(path, titles, pages, *, style=None, theme=None, **overrides):
                 # KeepTogether would first push it to the next page and strand
                 # preceding headings on a mostly empty page.
                 paragraph_height = paragraph.wrap(doc.width-12, doc.height)[1]
-                if isinstance(line, PDFParagraph) and design.keep_questions_together and paragraph_height <= doc.height-12:
+                # A page heading already keeps its next flowable with it. Let it
+                # place a first solution directly: nesting an image-heavy answer
+                # in another KeepTogether can pull its bullet into the title.
+                if (isinstance(line, PDFParagraph) and design.keep_questions_together
+                        and (not previous_was_heading or line.role != 'solution')
+                        and paragraph_height <= doc.height-12):
                     story.append(KeepTogether([paragraph]))
                 else:
                     story.append(paragraph)
-            elif isinstance(line, (PDFMath, PDFPlot)):
+            elif isinstance(line, (PDFMath, PDFArray, PDFPlot)):
                 data = line.image(font_size=design.display_math_size, fontset=design.math_font,
-                                  color=design.text_color, dpi=design.math_dpi) if isinstance(line, PDFMath) else line.image(style=design)
+                                  color=design.text_color, dpi=design.math_dpi) if isinstance(line, (PDFMath, PDFArray)) else line.image(style=design)
                 image = Image(data)
                 # PNG pixels -> PDF points, then fit inside the physical frame.
-                dpi = design.math_dpi if isinstance(line, PDFMath) else design.plot_dpi
+                dpi = design.math_dpi if isinstance(line, (PDFMath, PDFArray)) else design.plot_dpi
                 width, height = image.imageWidth*72/dpi, image.imageHeight*72/dpi
                 scale = min(1., (doc.width-12)/width, (doc.height-60)/height)
                 image.drawWidth, image.drawHeight = width*scale, height*scale
-                image.hAlign = (design.math_alignment if isinstance(line, PDFMath) else design.plot_alignment).upper()
+                image.hAlign = (design.math_alignment if isinstance(line, (PDFMath, PDFArray)) else design.plot_alignment).upper()
                 if isinstance(line, PDFPlot) and line.caption:
                     caption_style = ParagraphStyle('Caption', parent=body, fontSize=design.caption_size,
                         leading=design.caption_size*line_height, textColor=toColor(design.muted_color),
@@ -235,6 +245,7 @@ def render_pages(path, titles, pages, *, style=None, theme=None, **overrides):
                 story.append(Paragraph(escape(str(line)).replace('\n', '<br/>'), body))
             else:
                 story.append(Spacer(1, design.paragraph_spacing))
+            previous_was_heading = isinstance(line, PDFHeading)
 
     def footer(canvas, document):
         canvas.saveState()

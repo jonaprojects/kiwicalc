@@ -117,9 +117,12 @@ class PDFText(str):
     """
     def __new__(cls, *parts, plain=None):
         from .layout import PDFMath
-        if any(not isinstance(part, (str, PDFMath)) for part in parts):
-            raise TypeError('PDFText parts must be strings or PDFMath objects')
-        text = ''.join(part if isinstance(part, str) else str(part.expression) for part in parts)
+        from .arrays import PDFArray
+        if any(not isinstance(part, (str, PDFMath, PDFArray)) for part in parts):
+            raise TypeError('PDFText parts must be strings, PDFMath, PDFMatrix, or PDFVector objects')
+        text = ''.join(part if isinstance(part, str) else
+                       part.expression if isinstance(part, PDFMath) else str(part)
+                       for part in parts)
         instance = super().__new__(cls, text if plain is None else plain)
         instance.parts = tuple(parts)
         return instance

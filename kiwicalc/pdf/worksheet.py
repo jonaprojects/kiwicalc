@@ -19,6 +19,7 @@ from kiwicalc.equations.system import random_linear_system, LinearSystem
 from kiwicalc.geometry.points import Point, Point2D
 from kiwicalc.parsing.parse_expression import __data_from_single
 from kiwicalc.pdf.layout import PDFMath, PDFPlot
+from kiwicalc.pdf.arrays import PDFArray, PDFMatrix, PDFVector
 from kiwicalc.pdf.formatting import PDFText, format_math, format_polynomial
 from kiwicalc.pdf.formatting import _equation_text, _replace_math
 from kiwicalc.pdf.style import PDFStyle
@@ -124,10 +125,17 @@ def worksheet(path: str=None, dtype='linear', num_of_pages: int=1, equations_per
             raise ValueError(f'{name} must be a nonnegative integer')
     from kiwicalc.pdf.algebra_exercises import ALGEBRA_EXERCISE_TYPES
     from kiwicalc.pdf.calculus_exercises import CALCULUS_EXERCISE_TYPES
+    from kiwicalc.pdf.linear_algebra_exercises import LINEAR_ALGEBRA_EXERCISE_TYPES
+    from kiwicalc.pdf.geometry_exercises import GEOMETRY_EXERCISE_TYPES
+    from kiwicalc.pdf.sequence_exercises import SEQUENCE_SERIES_EXERCISE_TYPES
     if seed is not None and dtype not in ('trigo', 'log', 'intersection',
-                                          *ALGEBRA_EXERCISE_TYPES, *CALCULUS_EXERCISE_TYPES):
+                                          *ALGEBRA_EXERCISE_TYPES, *CALCULUS_EXERCISE_TYPES,
+                                          *LINEAR_ALGEBRA_EXERCISE_TYPES,
+                                          *GEOMETRY_EXERCISE_TYPES,
+                                          *SEQUENCE_SERIES_EXERCISE_TYPES):
         raise ValueError('seed is supported for bounded algebra, calculus, numerical-method, '
-                         'trigo, log, and intersection worksheets')
+                         'linear-algebra, geometry, sequence/series, trigo, log, and '
+                         'intersection worksheets')
     if path is None:
         path = generate_pdf_path()
     if dtype == 'linear':
@@ -160,6 +168,119 @@ def worksheet(path: str=None, dtype='linear', num_of_pages: int=1, equations_per
             for index in range(equations_per_page):
                 exercise = algebra_exercise(dtype, difficulty=difficulty,
                                             with_solution=get_solutions, _rng=rng)
+                questions.append(exercise.exercise.numbered(index+1))
+                if exercise.solution is not None:
+                    answers.append(exercise.solution.numbered(index+1, role='solution'))
+            output_titles.append(page_title)
+            output_lines.append(questions)
+            if answers:
+                output_titles.append(f'{page_title} - Solutions')
+                output_lines.append(answers)
+        create_pages(path, len(output_titles), output_titles, output_lines, **layout_options)
+    elif dtype in SEQUENCE_SERIES_EXERCISE_TYPES:
+        from kiwicalc.pdf.sequence_exercises import sequence_exercise
+        rng = random.Random(seed)
+        labels = {
+            'identify_sequence': 'Identifying Sequences',
+            'arithmetic_next_terms': 'Arithmetic Sequences: Next Terms',
+            'arithmetic_nth_term': 'Arithmetic Sequences: Nth Terms',
+            'arithmetic_difference': 'Arithmetic Common Differences',
+            'arithmetic_sum': 'Arithmetic Series',
+            'arithmetic_missing_term': 'Arithmetic Missing Terms',
+            'geometric_next_terms': 'Geometric Sequences: Next Terms',
+            'geometric_nth_term': 'Geometric Sequences: Nth Terms',
+            'geometric_ratio': 'Geometric Common Ratios',
+            'geometric_sum': 'Finite Geometric Series',
+            'infinite_geometric_sum': 'Infinite Geometric Series',
+            'recursive_sequence': 'Recursive Sequences', 'fibonacci': 'Fibonacci-type Sequences',
+            'sigma_evaluation': 'Sigma Notation', 'sequence_limit': 'Limits of Sequences',
+            'convergence_classification': 'Sequence Convergence',
+            'p_series': 'P-Series', 'geometric_series_test': 'Geometric Series Tests',
+            'alternating_series': 'Alternating Series', 'telescoping_series': 'Telescoping Series',
+            'elementary_limit': 'Elementary Function Limits',
+            'euler_limit': "Euler's Number Limits",
+            'removable_limit': 'Removable-Discontinuity Limits',
+            'standard_trig_limit': 'Standard Trigonometric Limits',
+        }
+        page_titles = [labels[dtype]]*num_of_pages if titles is None else list(titles)
+        if len(page_titles) != num_of_pages:
+            raise ValueError('titles must contain one title per exercise page')
+        output_titles, output_lines = [], []
+        for page_title in page_titles:
+            questions, answers = [], []
+            for index in range(equations_per_page):
+                exercise = sequence_exercise(dtype, difficulty=difficulty,
+                                             with_solution=get_solutions, _rng=rng)
+                questions.append(exercise.exercise.numbered(index+1))
+                if exercise.solution is not None:
+                    answers.append(exercise.solution.numbered(index+1, role='solution'))
+            output_titles.append(page_title)
+            output_lines.append(questions)
+            if answers:
+                output_titles.append(f'{page_title} - Solutions')
+                output_lines.append(answers)
+        create_pages(path, len(output_titles), output_titles, output_lines, **layout_options)
+    elif dtype in GEOMETRY_EXERCISE_TYPES:
+        from kiwicalc.pdf.geometry_exercises import geometry_exercise
+        rng = random.Random(seed)
+        labels = {
+            'distance': 'Distance Between Points', 'midpoint': 'Midpoints',
+            'slope': 'Slopes', 'line_equation': 'Equations of Lines',
+            'point_line_distance': 'Distance from a Point to a Line',
+            'parallel_perpendicular': 'Parallel and Perpendicular Lines',
+            'triangle_area': 'Triangle Area', 'triangle_centroid': 'Triangle Centroids',
+            'pythagorean': 'The Pythagorean Theorem', 'circle_equation': 'Circle Equations',
+            'arc_sector': 'Arc Length and Sector Area', 'polygon_angles': 'Polygon Angles',
+            'solid_measurement': 'Solid Geometry',
+            'coordinate_transformation': 'Coordinate Transformations',
+            'vector_from_points': 'Vectors Between Points',
+            'vector_relationship': 'Vector Relationships', 'vector_angle': 'Angles Between Vectors',
+            'cross_product': 'Cross Products', 'vector_line': 'Vector Equations of Lines',
+            'plane_equation': 'Equations of Planes',
+        }
+        page_titles = [labels[dtype]]*num_of_pages if titles is None else list(titles)
+        if len(page_titles) != num_of_pages:
+            raise ValueError('titles must contain one title per exercise page')
+        output_titles, output_lines = [], []
+        for page_title in page_titles:
+            questions, answers = [], []
+            for index in range(equations_per_page):
+                exercise = geometry_exercise(dtype, difficulty=difficulty,
+                                             with_solution=get_solutions, _rng=rng)
+                questions.append(exercise.exercise.numbered(index+1))
+                if exercise.solution is not None:
+                    answers.append(exercise.solution.numbered(index+1, role='solution'))
+            output_titles.append(page_title)
+            output_lines.append(questions)
+            if answers:
+                output_titles.append(f'{page_title} - Solutions')
+                output_lines.append(answers)
+        create_pages(path, len(output_titles), output_titles, output_lines, **layout_options)
+    elif dtype in LINEAR_ALGEBRA_EXERCISE_TYPES:
+        from kiwicalc.pdf.linear_algebra_exercises import linear_algebra_exercise
+        rng = random.Random(seed)
+        labels = {
+            'vector_arithmetic': 'Vector Arithmetic', 'dot_product': 'Dot Products',
+            'vector_magnitude': 'Vector Magnitudes', 'unit_vector': 'Unit Vectors',
+            'matrix_arithmetic': 'Matrix Arithmetic',
+            'scalar_matrix': 'Scalar Matrix Multiplication',
+            'matrix_multiplication': 'Matrix Multiplication',
+            'determinant': 'Determinants', 'inverse_matrix': 'Inverse Matrices',
+            'solve_linear_system': 'Linear Systems', 'row_reduction': 'Row Reduction',
+            'rank': 'Matrix Rank', 'linear_independence': 'Linear Independence',
+            'basis_coordinates': 'Coordinates in a Basis', 'eigenvalues': 'Eigenvalues',
+            'eigenvector': 'Eigenvectors', 'projection': 'Vector Projections',
+            'linear_transformation': 'Linear Transformations',
+        }
+        page_titles = [labels[dtype]]*num_of_pages if titles is None else list(titles)
+        if len(page_titles) != num_of_pages:
+            raise ValueError('titles must contain one title per exercise page')
+        output_titles, output_lines = [], []
+        for page_title in page_titles:
+            questions, answers = [], []
+            for index in range(equations_per_page):
+                exercise = linear_algebra_exercise(dtype, difficulty=difficulty,
+                                                   with_solution=get_solutions, _rng=rng)
                 questions.append(exercise.exercise.numbered(index+1))
                 if exercise.solution is not None:
                     answers.append(exercise.solution.numbered(index+1, role='solution'))
@@ -227,7 +348,8 @@ def worksheet(path: str=None, dtype='linear', num_of_pages: int=1, equations_per
     else:
         choices = ('linear', 'quadratic', 'cubic', 'quartic', 'polynomial',
                    'trigo', 'log', 'intersection', *ALGEBRA_EXERCISE_TYPES,
-                   *CALCULUS_EXERCISE_TYPES)
+                   *CALCULUS_EXERCISE_TYPES, *LINEAR_ALGEBRA_EXERCISE_TYPES,
+                   *GEOMETRY_EXERCISE_TYPES, *SEQUENCE_SERIES_EXERCISE_TYPES)
         raise ValueError(f"worksheet(): unknown dtype {dtype}: expected one of {', '.join(choices)}")
 
 def create_pdf(path: str, title='Worksheet', lines=(), **layout_options) -> bool:
@@ -580,7 +702,7 @@ class PDFWorksheet:
             if page in answer_pages:
                 continue
             for exercise in page.exercises:
-                if isinstance(exercise, (PDFMath, PDFPlot, PDFHeading, PDFAnswerSpace)):
+                if isinstance(exercise, (PDFMath, PDFArray, PDFPlot, PDFHeading, PDFAnswerSpace)):
                     continue
                 if not isinstance(exercise, PDFExercise):
                     raise TypeError('Worksheet pages must contain PDFExercise objects')
@@ -618,6 +740,21 @@ class PDFWorksheet:
         self.__current_page.add(PDFMath(expression, font_size))
         return self
 
+    def add_matrix(self, values, *, brackets='square', font_size=None):
+        """Add a centered matrix from KiwiCalc, NumPy, or nested-sequence data."""
+        if self.__current_page is None:
+            self.next_page()
+        self.__current_page.add(PDFMatrix(values, brackets=brackets, font_size=font_size))
+        return self
+
+    def add_vector(self, values, *, orientation='column', brackets='round', font_size=None):
+        """Add a centered row or column vector and return this worksheet."""
+        if self.__current_page is None:
+            self.next_page()
+        self.__current_page.add(PDFVector(values, orientation=orientation,
+                                          brackets=brackets, font_size=font_size))
+        return self
+
     def add_plot(self, source, *, height=180, caption=None):
         if self.__current_page is None:
             self.next_page()
@@ -646,7 +783,7 @@ class PDFWorksheet:
     def _refresh_answers(self, source):
         lines = []
         for exercise in source.exercises:
-            if isinstance(exercise, (PDFMath, PDFPlot, PDFHeading, PDFAnswerSpace)):
+            if isinstance(exercise, (PDFMath, PDFArray, PDFPlot, PDFHeading, PDFAnswerSpace)):
                 continue
             solution = exercise.solution
             if solution is None:
@@ -717,6 +854,6 @@ class PDFWorksheet:
                 lines.append(list(page.exercises))
             else:
                 lines.append([line for exercise in page.exercises
-                              for line in ([exercise] if isinstance(exercise, (PDFMath, PDFPlot, PDFHeading, PDFAnswerSpace))
+                              for line in ([exercise] if isinstance(exercise, (PDFMath, PDFArray, PDFPlot, PDFHeading, PDFAnswerSpace))
                                            else self._text_lines(exercise, exercise.number))])
         return [page.title for page in self.__pages], lines

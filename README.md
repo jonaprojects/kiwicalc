@@ -677,6 +677,46 @@ integrals, area between curves, numerical differentiation, trapezoidal and
 Simpson rules, Newton iteration, Euler's method, and classical RK4. See the
 [calculus exercise guide](docs/calculus_exercises.md).
 
+Linear-algebra exercises build on the native matrix/vector renderer:
+
+```python
+exercise = kw.linear_algebra_exercise('rref', difficulty='hard', seed=42)
+sheet = kw.PDFWorksheet('Linear Algebra', theme='academic')
+sheet.add_exercise(exercise).end_page()
+```
+
+The catalog spans vector operations, matrix arithmetic, determinants, inverses,
+systems and RREF, rank, independence, basis coordinates, eigenvalues and
+eigenvectors, projections, and transformations. See the
+[linear-algebra exercise guide](docs/linear_algebra_exercises.md).
+
+Geometry and vector exercises follow the same pattern:
+
+```python
+exercise = kw.geometry_exercise('cross', difficulty='hard', seed=42)
+sheet = kw.PDFWorksheet('Geometry and Vectors', theme='academic')
+sheet.add_exercise(exercise).end_page()
+```
+
+The catalog includes coordinate geometry, lines, triangles, circles, polygon
+angles, solid measurement, coordinate transformations, vector relationships,
+angles, cross products, vector lines, and planes. See the
+[geometry exercise guide](docs/geometry_exercises.md).
+
+Sequence and series exercises share the same seeded interface:
+
+```python
+exercise = kw.sequence_exercise('infinite geometric sum', seed=42)
+sheet = kw.PDFWorksheet('Sequences and Series', theme='academic')
+sheet.add_exercise(exercise).end_page()
+```
+
+The catalog progresses from arithmetic and geometric sequences through recursive
+sequences and sigma notation to polynomial, elementary, Euler, removable, and
+standard trigonometric limits and convergence tests. Every answer is backed by
+exact metadata, including rational values where appropriate. See the
+[sequence and series exercise guide](docs/sequence_exercises.md).
+
 `PDFWorksheet.add_math(expression)` renders Matplotlib Mathtext without an external
 LaTeX installation. `add_plot(figure_or_draw_callback)` embeds a Matplotlib Figure
 or a callback receiving an axes object. Formulas and plots are raster images;
@@ -685,6 +725,12 @@ include sketches. Paragraphs wrap and paginate automatically; logical pages may
 therefore span several physical PDF pages. `create(..., page_size='A4', margin=50,
 font_size=12)` accepts A4, Letter, or dimensions in points. General localization
 and full LaTeX support remain outside this API.
+
+Matrices and vectors also render without LaTeX. `PDFMatrix(...)` and
+`PDFVector(...)` accept KiwiCalc objects, NumPy arrays, or ordinary sequences and
+can be placed inside `PDFText`. For centered display notation, use
+`sheet.add_matrix(...)` or `sheet.add_vector(...)`. Square, round, determinant,
+and unbracketed styles are available through the `brackets` option.
 
 ### Mixed text and mathematics
 
