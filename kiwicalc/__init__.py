@@ -79,5 +79,20 @@ __all__ = [
     'GraphAnimation', 'GraphInteraction',
     'PlotTheme', 'THEMES', 'available_themes', 'get_theme',
     # PDF
-    'PDFWorksheet', 'PDFPage', 'PDFExercise', 'worksheet', 'create_pdf', 'create_pages'
+    'PDFWorksheet', 'PDFPage', 'PDFExercise', 'worksheet', 'create_pdf', 'create_pages',
+    'PDFMath', 'PDFPlot', 'PDFText', 'PDFStyle', 'PDFHeading', 'PDFAnswerSpace', 'PDFDocument', 'PDFFooter',
+    'PDFTheme', 'PDFThemeColors', 'PDFThemeTypography', 'PDFThemeSpacing', 'PDF_THEMES',
+    'available_pdf_themes', 'get_pdf_theme', 'format_math', 'format_polynomial',
+    'PDFLinearIntersection', 'PDFTrigonometricEquation', 'PDFLogarithmicEquation',
+    'PDFAlgebraExercise', 'PDFSimplifyExpression', 'PDFExpandExpression',
+    'PDFFactorPolynomial', 'PDFCompleteSquare', 'PDFSubstitution',
+    'PDFLinearInequality', 'PDFAbsoluteValueEquation', 'PDFExponentLaws',
+    'PDFRationalEquation', 'PDFRadicalEquation', 'PDFRearrangeFormula',
+    'ALGEBRA_EXERCISE_TYPES', 'algebra_exercise',
+    'PDFCalculusNumericalExercise', 'PDFDifferenceQuotient', 'PDFDerivativeExercise',
+    'PDFTangentLine', 'PDFCriticalPoints', 'PDFMonotonicity', 'PDFConcavity',
+    'PDFOptimization', 'PDFDefiniteIntegral', 'PDFAreaBetweenCurves',
+    'PDFNumericalDerivative', 'PDFTrapezoidalRule', 'PDFSimpsonRule',
+    'PDFNewtonIteration', 'PDFEulerMethod', 'PDFRungeKuttaMethod',
+    'CALCULUS_EXERCISE_TYPES', 'calculus_exercise'
 ]

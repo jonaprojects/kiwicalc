@@ -1030,32 +1030,47 @@ class Poly(IExpression, IPlottable):
     def print_report(self):
         print(self.get_report())
 
-    def export_report(self, path: str, delete_image=True):
-        c = Canvas(path)
-        c.setFont('Helvetica-Bold', 22)
-        c.drawString(50, 800, 'Function Report')
-        textobject = c.beginText(2 * cm, 26 * cm)
-        c.setFont('Helvetica', 16)
+    def export_report(self, path: str, delete_image=True, **layout_options):
+        """Export using the shared PDF style, without temporary plot files.
+
+        delete_image is retained for compatibility; rendering is now in memory.
+        """
+        from kiwicalc.pdf.worksheet import create_pages
+        create_pages(path, 1, ['Function Report'], [self._pdf_report_content()], **layout_options)
+
+    def _pdf_report_content(self):
+        """Shared content for standalone reports and composed documents."""
+        from kiwicalc.pdf.layout import PDFMath, PDFPlot
+        from kiwicalc.pdf.formatting import PDFText
+        from matplotlib.figure import Figure
+        import inspect
+
         data = self.data()
-        variables = ','.join(data['variables'])
-        for line in self._format_report(data):
-            textobject.textLine(line)
-            textobject.textLine('')
-        c.drawText(textobject)
-        if len(variables) == 1:
-            plot_function(f"f({variables}) = {data['string']}", show=False)
-        else:
-            plot_function_3d(f"f({variables}) = {data['string']}", show=False)
-        plt.savefig('tempPlot1146151.png')
-        if len(data['variables']) == 1 or len(data['variables']) == 2:
-            if len(data['variables']) == 1:
-                c.drawInlineImage('tempPlot1146151.png', 50, -215, width=500, preserveAspectRatio=True)
-            elif len(data['variables']) == 2:
-                c.drawInlineImage('tempPlot1146151.png', 50, 200, width=500, preserveAspectRatio=True)
-            if delete_image:
-                os.remove('tempPlot1146151.png')
-        c.showPage()
-        c.save()
+        lines = [PDFText('Function: ', PDFMath(self))]
+        for line in self._format_report(data)[1:]:
+            if line.startswith('Derivative: '):
+                lines.append(PDFText('Derivative: ', PDFMath(data['derivative'])))
+            else:
+                lines.append(line)
+        function = self.to_lambda()
+        variables = list(inspect.signature(function).parameters)
+        if len(variables) <= 1:
+            def draw(ax):
+                values = np.linspace(-5, 5, 250)
+                results = [function(value) if variables else function() for value in values]
+                ax.plot(values, results)
+                ax.set(xlabel=variables[0] if variables else 'x', ylabel='f(x)')
+                ax.grid(alpha=.25)
+            lines.append(PDFPlot(draw, caption='Function on the interval [-5, 5].'))
+        elif len(variables) == 2:
+            figure = Figure(figsize=(6, 4), constrained_layout=True)
+            ax = figure.add_subplot(111, projection='3d')
+            x, y = np.meshgrid(np.linspace(-5, 5, 40), np.linspace(-5, 5, 40))
+            z = np.vectorize(function)(x, y)
+            ax.plot_surface(x, y, z, cmap='viridis')
+            ax.set(xlabel=variables[0], ylabel=variables[1], zlabel='f')
+            lines.append(PDFPlot(figure, caption='Surface on [-5, 5] in each variable.'))
+        return lines
 
     def durand_kerner(self):
         from kiwicalc.numeric.roots import durand_kerner

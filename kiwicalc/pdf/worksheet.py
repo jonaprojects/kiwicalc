@@ -3,6 +3,7 @@ import os
 import random
 import string
 import warnings
+from fractions import Fraction as _Rational
 from typing import Union, Tuple, List, Optional, Any, Callable, Dict, Iterator, Iterable
 from reportlab.pdfgen.canvas import Canvas
 from reportlab.lib.pagesizes import letter, A4
@@ -17,41 +18,75 @@ from kiwicalc.equations.single import (
 from kiwicalc.equations.system import random_linear_system, LinearSystem
 from kiwicalc.geometry.points import Point, Point2D
 from kiwicalc.parsing.parse_expression import __data_from_single
+from kiwicalc.pdf.layout import PDFMath, PDFPlot
+from kiwicalc.pdf.formatting import PDFText, format_math, format_polynomial
+from kiwicalc.pdf.formatting import _equation_text, _replace_math
+from kiwicalc.pdf.style import PDFStyle
+from kiwicalc.pdf.theme import get_pdf_theme
+from kiwicalc.pdf.blocks import PDFParagraph, PDFHeading, PDFAnswerSpace
 
-def linear_from_points_exercise(get_solution=True, variable='x', lang='en'):
+
+def _function_plot(function):
+    def draw(ax):
+        import numpy as np
+        x = np.linspace(-5, 5, 250)
+        ax.plot(x, [function(value) for value in x])
+        ax.axhline(0, color='gray', linewidth=.7)
+        ax.axvline(0, color='gray', linewidth=.7)
+        ax.set(xlabel='x', ylabel='f(x)', title='Sketch on -5 <= x <= 5')
+        ax.grid(True, alpha=.3)
+    return PDFPlot(draw)
+
+def linear_from_points_exercise(get_solution=True, variable='x', lang='en', *, _with_coefficients=False):
     first_point = (random.randint(-15, 15), random.randint(-15, 15))
     second_point = (random.randint(-15, 15), random.randint(-15, 15))
+    if first_point[0] == second_point[0]:
+        # These exercises ask for a function y=f(x), not a vertical line.
+        # Repair the collision without an unbounded random retry loop.
+        x, y = second_point
+        second_point = (x + 1 if x < 15 else x - 1, y)
     if first_point[1] == second_point[1]:
         first_point = (first_point[0], first_point[1] + random.randint(1, 3))
-    a = round_decimal((second_point[1] - first_point[1]) / (second_point[0] - first_point[0]))
-    b = round_decimal(first_point[1] - a * first_point[0])
+    a = _Rational(second_point[1] - first_point[1], second_point[0] - first_point[0])
+    b = first_point[1] - a * first_point[0]
     exercise = f' a)    Find the linear function that passes through the points {first_point} and {second_point}.\n           b)    Is the function increasing or decreasing?\n           c)    Bonus: Sketch the function.\n           '
-    a_str = format_coefficient(round_decimal(a))
-    b_str = format_free_number(b)
+    a_str = format_coefficient(a) if a.denominator == 1 else f'({a})'
+    for point in (first_point, second_point):
+        exercise = _replace_math(exercise, str(point), f'({format_math(point[0])}, {format_math(point[1])})')
+    b_str = '' if b == 0 else f'+{b}' if b > 0 else str(b)
     if a > 0:
         answer_for_b = f'Increasing, because the slope of the function is positive'
     else:
         answer_for_b = f'Decreasing, because the slope of the function is negative'
     if get_solution:
-        solution = f"    a)     y = {a_str}{variable}{b_str}\n        b.    {answer_for_b}\n        c. Sketching isn't supported yet\n        "
+        solution = f"    a)     y = {a_str}{variable}{b_str}\n        b.    {answer_for_b}\n        c. Plot the two given points and draw the straight line through them.\n        "
+        solution = _replace_math(solution, f'y = {a_str}{variable}{b_str}', 'y=' + format_polynomial([a, b], variable))
+        if _with_coefficients:
+            return exercise, solution, (a, b)
         return (exercise, solution)
     return exercise
 
-def linearFromPointAndSlope_exercise(get_solution=True, variable='x', lang='en'):
+def linearFromPointAndSlope_exercise(get_solution=True, variable='x', lang='en', *, _with_coefficients=False):
     my_point = (random.randint(-15, 15), random.randint(-15, 15))
     my_slope = random.randint(-15, 15)
     while my_slope == 0:
         my_slope = random.randint(-15, 15)
     exercise = f'The linear function f(x) passes through the point {my_point} and has a slope of {my_slope}.\n           a)    Find f(x).\n           b)    Find where the function intersects with the x axis.\n           c)    Bonus: Sketch the function.\n           '
     a_str = format_coefficient(my_slope)
-    b_str = format_free_number(my_point[1] - my_slope * my_point[0])
+    exercise = _replace_math(exercise, str(my_point), f'({format_math(my_point[0])}, {format_math(my_point[1])})')
+    intercept = my_point[1] - my_slope * my_point[0]
+    b_str = format_free_number(intercept)
     if get_solution:
-        solution = f"    a)     y = {a_str}{variable}{b_str}\n        b.  {(round_decimal(-my_point[1] / my_slope), 0)}\n        c. Sketching isn't supported yet\n        "
+        solution = f"    a)     y = {a_str}{variable}{b_str}\n        b.  {(round_decimal(-intercept / my_slope), 0)}\n        c. Plot the given point and use the slope to draw the line.\n        "
+        solution = _replace_math(solution, f'y = {a_str}{variable}{b_str}', 'y=' + format_polynomial([my_slope, intercept], variable))
+        if _with_coefficients:
+            return exercise, solution, (my_slope, intercept)
         return (exercise, solution)
     return exercise
 
 def linear_intersection_exercise(get_solution=True, variable='x', lang='en'):
-    pass
+    from kiwicalc.pdf.generators import intersection
+    return intersection(get_solution, variable, lang)
 
 def linear_system_exercise(variables, get_solution=True, digits_after: int=0, lang='en'):
     if get_solution:
@@ -59,9 +94,20 @@ def linear_system_exercise(variables, get_solution=True, digits_after: int=0, la
     else:
         equations = random_linear_system(variables, get_solutions=get_solution, digits_after=digits_after)
     exercise = 'Solve the system of equations:\n' + '\n'.join((f'     {equation}' for equation in equations))
+    parts = ['Solve the system of equations:']
+    for equation in equations:
+        formatted = _equation_text(str(equation))
+        parts.append('\n')
+        parts.extend(formatted.parts if isinstance(formatted, PDFText) else [formatted])
+    exercise = PDFText(*parts, plain=exercise)
     if get_solution:
         solution = ', '.join((f'{variable}={round_decimal(value)}' for variable, value in zip(variables, solutions)))
-        return (exercise, solution)
+        answer_parts = []
+        for variable, value in zip(variables, solutions):
+            if answer_parts:
+                answer_parts.append(', ')
+            answer_parts.append(PDFMath(f'{variable}={format_math(round_decimal(value))}'))
+        return (exercise, PDFText(*answer_parts, plain=solution))
     return exercise
 
 def generate_pdf_path() -> str:
@@ -72,73 +118,159 @@ def generate_pdf_path() -> str:
         path = f'worksheet{index}.pdf'
     return path
 
-def worksheet(path: str=None, dtype='linear', num_of_pages: int=1, equations_per_page: int=20, get_solutions=True, digits_after=0, titles=None):
+def worksheet(path: str=None, dtype='linear', num_of_pages: int=1, equations_per_page: int=20, get_solutions=True, digits_after=0, titles=None, *, seed=None, difficulty='medium', **layout_options):
+    for name, value in [('num_of_pages', num_of_pages), ('equations_per_page', equations_per_page)]:
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f'{name} must be a nonnegative integer')
+    from kiwicalc.pdf.algebra_exercises import ALGEBRA_EXERCISE_TYPES
+    from kiwicalc.pdf.calculus_exercises import CALCULUS_EXERCISE_TYPES
+    if seed is not None and dtype not in ('trigo', 'log', 'intersection',
+                                          *ALGEBRA_EXERCISE_TYPES, *CALCULUS_EXERCISE_TYPES):
+        raise ValueError('seed is supported for bounded algebra, calculus, numerical-method, '
+                         'trigo, log, and intersection worksheets')
     if path is None:
         path = generate_pdf_path()
     if dtype == 'linear':
-        LinearEquation.random_worksheets(path=path, num_of_pages=num_of_pages, equations_per_page=equations_per_page, after_point=digits_after, get_solutions=get_solutions, titles=titles)
+        LinearEquation.random_worksheets(path=path, num_of_pages=num_of_pages, equations_per_page=equations_per_page, after_point=digits_after, get_solutions=get_solutions, titles=titles, **layout_options)
     elif dtype == 'quadratic':
-        QuadraticEquation.random_worksheets(path=path, num_of_pages=num_of_pages, equations_per_page=equations_per_page, digits_after=digits_after, get_solutions=get_solutions, titles=titles)
+        QuadraticEquation.random_worksheets(path=path, num_of_pages=num_of_pages, equations_per_page=equations_per_page, digits_after=digits_after, get_solutions=get_solutions, titles=titles, **layout_options)
     elif dtype == 'cubic':
-        CubicEquation.random_worksheets(path=path, num_of_pages=num_of_pages, equations_per_page=equations_per_page, digits_after=digits_after, get_solutions=get_solutions, titles=titles)
+        CubicEquation.random_worksheets(path=path, num_of_pages=num_of_pages, equations_per_page=equations_per_page, digits_after=digits_after, get_solutions=get_solutions, titles=titles, **layout_options)
     elif dtype == 'quartic':
-        QuarticEquation.random_worksheets(path=path, num_of_pages=num_of_pages, equations_per_page=equations_per_page, digits_after=digits_after, get_solutions=get_solutions, titles=titles)
+        QuarticEquation.random_worksheets(path=path, num_of_pages=num_of_pages, equations_per_page=equations_per_page, digits_after=digits_after, get_solutions=get_solutions, titles=titles, **layout_options)
     elif dtype == 'polynomial':
-        PolyEquation.random_worksheets(path=path, titles=titles, equations_per_page=equations_per_page, num_of_pages=num_of_pages, digits_after=digits_after, get_solutions=get_solutions)
-    elif dtype == 'trigo':
-        pass
-    elif dtype == 'log':
-        pass
+        PolyEquation.random_worksheets(path=path, titles=titles, equations_per_page=equations_per_page, num_of_pages=num_of_pages, digits_after=digits_after, get_solutions=get_solutions, **layout_options)
+    elif dtype in ALGEBRA_EXERCISE_TYPES:
+        from kiwicalc.pdf.algebra_exercises import algebra_exercise
+        rng = random.Random(seed)
+        labels = {
+            'simplify': 'Simplifying Expressions', 'expand': 'Expanding Expressions',
+            'factor': 'Factoring Polynomials', 'complete_square': 'Completing the Square',
+            'substitution': 'Substitution', 'linear_inequality': 'Linear Inequalities',
+            'absolute_value': 'Absolute Value Equations', 'exponent_laws': 'Exponent Laws',
+            'rational': 'Rational Equations', 'radical': 'Radical Equations',
+            'rearrange': 'Rearranging Formulas',
+        }
+        page_titles = [labels[dtype]]*num_of_pages if titles is None else list(titles)
+        if len(page_titles) != num_of_pages:
+            raise ValueError('titles must contain one title per exercise page')
+        output_titles, output_lines = [], []
+        for page_title in page_titles:
+            questions, answers = [], []
+            for index in range(equations_per_page):
+                exercise = algebra_exercise(dtype, difficulty=difficulty,
+                                            with_solution=get_solutions, _rng=rng)
+                questions.append(exercise.exercise.numbered(index+1))
+                if exercise.solution is not None:
+                    answers.append(exercise.solution.numbered(index+1, role='solution'))
+            output_titles.append(page_title)
+            output_lines.append(questions)
+            if answers:
+                output_titles.append(f'{page_title} - Solutions')
+                output_lines.append(answers)
+        create_pages(path, len(output_titles), output_titles, output_lines, **layout_options)
+    elif dtype in CALCULUS_EXERCISE_TYPES:
+        from kiwicalc.pdf.calculus_exercises import calculus_exercise
+        rng = random.Random(seed)
+        labels = {
+            'difference_quotient': 'Derivatives from First Principles',
+            'derivative': 'Differentiation', 'tangent_line': 'Tangent Lines',
+            'critical_points': 'Critical Points', 'monotonicity': 'Monotonicity',
+            'concavity': 'Concavity and Inflection', 'optimization': 'Optimization',
+            'definite_integral': 'Definite Integrals', 'area_between': 'Area Between Curves',
+            'numerical_derivative': 'Numerical Differentiation',
+            'trapezoidal_rule': 'The Trapezoidal Rule', 'simpson_rule': "Simpson's Rule",
+            'newton_iteration': "Newton's Method", 'euler_method': "Euler's Method",
+            'runge_kutta': 'Runge-Kutta Method',
+        }
+        page_titles = [labels[dtype]]*num_of_pages if titles is None else list(titles)
+        if len(page_titles) != num_of_pages:
+            raise ValueError('titles must contain one title per exercise page')
+        output_titles, output_lines = [], []
+        for page_title in page_titles:
+            questions, answers = [], []
+            for index in range(equations_per_page):
+                exercise = calculus_exercise(dtype, difficulty=difficulty,
+                                             with_solution=get_solutions, _rng=rng)
+                questions.append(exercise.exercise.numbered(index+1))
+                if exercise.solution is not None:
+                    answers.append(exercise.solution.numbered(index+1, role='solution'))
+            output_titles.append(page_title)
+            output_lines.append(questions)
+            if answers:
+                output_titles.append(f'{page_title} - Solutions')
+                output_lines.append(answers)
+        create_pages(path, len(output_titles), output_titles, output_lines, **layout_options)
+    elif dtype in ('trigo', 'log', 'intersection'):
+        from kiwicalc.pdf import generators
+        factory = {'trigo': generators.trigonometric, 'log': generators.logarithmic,
+                   'intersection': generators.intersection}[dtype]
+        rng = random.Random(seed)
+        page_titles = ['Worksheet']*num_of_pages if titles is None else list(titles)
+        if len(page_titles) != num_of_pages:
+            raise ValueError('titles must contain one title per exercise page')
+        output_titles, output_lines = [], []
+        for page_title in page_titles:
+            questions, answers = [], []
+            for index in range(equations_per_page):
+                value = factory(get_solution=get_solutions, rng=rng)
+                prompt, answer = value if get_solutions else (value, None)
+                questions.append(prompt.numbered(index+1) if isinstance(prompt, PDFText) else f'{index+1}. {prompt}')
+                if answer is not None:
+                    answers.append(answer.numbered(index+1, role='solution') if isinstance(answer, PDFText) else f'{index+1}. {answer}')
+            output_titles.append(page_title)
+            output_lines.append(questions)
+            if answers:
+                output_titles.append(f'{page_title} - Solutions')
+                output_lines.append(answers)
+        create_pages(path, len(output_titles), output_titles, output_lines, **layout_options)
     else:
-        raise ValueError(f"worksheet(): unknown dtype {dtype}: expected 'linear', 'quadratic', 'cubic', 'quartic', 'polynomial', 'trigo', 'log' ")
+        choices = ('linear', 'quadratic', 'cubic', 'quartic', 'polynomial',
+                   'trigo', 'log', 'intersection', *ALGEBRA_EXERCISE_TYPES,
+                   *CALCULUS_EXERCISE_TYPES)
+        raise ValueError(f"worksheet(): unknown dtype {dtype}: expected one of {', '.join(choices)}")
 
-def create_pdf(path: str, title='Worksheet', lines=()) -> bool:
+def create_pdf(path: str, title='Worksheet', lines=(), **layout_options) -> bool:
+    """Create a numbered worksheet; preserve the legacy boolean failure contract."""
     try:
-        c = Canvas(os.fspath(path))
-        c.setFontSize(22)
-        c.drawString(50, 800, title)
-        textobject = c.beginText()
-        textobject.setTextOrigin(2 * cm, 26 * cm)
-        textobject.setFont('Helvetica', 14)
-        for index, line in enumerate(lines):
-            textobject.textLine(f'{index + 1}. {line.strip()}')
-            textobject.textLine('')
-        c.drawText(textobject)
-        c.showPage()
-        c.save()
+        numbered = [PDFParagraph(line, number=index+1, role='question') for index, line in enumerate(lines)]
+        create_pages(path, 1, [title], [numbered], **layout_options)
         return True
     except Exception as ex:
-        warnings.warn(f"Couldn't create the pdf file due to a {ex.__class__} error")
+        warnings.warn(f"Couldn't create the pdf file: {type(ex).__name__}: {ex}")
         return False
 
-def create_pages(path: str, num_of_pages: int, titles, lines):
-    c = Canvas(os.fspath(path))
-    for i in range(num_of_pages):
-        c.setFontSize(22)
-        c.drawString(50, 800, titles[i])
-        textobject = c.beginText()
-        textobject.setTextOrigin(2 * cm, 26 * cm)
-        textobject.setFont('Helvetica', 14)
-        for index, line in enumerate(lines[i]):
-            textobject.textLine(f'{lines[i][index]}')
-            textobject.textLine('')
-        c.drawText(textobject)
-        c.showPage()
-    c.save()
+
+def create_pages(path: str, num_of_pages: int, titles, lines, **layout_options):
+    """Render logical pages with automatic wrapping and overflow pagination.
+
+    Layout options: page_size='A4' (or 'Letter'), margin=50 and font_size=12,
+    measured in PDF points, plus line_height=1.5 (a font-size multiplier).
+    Explicit page boundaries are preserved.
+    """
+    if isinstance(num_of_pages, bool) or not isinstance(num_of_pages, int) or num_of_pages < 0:
+        raise ValueError('num_of_pages must be a nonnegative integer')
+    titles, lines = list(titles), list(lines)
+    if len(titles) != num_of_pages or len(lines) != num_of_pages:
+        raise ValueError('titles and lines must each contain one entry per page')
+    from kiwicalc.pdf.layout import render_pages
+    render_pages(os.fspath(path), titles, lines, **layout_options)
 
 class PDFExercise:
     """
     This class represents an exercise in a PDF page.
     """
-    __slots__ = ['__exercise', '__exercise_type', '__dtype', '__solution', '__number', '__lang']
+    __slots__ = ['__exercise', '__exercise_type', '__dtype', '__solution', '__number', '__lang', 'solution_plot']
 
     def __init__(self, exercise: str, exercise_type: str, dtype: str, solution=None, number=None, lang='en'):
         self.__exercise = exercise
         self.__exercise_type = exercise_type
         self.__dtype = dtype
-        self.__solution = solution
+        # One-shot answer iterators must survive repeated worksheet rendering.
+        self.__solution = tuple(solution) if isinstance(solution, Iterator) else solution
         self.__number = number
         self.__lang = lang
+        self.solution_plot = None
 
     @property
     def exercise(self):
@@ -192,21 +324,61 @@ class PDFLinearFunction(PDFAnalyzeFunction):
                 answer_for_c = f'Increasing, because the slope of the function is positive'
             else:
                 answer_for_c = f'Decreasing, because the slope of the function is negative'
-            solution = f"    a)    ({solution}, 0)\n            b)    (0, {coefficients[1]})\n            c) {answer_for_c}\n            d) f'(x) = {coefficients[0]}\n            e) Sketch not supported yet!\n             "
+            solution = f"    a)    ({solution}, 0)\n            b)    (0, {coefficients[1]})\n            c) {answer_for_c}\n            d) f'(x) = {coefficients[0]}\n            e) See the sketch below.\n             "
         else:
             solution = None
+        exercise = _replace_math(exercise, random_function, 'f(x)=' + format_polynomial(coefficients))
+        if with_solution:
+            solution = _replace_math(solution, f"f'(x) = {coefficients[0]}", r'f\prime(x)=' + format_math(coefficients[0]))
         super(PDFAnalyzeFunction, self).__init__(exercise, dtype='linear', solution=solution, lang=lang)
+        if with_solution:
+            self.solution_plot = _function_plot(lambda x: coefficients[0]*x+coefficients[1])
 
 class PDFLinearIntersection(PDFExercise):
 
-    def __init__(self, with_solution=True, lang='en'):
-        pass
+    def __init__(self, with_solution=True, lang='en', *, seed=None):
+        from kiwicalc.pdf.generators import intersection
+        result = intersection(with_solution, lang=lang, rng=random.Random(seed), details=True)
+        prompt, answer, data = result if with_solution else (result, None, None)
+        super().__init__(prompt, 'equation', 'intersection', solution=answer, lang=lang)
+        if data is not None:
+            a, b, c, d, x, y = data
+            def draw(ax):
+                import numpy as np
+                values = np.linspace(x-3, x+3, 100)
+                ax.plot(values, a*values+b, label='first line')
+                ax.plot(values, c*values+d, label='second line')
+                ax.scatter([x], [y], color='crimson')
+                ax.set(xlabel='x', ylabel='y')
+                ax.grid(True, alpha=.3)
+                ax.legend()
+            self.solution_plot = PDFPlot(draw)
+
+
+class PDFTrigonometricEquation(PDFExercise):
+    """Special-angle sine/cosine equation in degrees, on [0,360)."""
+    def __init__(self, with_solution=True, number=None, lang='en', *, seed=None):
+        from kiwicalc.pdf.generators import trigonometric
+        result = trigonometric(with_solution, lang=lang, rng=random.Random(seed))
+        prompt, answer = result if with_solution else (result, None)
+        super().__init__(prompt, 'equation', 'trigo', solution=answer, number=number, lang=lang)
+
+
+class PDFLogarithmicEquation(PDFExercise):
+    """Real logarithmic equation with a positive-argument domain check."""
+    def __init__(self, with_solution=True, number=None, lang='en', *, seed=None):
+        from kiwicalc.pdf.generators import logarithmic
+        result = logarithmic(with_solution, lang=lang, rng=random.Random(seed))
+        prompt, answer = result if with_solution else (result, None)
+        super().__init__(prompt, 'equation', 'log', solution=answer, number=number, lang=lang)
 
 class PDFLinearSystem(PDFExercise):
 
     def __init__(self, with_solution=True, lang='en', num_of_equations=None, digits_after: int=0):
         if num_of_equations is None:
             num_of_equations = random.randint(2, 3)
+        if isinstance(num_of_equations, bool) or not isinstance(num_of_equations, int) or num_of_equations < 1:
+            raise ValueError('num_of_equations must be a positive integer')
         variables = ['x', 'y', 'z', 'm', 'n', 't', 'a', 'b']
         num_of_variables = num_of_equations
         if num_of_variables <= len(variables):
@@ -225,28 +397,36 @@ class PDFLinearSystem(PDFExercise):
 class PDFLinearFromPoints(PDFAnalyzeFunction):
 
     def __init__(self, with_solution: bool=True, lang: str='en'):
-        result = linear_from_points_exercise(get_solution=with_solution, lang=lang)
+        result = linear_from_points_exercise(get_solution=with_solution, lang=lang, _with_coefficients=True)
         if with_solution:
-            exercise, solution = result
+            exercise, solution = result[:2]
         else:
             exercise, solution = (result, None)
         super(PDFLinearFromPoints, self).__init__(exercise, dtype='linear', solution=solution, lang=lang)
+        if with_solution and len(result) == 3:
+            a, b = result[2]
+            self.solution_plot = _function_plot(lambda x: float(a)*x+float(b))
 
 class PDFLinearFromPointAndSlope(PDFAnalyzeFunction):
 
     def __init__(self, with_solution: bool=True, lang: str='en'):
-        result = linearFromPointAndSlope_exercise(get_solution=with_solution, lang=lang)
+        result = linearFromPointAndSlope_exercise(get_solution=with_solution, lang=lang, _with_coefficients=True)
         if with_solution:
-            exercise, solution = result
+            exercise, solution = result[:2]
         else:
             exercise, solution = (result, None)
         super(PDFLinearFromPointAndSlope, self).__init__(exercise, dtype='linear', solution=solution, lang=lang)
+        if with_solution and len(result) == 3:
+            a, b = result[2]
+            self.solution_plot = _function_plot(lambda x: a*x+b)
 
 class PDFPolyFunction(PDFAnalyzeFunction):
 
     def __init__(self, with_solution: bool=True, degree: int=None, lang: str='en'):
         if degree is None:
             degree = random.randint(2, 5)
+        if isinstance(degree, bool) or not isinstance(degree, int) or degree < 1:
+            raise ValueError('degree must be a positive integer')
         random_poly, solutions = random_polynomial(degree=degree, get_solutions=True)
         random_function = f'f(x) = {random_poly}'
         exercise = f' The function {random_function} is given.\n            a) What is the domain of the function?\n            b) What is the derivative of the function?\n            c) What are the extremums of the function?\n            d) When is the function increasing, and when is it decreasing?\n            e) Find the horizontal asymptotes of the function (if there are any).\n            f) sketch the function.\n        '
@@ -257,10 +437,15 @@ class PDFPolyFunction(PDFAnalyzeFunction):
             extremums_string = ', '.join((extremum.__str__() for extremum in data['extremums']))
             if not extremums_string:
                 extremums_string = 'None'
-            solution = f"\n            a. Domain: all \n            b. Derivative: {data['derivative']}\n            c. Extremums: {extremums_string}\n            d. Increase & Decrease: Increase: {data['up']}, Decrease: {data['down']}\n            e. Horizontal Asymptotes: Not Supported yet\n            f. Sketch: Not supported yet in this format.\n             "
+            solution = f"\n            a. Domain: all real numbers\n            b. Derivative: {data['derivative']}\n            c. Extremums: {extremums_string}\n            d. Increase & Decrease: Increase: {data['up']}, Decrease: {data['down']}\n            e. Horizontal Asymptotes: None (nonconstant polynomial).\n            f. See the sketch below.\n             "
         else:
             solution = None
+        exercise = _replace_math(exercise, random_function, 'f(x)=' + format_math(Poly(random_poly)))
+        if with_solution:
+            solution = _replace_math(solution, str(data['derivative']), format_math(data['derivative']))
         super(PDFPolyFunction, self).__init__(exercise, dtype='poly', solution=solution, lang=lang)
+        if with_solution:
+            self.solution_plot = _function_plot(my_poly.to_lambda())
 
 class PDFQuadraticFunction(PDFPolyFunction):
 
@@ -280,7 +465,7 @@ class PDFQuarticFunction(PDFPolyFunction):
 class PDFEquationExercise(PDFExercise):
 
     def __init__(self, exercise: str, dtype: str, solution=None, number: int=None):
-        super(PDFEquationExercise, self).__init__(exercise, 'equation', dtype, solution, number)
+        super(PDFEquationExercise, self).__init__(_equation_text(exercise), 'equation', dtype, solution, number)
 
 class PDFLinearEquation(PDFEquationExercise):
 
@@ -338,7 +523,7 @@ class PDFPage:
         if exercises is None:
             self.__exercises = []
         else:
-            self.__exercises = exercises
+            self.__exercises = list(exercises)
 
     @property
     def exercises(self):
@@ -352,26 +537,29 @@ class PDFPage:
         self.__exercises.append(exercise)
 
     def __iter__(self):
-        self.__index = 0
-        return self
-
-    def __next__(self):
-        if self.__index >= len(self.__exercises):
-            raise StopIteration
-        temp = self.__index
-        self.__index += 1
-        return self.__exercises[temp]
+        return iter(self.__exercises)
 
 class PDFWorksheet:
-    __slots__ = ['__pages', '__ordered', '__current_page', '__lines', '__title', '__num_of_exercises']
+    """Manual worksheet composition with page objects as the source of truth.
 
-    def __init__(self, title='Worksheet', ordered=True):
+    end_page() enables an answer page for the current exercise page. Repeating
+    it refreshes that page instead of adding duplicates. create() refreshes all
+    enabled answer pages and renders current exercise content, without caching
+    stale lines. Adding after end_page() still adds to the exercise page.
+    """
+    __slots__ = ['__pages', '__ordered', '__current_page', '__title', '__answer_pages', 'style']
+
+    def __init__(self, title='Worksheet', ordered=True, *, style=None, theme=None):
+        if style is not None and not isinstance(style, PDFStyle):
+            raise TypeError('style must be a PDFStyle')
+        if style is not None and theme is not None:
+            raise ValueError('Pass either style or theme, not both')
+        self.style = get_pdf_theme(theme).to_style() if theme is not None else style
         self.__pages = [PDFPage(title=title)]
         self.__ordered = ordered
         self.__current_page = self.__pages[0]
-        self.__lines = [[]]
         self.__title = title
-        self.__num_of_exercises = 0
+        self.__answer_pages = {}
 
     @property
     def num_of_pages(self):
@@ -381,71 +569,154 @@ class PDFWorksheet:
     def pages(self):
         return self.__pages
 
-    def del_last_page(self):
-        if len(self.__pages):
-            del self.__pages[-1]
-
     @property
     def current_page(self):
         return self.__current_page
 
+    def _renumber(self):
+        number = 0
+        answer_pages = set(self.__answer_pages.values())
+        for page in self.__pages:
+            if page in answer_pages:
+                continue
+            for exercise in page.exercises:
+                if isinstance(exercise, (PDFMath, PDFPlot, PDFHeading, PDFAnswerSpace)):
+                    continue
+                if not isinstance(exercise, PDFExercise):
+                    raise TypeError('Worksheet pages must contain PDFExercise objects')
+                number += 1
+                if self.__ordered:
+                    exercise.number = number
+
+    def del_last_page(self):
+        if not self.__pages:
+            return
+        removed = self.__pages.pop()
+        for source, answer in list(self.__answer_pages.items()):
+            if removed is source or removed is answer:
+                del self.__answer_pages[source]
+                if removed is source and answer in self.__pages:
+                    self.__pages.remove(answer)
+        answers = set(self.__answer_pages.values())
+        self.__current_page = next((page for page in reversed(self.__pages) if page not in answers), None)
+        self._renumber()
+
     def add_exercise(self, exercise):
-        self.__num_of_exercises += 1
+        if not isinstance(exercise, PDFExercise):
+            raise TypeError('exercise must be a PDFExercise')
+        if self.__current_page is None:
+            self.next_page()
         self.__current_page.add(exercise)
-        if '\n' in exercise.__str__():
-            lines = exercise.__str__().split('\n')
-            if self.__ordered:
-                exercise.number = self.__num_of_exercises
-                self.__lines[-1].append(f'{exercise.number}.    {lines[0]}')
-            else:
-                self.__lines[-1].append(lines[0])
-            for i in range(1, len(lines)):
-                self.__lines[-1].append(lines[i])
-            self.__lines[-1].append('')
-        elif self.__ordered:
-            exercise.number = self.__num_of_exercises
-            self.__lines[-1].append(f'{exercise.number}.    {exercise.__str__()}')
-        else:
-            self.__lines[-1].append(exercise.__str__())
+        self._renumber()
+        if self.__current_page in self.__answer_pages:
+            self._refresh_answers(self.__current_page)
+        return self
+
+    def add_math(self, expression, *, font_size=None):
+        if self.__current_page is None:
+            self.next_page()
+        self.__current_page.add(PDFMath(expression, font_size))
+        return self
+
+    def add_plot(self, source, *, height=180, caption=None):
+        if self.__current_page is None:
+            self.next_page()
+        self.__current_page.add(PDFPlot(source, height, caption=caption))
+        return self
+
+    def add_heading(self, text, *, level=1):
+        """Add an unnumbered section heading, kept with its following content."""
+        if self.__current_page is None:
+            self.next_page()
+        self.__current_page.add(PDFHeading(text, level))
+        return self
+
+    def add_answer_space(self, height=72, *, pattern='lines', spacing=18):
+        """Add an unnumbered blank, ruled, or gridded writing area."""
+        if self.__current_page is None:
+            self.next_page()
+        self.__current_page.add(PDFAnswerSpace(height, pattern, spacing))
+        return self
+
+    def _text_lines(self, text, number=None, role='question'):
+        if isinstance(text, PDFExercise):
+            text = text.exercise
+        return [PDFParagraph(text, number=number if self.__ordered else None, role=role)]
+
+    def _refresh_answers(self, source):
+        lines = []
+        for exercise in source.exercises:
+            if isinstance(exercise, (PDFMath, PDFPlot, PDFHeading, PDFAnswerSpace)):
+                continue
+            solution = exercise.solution
+            if solution is None:
+                continue
+            if not isinstance(solution, (int, float, str)) and isinstance(solution, Iterable):
+                values = list(solution)
+                plain = ','.join(str(value) for value in values)
+                if values and all(isinstance(value, (int, float, _Rational)) and not isinstance(value, bool) for value in values):
+                    solution = PDFText(PDFMath(', '.join(format_math(value) for value in values)), plain=plain)
+                else:
+                    solution = plain
+            elif isinstance(solution, (int, float, _Rational)) and not isinstance(solution, bool):
+                solution = PDFText(PDFMath(solution), plain=str(solution))
+            lines.extend(self._text_lines(solution, exercise.number, role='solution'))
+            if exercise.solution_plot is not None:
+                if not isinstance(exercise.solution_plot, PDFPlot):
+                    raise TypeError('solution_plot must be a PDFPlot')
+                lines.append(exercise.solution_plot)
+        answer = self.__answer_pages.get(source)
+        if not lines:
+            if answer is not None:
+                self.__pages.remove(answer)
+                del self.__answer_pages[source]
+            return
+        if answer is None:
+            answer = PDFPage(title='Solutions')
+            self.__answer_pages[source] = answer
+            self.__pages.insert(self.__pages.index(source) + 1, answer)
+        answer.exercises[:] = lines
 
     def end_page(self):
-        if any((exercise.has_solution for exercise in self.__current_page.exercises)):
-            solutions_string = []
-            for index, exercise in enumerate(self.__current_page.exercises):
-                if exercise.solution is None:
-                    continue
-                if not isinstance(exercise.solution, (int, float, str)) and isinstance(exercise.solution, Iterable):
-                    str_solution = ','.join((str(solution) for solution in exercise.solution))
-                    if self.__ordered:
-                        solutions_string.append(f'{exercise.number}.    {str_solution}')
-                    else:
-                        solutions_string.append(str_solution)
-                else:
-                    if not isinstance(exercise.solution, str):
-                        str_solution = str(exercise.solution)
-                    else:
-                        str_solution = exercise.solution
-                    if '\n' in str_solution:
-                        lines = exercise.solution.split('\n')
-                        solutions_string.append(f'{exercise.number}. {lines[0]}' if self.__ordered else f'{lines[0]}')
-                        for j in range(1, len(lines)):
-                            solutions_string.append(lines[j])
-                        solutions_string.append('')
-                    elif self.__ordered:
-                        solutions_string.append(f'{exercise.number}.    {exercise.solution}')
-                    else:
-                        solutions_string.append(f'{exercise.solution}')
-            self.__pages.append(PDFPage(title='Solutions', exercises=solutions_string))
-            self.__lines.append(solutions_string)
+        if self.__current_page is not None:
+            self._renumber()
+            self._refresh_answers(self.__current_page)
+        return self
 
     def next_page(self, title=None):
         if title is None:
             title = self.__title
-        self.__pages.append(PDFPage(title))
-        self.__current_page = self.__pages[-1]
-        self.__lines.append([])
+        self.__current_page = PDFPage(title)
+        self.__pages.append(self.__current_page)
+        return self
 
-    def create(self, path: str=None):
+    def create(self, path: str=None, **layout_options):
+        """Export the worksheet; e.g. create(path, line_height=1.25).
+
+        line_height defaults to 1.5 for text and headings. Tall inline math may
+        require extra height. Paragraph and block spacing remain independent.
+        """
         if path is None:
             path = generate_pdf_path()
-        create_pages(path, self.num_of_pages, [page.title for page in self.__pages], self.__lines)
+        titles, lines = self._render_content()
+        if 'style' not in layout_options and 'theme' not in layout_options and self.style is not None:
+            layout_options['style'] = self.style
+        create_pages(path, len(titles), titles, lines, **layout_options)
+
+    def _render_content(self):
+        """Prepare current question and answer content for a shared renderer."""
+        if not self.__pages:
+            raise ValueError('Cannot create a worksheet with no pages')
+        self._renumber()
+        for source in list(self.__answer_pages):
+            self._refresh_answers(source)
+        answers = set(self.__answer_pages.values())
+        lines = []
+        for page in self.__pages:
+            if page in answers:
+                lines.append(list(page.exercises))
+            else:
+                lines.append([line for exercise in page.exercises
+                              for line in ([exercise] if isinstance(exercise, (PDFMath, PDFPlot, PDFHeading, PDFAnswerSpace))
+                                           else self._text_lines(exercise, exercise.number))])
+        return [page.title for page in self.__pages], lines

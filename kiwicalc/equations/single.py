@@ -299,7 +299,13 @@ def random_polynomial(degree: int=None, solutions_range=(-5, 5), digits_after=0,
         permutations_length += 1
     equation = ''.join(accumulator)
     if get_solutions:
-        return (equation, [-solution for solution in solutions])
+        roots = [-solution for solution in solutions]
+        # The legacy generator deduplicates sampled factors but retains the
+        # requested leading degree. Missing factors therefore become powers of
+        # x, and zero must be included in the answer key.
+        if len(solutions) < degree and 0 not in roots:
+            roots.append(0)
+        return (equation, roots)
     return equation
 
 def random_polynomial2(degree: int, values=(-15, 15), digits_after=0, variable='x', python_syntax=False):
@@ -618,44 +624,49 @@ class LinearEquation(Equation):
         return equation
 
     @staticmethod
-    def random_worksheet(path, title='Equation Worksheet', num_of_equations=10, values=(1, 20), items_per_side=(4, 8), after_point=2, get_solutions=False) -> bool:
-        """
-        Generates a PDF page with random __equations
-        :return:
-        """
-        from kiwicalc.pdf.worksheet import create_pdf
-        equations = [LinearEquation.random_equation(values, items_per_side, after_point, get_solutions) for _ in range(num_of_equations)]
-        return create_pdf(path=path, title=title, lines=equations)
+    def random_worksheet(path, title='Equation Worksheet', num_of_equations=10, values=(1, 20), items_per_side=(4, 8), after_point=2, get_solutions=False, **layout_options) -> bool:
+        """Export styled questions and, optionally, a separate answer page."""
+        try:
+            LinearEquation.random_worksheets(path, num_of_pages=1,
+                equations_per_page=num_of_equations, values=values,
+                items_per_side=items_per_side, after_point=after_point,
+                get_solutions=get_solutions,
+                titles=[title, 'Solutions'] if get_solutions else [title], **layout_options)
+            return True
+        except Exception as exc:
+            warnings.warn(f"Couldn't create the pdf file: {type(exc).__name__}: {exc}")
+            return False
 
     @staticmethod
-    def random_worksheets(path: str, num_of_pages: int=2, equations_per_page=20, values=(1, 20), items_per_side=(4, 8), after_point=1, get_solutions=False, titles=None):
+    def random_worksheets(path: str, num_of_pages: int=2, equations_per_page=20, values=(1, 20), items_per_side=(4, 8), after_point=1, get_solutions=False, titles=None, **layout_options):
         from kiwicalc.pdf.worksheet import create_pages
+        from kiwicalc.pdf.formatting import _numbered_equation
         if get_solutions:
             lines = []
             for i in range(num_of_pages):
                 equations, solutions = ([], [])
                 for j in range(equations_per_page):
                     equation, solution, variable = LinearEquation.random_equation(values=values, items_per_side=items_per_side, digits_after=after_point, get_solution=True, get_variable=True)
-                    equations.append(f'{j + 1}. {equation}')
-                    solutions.append(f'{j + 1}. {variable} = {solution}')
+                    equations.append(_numbered_equation(equation, j+1))
+                    solutions.append(_numbered_equation(f'{variable} = {solution}', j+1, role='solution'))
                 lines.extend((equations, solutions))
             if titles is None:
                 titles = ['Worksheet - Linear Equations', 'Solutions'] * num_of_pages
-            create_pages(path=path, num_of_pages=num_of_pages * 2, titles=titles, lines=lines)
+            create_pages(path=path, num_of_pages=num_of_pages * 2, titles=titles, lines=lines, **layout_options)
         else:
             lines = []
             for i in range(num_of_pages):
                 equations = []
                 for j in range(equations_per_page):
                     equation = LinearEquation.random_equation(values=values, items_per_side=items_per_side, digits_after=after_point, get_solution=False, get_variable=False)
-                    equations.append(f'{j + 1}. {equation}')
+                    equations.append(_numbered_equation(equation, j+1))
                 lines.append(equations)
             if titles is None:
                 titles = ['Worksheet - Linear Equations'] * num_of_pages
-            create_pages(path=path, num_of_pages=num_of_pages, titles=titles, lines=lines)
+            create_pages(path=path, num_of_pages=num_of_pages, titles=titles, lines=lines, **layout_options)
 
     @staticmethod
-    def adjusted_worksheet(title='Equation Worksheet', equations=()) -> bool:
+    def adjusted_worksheet(title='Equation Worksheet', equations=(), *, path='test', **layout_options) -> bool:
         """
         Creates a user-defined PDF worksheet file.
         :param title: the title of the page
@@ -663,7 +674,8 @@ class LinearEquation(Equation):
         :return: returns True if the creation is successful, else False.
         """
         from kiwicalc.pdf.worksheet import create_pdf
-        return create_pdf('test', title=title, lines=equations)
+        from kiwicalc.pdf.formatting import _equation_text
+        return create_pdf(path, title=title, lines=[_equation_text(str(equation)) for equation in equations], **layout_options)
 
     @staticmethod
     def manual_worksheet() -> bool:
@@ -683,7 +695,7 @@ class LinearEquation(Equation):
         except Exception as e:
             warnings.warn(f"Couldn't create the pdf file due to a {e.__class__} error")
             return False
-        return LinearEquation.adjusted_worksheet(title=title, equations=equations)
+        return LinearEquation.adjusted_worksheet(title=title, equations=equations, path=name)
 
     def __str__(self):
         return f'{self.equation}'
@@ -770,28 +782,17 @@ class QuadraticEquation(Equation):
             raise NotImplementedError('Only strict_syntax=True is available at the moment.')
 
     @staticmethod
-    def random_worksheet(path=None, title='Quadratic Equations Worksheet', num_of_equations=20, solutions_range=(-15, 15), digits_after: int=0, get_solutions=True):
-        from kiwicalc.pdf.worksheet import create_pdf
-        lines = []
-        if get_solutions:
-            equations, solutions = ([], [])
-            for i in range(num_of_equations):
-                equ, sol = QuadraticEquation.random(values=solutions_range, digits_after=digits_after, get_solutions=True)
-                equations.append(f'{i + 1}. {equ}')
-                joined_solutions = ', '.join(sol)
-                solutions.append(f'{i + 1}. {joined_solutions}')
-            lines.extend((equations, solutions))
-        else:
-            equations = []
-            for i in range(num_of_equations):
-                equ = QuadraticEquation.random(values=solutions_range, digits_after=digits_after, get_solutions=False)
-                equations.append(f'{i + 1}. {equ}')
-            lines.append(equations)
-        create_pdf(path=path, title=title, lines=lines)
+    def random_worksheet(path=None, title='Quadratic Equations Worksheet', num_of_equations=20, solutions_range=(-15, 15), digits_after: int=0, get_solutions=True, **layout_options):
+        from kiwicalc.pdf.worksheet import generate_pdf_path
+        QuadraticEquation.random_worksheets(path or generate_pdf_path(), num_of_pages=1,
+            equations_per_page=num_of_equations, solutions_range=solutions_range,
+            digits_after=digits_after, get_solutions=get_solutions,
+            titles=[title, 'Solutions'] if get_solutions else [title], **layout_options)
 
     @staticmethod
-    def random_worksheets(path=None, num_of_pages=2, equations_per_page=20, titles=None, solutions_range=(-15, 15), digits_after: int=0, get_solutions=False):
+    def random_worksheets(path=None, num_of_pages=2, equations_per_page=20, titles=None, solutions_range=(-15, 15), digits_after: int=0, get_solutions=False, **layout_options):
         from kiwicalc.pdf.worksheet import create_pages
+        from kiwicalc.pdf.formatting import _numbered_equation
         if titles is None:
             if get_solutions:
                 titles = ['Quadratic Equations Worksheet', 'Solutions'] * num_of_pages
@@ -803,19 +804,19 @@ class QuadraticEquation(Equation):
                 equations, solutions = ([], [])
                 for j in range(equations_per_page):
                     equ, sol = QuadraticEquation.random(values=solutions_range, digits_after=digits_after, get_solutions=True)
-                    equations.append(f'{i + 1}. {equ}')
-                    joined_solutions = ', '.join(sol)
-                    solutions.append(f'{i + 1}. {joined_solutions}')
+                    equations.append(_numbered_equation(equ, j+1))
+                    joined_solutions = ', '.join(map(str, sol))
+                    solutions.append(_numbered_equation(joined_solutions, j+1, role='solution'))
                 lines.extend((equations, solutions))
-            create_pages(path=path, num_of_pages=num_of_pages * 2, titles=titles, lines=lines)
+            create_pages(path=path, num_of_pages=num_of_pages * 2, titles=titles, lines=lines, **layout_options)
         else:
             for i in range(num_of_pages):
                 equations = []
                 for j in range(equations_per_page):
                     equ = QuadraticEquation.random(values=solutions_range, digits_after=digits_after, get_solutions=False)
-                    equations.append(f'{i + 1}. {equ}')
+                    equations.append(_numbered_equation(equ, j+1))
                 lines.append(equations)
-            create_pages(path=path, num_of_pages=num_of_pages, titles=titles, lines=lines)
+            create_pages(path=path, num_of_pages=num_of_pages, titles=titles, lines=lines, **layout_options)
 
     def __repr__(self):
         return f'QuadraticEquation({self._equation}, variables={self._variables})'
@@ -849,17 +850,17 @@ class CubicEquation(Equation):
             return (result[0] + '= 0', result[1])
 
     @staticmethod
-    def random_worksheet(path=None, title=' Cubic Equations Worksheet', num_of_equations=20, solutions_range=(-15, 15), digits_after: int=0, get_solutions=False):
-        PolyEquation.random_worksheet(path=path, title=title, num_of_equations=num_of_equations, degrees_range=(3, 3), solutions_range=solutions_range, digits_after=digits_after, get_solutions=get_solutions)
+    def random_worksheet(path=None, title='Cubic Equations Worksheet', num_of_equations=20, solutions_range=(-15, 15), digits_after: int=0, get_solutions=False, **layout_options):
+        PolyEquation.random_worksheet(path=path, title=title, num_of_equations=num_of_equations, degrees_range=(3, 3), solutions_range=solutions_range, digits_after=digits_after, get_solutions=get_solutions, **layout_options)
 
     @staticmethod
-    def random_worksheets(path=None, num_of_pages=2, equations_per_page=20, titles=None, solutions_range=(-15, 15), digits_after: int=0, get_solutions=False):
+    def random_worksheets(path=None, num_of_pages=2, equations_per_page=20, titles=None, solutions_range=(-15, 15), digits_after: int=0, get_solutions=False, **layout_options):
         if titles is None:
             if get_solutions:
                 titles = ['Cubic Equations Worksheet', 'Solutions'] * num_of_pages
             else:
                 titles = ['Cubic Equations Worksheet'] * num_of_pages
-        PolyEquation.random_worksheets(path=path, num_of_pages=num_of_pages, titles=titles, equations_per_page=equations_per_page, degrees_range=(3, 3), solutions_range=solutions_range, digits_after=digits_after, get_solutions=get_solutions)
+        PolyEquation.random_worksheets(path=path, num_of_pages=num_of_pages, titles=titles, equations_per_page=equations_per_page, degrees_range=(3, 3), solutions_range=solutions_range, digits_after=digits_after, get_solutions=get_solutions, **layout_options)
 
     def __repr__(self):
         return f'CubicEquation({self._equation}, variables={self._variables})'
@@ -893,17 +894,17 @@ class QuarticEquation(Equation):
             return (result[0] + '= 0', result[1])
 
     @staticmethod
-    def random_worksheet(path=None, title=' Cubic Equations Worksheet', num_of_equations=20, solutions_range=(-15, 15), digits_after: int=0, get_solutions=False):
-        PolyEquation.random_worksheet(path=path, title=title, num_of_equations=num_of_equations, degrees_range=(3, 3), solutions_range=solutions_range, digits_after=digits_after, get_solutions=get_solutions)
+    def random_worksheet(path=None, title='Quartic Equations Worksheet', num_of_equations=20, solutions_range=(-15, 15), digits_after: int=0, get_solutions=False, **layout_options):
+        PolyEquation.random_worksheet(path=path, title=title, num_of_equations=num_of_equations, degrees_range=(4, 4), solutions_range=solutions_range, digits_after=digits_after, get_solutions=get_solutions, **layout_options)
 
     @staticmethod
-    def random_worksheets(path=None, num_of_pages=2, equations_per_page=20, titles=None, solutions_range=(-15, 15), digits_after: int=0, get_solutions=False):
+    def random_worksheets(path=None, num_of_pages=2, equations_per_page=20, titles=None, solutions_range=(-15, 15), digits_after: int=0, get_solutions=False, **layout_options):
         if titles is None:
             if get_solutions:
                 titles = ['Quartic Equations Worksheet', 'Solutions'] * num_of_pages
             else:
                 titles = ['Quartic Equations Worksheet'] * num_of_pages
-        PolyEquation.random_worksheets(path=path, num_of_pages=num_of_pages, titles=titles, equations_per_page=equations_per_page, degrees_range=(4, 4), solutions_range=solutions_range, digits_after=digits_after, get_solutions=get_solutions)
+        PolyEquation.random_worksheets(path=path, num_of_pages=num_of_pages, titles=titles, equations_per_page=equations_per_page, degrees_range=(4, 4), solutions_range=solutions_range, digits_after=digits_after, get_solutions=get_solutions, **layout_options)
 
     def __repr__(self):
         return f'QuarticEquation({self._equation}, variables={self._variables})'
@@ -1009,41 +1010,41 @@ class PolyEquation(Equation):
         return f'{PolyEquation.random_expression(values, of_order, variable, all_powers)}={PolyEquation.random_expression(values, of_order, variable, all_powers)}'
 
     @staticmethod
-    def random_worksheet(path=None, title='Equation Worksheet', num_of_equations=20, degrees_range=(2, 5), solutions_range=(-15, 15), digits_after: int=0, get_solutions=False):
-        from kiwicalc.pdf.worksheet import create_pdf, create_pages
-
-        if get_solutions:
-            expressions = [random_polynomial(random.randint(degrees_range[0], degrees_range[1]), solutions_range=solutions_range, digits_after=digits_after, get_solutions=get_solutions) for _ in range(num_of_equations)]
-            equations = [f'{index + 1}. {expression[0]} = 0' for index, expression in enumerate(expressions)]
-            solutions = [f'{index + 1}. ' + ','.join([str(solution) for solution in expression[1]]) for index, expression in enumerate(expressions)]
-            create_pages(path, 2, ['Polynomial Equations Worksheet', 'Solutions'], [equations, solutions])
-        else:
-            return create_pdf(path=path, title=title, lines=[f'{random_polynomial(random.randint(degrees_range[0], degrees_range[1]), solutions_range=solutions_range, digits_after=digits_after)} = 0' for _ in range(num_of_equations)])
+    def random_worksheet(path=None, title='Equation Worksheet', num_of_equations=20, degrees_range=(2, 5), solutions_range=(-15, 15), digits_after: int=0, get_solutions=False, **layout_options):
+        from kiwicalc.pdf.worksheet import generate_pdf_path
+        PolyEquation.random_worksheets(path or generate_pdf_path(), num_of_pages=1,
+            equations_per_page=num_of_equations, degrees_range=degrees_range,
+            solutions_range=solutions_range, digits_after=digits_after,
+            get_solutions=get_solutions,
+            titles=[title, 'Solutions'] if get_solutions else [title], **layout_options)
+        if not get_solutions:
+            return True
 
     @staticmethod
-    def random_worksheets(path=None, num_of_pages=2, equations_per_page=20, titles=None, degrees_range=(2, 5), solutions_range=(-15, 15), digits_after: int=0, get_solutions=False):
+    def random_worksheets(path=None, num_of_pages=2, equations_per_page=20, titles=None, degrees_range=(2, 5), solutions_range=(-15, 15), digits_after: int=0, get_solutions=False, **layout_options):
         from kiwicalc.pdf.worksheet import create_pages
+        from kiwicalc.pdf.formatting import _numbered_equation
 
         if get_solutions:
             pages_list = []
             for i in range(num_of_pages):
                 expressions = [random_polynomial(random.randint(degrees_range[0], degrees_range[1]), solutions_range=solutions_range, digits_after=digits_after, get_solutions=True) for _ in range(equations_per_page)]
-                equations = [f'{index + 1}. {expression[0]} = 0' for index, expression in enumerate(expressions)]
-                solutions = [f'{index + 1}. ' + ','.join([str(solution) for solution in expression[1]]) for index, expression in enumerate(expressions)]
+                equations = [_numbered_equation(f'{expression[0]} = 0', index+1) for index, expression in enumerate(expressions)]
+                solutions = [_numbered_equation(','.join(str(solution) for solution in expression[1]), index+1, role='solution') for index, expression in enumerate(expressions)]
                 pages_list.append(equations)
                 pages_list.append(solutions)
             if titles is None:
                 titles = ['Polynomial Equations Worksheet', 'Solutions'] * num_of_pages
-            create_pages(path, num_of_pages * 2, titles, pages_list)
+            create_pages(path, num_of_pages * 2, titles, pages_list, **layout_options)
         else:
             pages_list = []
             for i in range(num_of_pages):
                 expressions = [random_polynomial(random.randint(degrees_range[0], degrees_range[1]), solutions_range=solutions_range, digits_after=digits_after, get_solutions=False) for _ in range(equations_per_page)]
-                equations = [f'{index + 1}. {expression[0]} = 0' for index, expression in enumerate(expressions)]
+                equations = [_numbered_equation(f'{expression} = 0', index+1) for index, expression in enumerate(expressions)]
                 pages_list.append(equations)
             if titles is None:
                 titles = ['Polynomial Equations Worksheet'] * num_of_pages
-            create_pages(path, num_of_pages, titles, pages_list)
+            create_pages(path, num_of_pages, titles, pages_list, **layout_options)
 
     def to_PolyExpr(self):
         return self.__first_expression - self.__second_expression

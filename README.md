@@ -626,6 +626,128 @@ graph without showing it. Select series with `components=[0]` and provide `label
 Stiff solvers, complex states, dense output, and boundary-value problems are not
 part of this initial ODE API.
 
+## Worksheet reliability notes
+
+`PDFWorksheet.end_page()` creates or refreshes the current exercise page's
+answer page; repeated calls do not duplicate answers. Adding more exercises
+afterward still edits the exercise page. `create()` renders current page objects
+and refreshes enabled answer pages, so repeated exports do not use stale text.
+Deleting the last page restores the most recent surviving exercise page;
+adding an exercise to a completely emptied worksheet starts a fresh page.
+
+Two-point line exercises avoid vertical-line inputs and retain exact fractional
+coefficients. Point-and-slope answers use the line's actual x-intercept.
+Trigonometric, logarithmic, and linear-intersection worksheets are available via
+`worksheet(dtype='trigo' | 'log' | 'intersection', seed=42, ...)`, or individually
+as `PDFTrigonometricEquation`, `PDFLogarithmicEquation`, and
+`PDFLinearIntersection`. These English-only generators use local random seeds;
+legacy families retain their existing random behavior. Trigonometry covers
+sine/cosine special angles on `0 <= x < 360` degrees; logarithmic answers include
+domain checks. They are bounded exercise generators, not general equation solvers.
+
+Core algebra exercises use one consistent, seeded API:
+
+```python
+exercise = kw.algebra_exercise('factor', difficulty='hard', seed=42)
+sheet = kw.PDFWorksheet('Algebra', theme='classroom')
+sheet.add_exercise(exercise).end_page()
+sheet.create('algebra.pdf')
+
+kw.worksheet('inequalities.pdf', dtype='linear_inequality',
+             difficulty='medium', seed=42, equations_per_page=12)
+```
+
+The catalog covers simplifying, expanding, factoring, completing the square,
+substitution, linear inequalities, absolute-value equations, exponent laws,
+rational equations, radical equations, and rearranging formulas. Every exercise
+provides exact solution metadata for verification and future interactive answer
+checking. See [the core algebra exercise guide](docs/algebra_exercises.md).
+
+Calculus and numerical-method exercises use the same friendly API:
+
+```python
+exercise = kw.calculus_exercise('newton', difficulty='hard', seed=42)
+sheet = kw.PDFWorksheet('Calculus', theme='academic')
+sheet.add_exercise(exercise).end_page()
+```
+
+The catalog covers derivatives from first principles, differentiation, tangent
+lines, critical points, monotonicity, concavity, optimization, definite
+integrals, area between curves, numerical differentiation, trapezoidal and
+Simpson rules, Newton iteration, Euler's method, and classical RK4. See the
+[calculus exercise guide](docs/calculus_exercises.md).
+
+`PDFWorksheet.add_math(expression)` renders Matplotlib Mathtext without an external
+LaTeX installation. `add_plot(figure_or_draw_callback)` embeds a Matplotlib Figure
+or a callback receiving an axes object. Formulas and plots are raster images;
+existing figures remain open. Function-analysis and intersection answer keys now
+include sketches. Paragraphs wrap and paginate automatically; logical pages may
+therefore span several physical PDF pages. `create(..., page_size='A4', margin=50,
+font_size=12)` accepts A4, Letter, or dimensions in points. General localization
+and full LaTeX support remain outside this API.
+
+### Mixed text and mathematics
+
+For reusable typography, colors, spacing, margins, headings, headers/footers,
+captions, and writing areas, use `PDFStyle`. It works with both `PDFWorksheet`
+and batch `worksheet()` generation. See [the PDF styling guide](docs/pdf_styling.md)
+for every option, inheritance rules, examples, and current rendering limitations.
+
+For the friendliest path, choose a coordinated PDF theme:
+
+```python
+sheet = kw.PDFWorksheet('Algebra practice', theme='classroom')
+sheet.create('algebra.pdf')
+
+school = kw.PDFTheme.get('classroom').with_options(
+    primary='#24543D', heading='#24543D', body_size=13,
+)
+```
+
+Available presets are `academic`, `classroom`, `assessment`, `engineering`,
+`accessible`, and `ink_saver`. Themes use semantic color, typography, and
+spacing tokens and validate readable text contrast. Existing `PDFStyle` APIs
+remain compatible.
+
+Control line height with `sheet.create('worksheet.pdf', line_height=1.25)`.
+The default is `1.5` times each text style's font size, across A4, Letter, and
+custom page sizes, for questions, answers, and headings. The same option works
+with `create_pdf()` and `create_pages()`. It is independent of paragraph spacing;
+tall inline formulas can expand a line to prevent clipping. Values must be
+positive and finite.
+
+Compose worksheets, individual pages, and polynomial reports before export when
+they belong to one document. `PDFDocument` renders the content in one pass, so
+its shared `PDFFooter` numbers every physical page continuously—including answer
+keys and overflow pages—without manual offsets:
+
+```python
+footer = kw.PDFFooter("Practice | Page {page}", alignment="center")
+document = kw.PDFDocument(style=kw.PDFStyle(footer=footer))
+document.add(algebra_sheet).add(geometry_page).add_report(polynomial)
+document.create("course_pack.pdf")
+```
+
+Each independent export starts at page 1 by default. Use `page_start` only when
+an intentionally separate export needs a different starting number.
+
+Use `PDFText('Solve ', PDFMath(r'\frac{x}{2}=3', font_size=12), ' for x.')`
+as an exercise or solution. Prose is escaped literally; only explicit math
+segments are interpreted as Mathtext. Plain strings keep their existing behavior.
+`format_math(Fraction(1, 3))` preserves exact fractions, and
+`format_polynomial([1, 0, -1])` formats descending-power coefficients as
+`x^{2} -1`, omitting zero and unit coefficients. `format_math()` and `PDFMath()`
+also accept `Mono` and `Poly` objects directly, without modifying them. Single-letter
+variables, multivariate terms, negative powers, and numeric fractional exponents
+are supported. Other expression types still require explicit Mathtext.
+Equation classes, linear systems, function formulas and derivatives, and the
+trigonometric, logarithmic, and intersection generators use this formatting
+automatically while preserving their legacy plain-text representations.
+Generated equation sides retain their unsimplified terms, preserving the exercise.
+Legacy linear/quadratic/polynomial batch worksheets also render formatted equations.
+Inline formulas wrap as indivisible units; oversized formulas should be placed
+in `add_math()` blocks. Unsupported Mathtext raises a descriptive error.
+
 ## Documentation and learning resources
 
 - [Full documentation](https://jona-projects.gitbook.io/kiwicalc)

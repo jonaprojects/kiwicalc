@@ -31,7 +31,8 @@ def test_linear_exercise_generators_deterministically(monkeypatch):
     values = iter([0, 1, 2, 1, 2])
     monkeypatch.setattr(worksheet_module.random, "randint", lambda *_: next(values))
     assert isinstance(worksheet_module.linear_from_points_exercise(get_solution=False), str)
-    assert worksheet_module.linear_intersection_exercise() is None
+    monkeypatch.setattr(worksheet_module.random, 'randint', lambda a, b: a)
+    assert 'intersection' in worksheet_module.linear_intersection_exercise()[0]
 
 
 def test_linear_system_exercise_solution_and_prompt_paths(monkeypatch):
@@ -77,9 +78,13 @@ def test_worksheet_dtype_dispatch(monkeypatch, tmp_path):
     ):
         monkeypatch.setattr(cls, "random_worksheets", recorder)
 
-    for dtype in ("linear", "quadratic", "cubic", "quartic", "polynomial", "trigo", "log"):
+    for dtype in ("linear", "quadratic", "cubic", "quartic", "polynomial"):
         worksheet_module.worksheet(path=str(tmp_path / f"{dtype}.pdf"), dtype=dtype, num_of_pages=1, equations_per_page=1)
     assert len(calls) == 5
+    for dtype in ('trigo', 'log'):
+        target = tmp_path / f'{dtype}.pdf'
+        worksheet_module.worksheet(path=target, dtype=dtype, equations_per_page=2)
+        assert target.read_bytes().startswith(b'%PDF')
     with pytest.raises(ValueError):
         worksheet_module.worksheet(path=str(tmp_path / "bad.pdf"), dtype="unknown")
 
@@ -125,13 +130,13 @@ def test_linear_system_and_linear_prompt_subclasses(monkeypatch):
     with pytest.raises(ValueError):
         worksheet_module.PDFLinearSystem(num_of_equations=27)
 
-    monkeypatch.setattr(worksheet_module, "linear_from_points_exercise", lambda get_solution, lang: ("points", "solution") if get_solution else "points")
-    monkeypatch.setattr(worksheet_module, "linearFromPointAndSlope_exercise", lambda get_solution, lang: ("slope", "solution") if get_solution else "slope")
+    monkeypatch.setattr(worksheet_module, "linear_from_points_exercise", lambda get_solution, lang, **kwargs: ("points", "solution") if get_solution else "points")
+    monkeypatch.setattr(worksheet_module, "linearFromPointAndSlope_exercise", lambda get_solution, lang, **kwargs: ("slope", "solution") if get_solution else "slope")
     assert worksheet_module.PDFLinearFromPoints(True).has_solution
     assert not worksheet_module.PDFLinearFromPoints(False).has_solution
     assert worksheet_module.PDFLinearFromPointAndSlope(True).has_solution
     assert not worksheet_module.PDFLinearFromPointAndSlope(False).has_solution
-    assert isinstance(worksheet_module.PDFLinearIntersection(), worksheet_module.PDFLinearIntersection)
+    assert worksheet_module.PDFLinearIntersection().has_solution
 
 
 def test_polynomial_function_subclasses(monkeypatch):
