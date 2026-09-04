@@ -350,6 +350,152 @@ restored.plot()
 
 ## What is included?
 
+For ordinary single-variable functions, use the unified scalar numerical API:
+
+```python
+kw.differentiate(lambda x: x*x, at=3)                 # approximately 6
+kw.integrate(lambda x: x*x, 0, 1)                    # approximately 1/3
+kw.find_root(lambda x: x*x - 2, bracket=(0, 2))       # approximately sqrt(2)
+kw.find_root(lambda x: x*x - 2, x0=1)                # Newton with numerical derivative
+
+result = kw.find_root(lambda x: x*x - 2, x0=1, return_info=True)
+print(result.value, result.converged, result.residual, result.function_calls)
+```
+
+These functions also accept existing single-variable `Function` objects and
+expressions. Integration and root finding require scalar real outputs.
+Differentiation accepts scalar points or arrays of independent single-variable
+points; arrays are not implicitly interpreted as multivariable coordinates.
+
+- `differentiate`: `central`, `forward`, `backward`, or `richardson`; optional `step`.
+- `integrate`: `simpson`, `trapezoid`, or `midpoint`; `intervals` always counts
+  subintervals. Simpson rounds odd interval counts up to the next even number.
+- `find_root`: `auto` chooses Brent's method with `bracket`, secant with `x0` and
+  `x1`, or Newton with `x0`. Explicit `halley` (both derivatives required) and
+  `steffensen` are also available. A supplied `derivative` is used by Newton.
+
+`return_info=True` returns a `NumericalResult`. Fixed-resolution integration
+and differentiation report no convergence status or estimated error. Root
+solvers require `abs(f(root)) <= tolerance`: failure raises `RuntimeError`, or
+returns `converged=False` when diagnostics are requested. Callback exceptions
+and invalid inputs always propagate; underlying solver warnings are retained.
+The existing algorithm-specific functions remain available and unchanged.
+
+Array differentiation and Richardson extrapolation:
+
+```python
+import numpy as np
+
+x = np.linspace(0, 2, 100)
+dy = kw.differentiate(np.sin, at=x, method="richardson", vectorized=True)
+# Alternatively, omit vectorized=True for scalar-only callbacks such as math.sin.
+```
+
+Array results preserve the shape of `at`. `step` can be scalar or broadcast to
+that shape. Richardson combines central differences at `step` and `step/2`;
+its diagnostic `estimated_error` is the correction magnitude, not an error bound.
+`vectorized=True` explicitly requests one array callback per stencil sample;
+the callback must return exactly the input shape. No exception-based retries occur.
+
+Adaptive integration and sampled data:
+
+```python
+area = kw.integrate(np.sin, 0, np.pi, method="adaptive_simpson", tolerance=1e-9)
+root = kw.find_root(lambda x: np.cos(x) - x, bracket=(0, 1), method="brent")
+
+y = x**2
+slopes = kw.differentiate_samples(y, x)
+running_area = kw.cumulative_integrate(y, x)
+```
+
+Adaptive Simpson reuses samples and refines the panel with the largest estimated
+error. `tolerance` is an absolute estimated-error target; `max_evaluations` and
+`max_depth` bound work. With `return_info=True`, inspect `estimated_error` and
+`converged`; otherwise exhausted limits raise `RuntimeError`. Error estimation
+assumes a sufficiently smooth, resolved function: narrow peaks and discontinuities
+can be missed. Fixed-grid Simpson remains the default; its `intervals` option is
+not used by the adaptive method.
+
+Sampled-data helpers accept nonuniform strictly increasing or decreasing `x`,
+or uniform `spacing`. For multidimensional signals, choose `axis` (default -1).
+Both preserve input shape. Differentiation uses three-point differences with
+`edge_order=1` or `2` (default 2); two samples fall back to their secant slope.
+Cumulative integration uses trapezoids and starts at `initial=0`, optionally an
+additive integration constant. These helpers do not smooth noisy measurements.
+
+Brent combines bracketing, bisection, and inverse quadratic interpolation
+([algorithm overview](https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.brentq.html)).
+KiwiCalc retains its absolute-residual success criterion, even if the bracket
+has become tiny; select `method="bisection"` to retain the earlier dispatch.
+These additions use the existing NumPy dependency, not a new runtime dependency.
+
+For multivariable functions, use separate, explicit entry points:
+
+```python
+kw.gradient(lambda x, y: x*x + 3*y*y, at=(2, 1))     # [4, 6]
+kw.jacobian(lambda x, y: [x*x + y, x*y], at=(2, 3))  # [[4, 1], [3, 2]]
+kw.hessian(lambda x, y: x*x + 3*x*y + y*y, at=(1, 2))  # [[2, 3], [3, 2]]
+
+kw.solve_system(
+    lambda x, y: [x*x + y*y - 2, x - y], initial=(0.8, 1.2)
+)  # approximately [1, 1]
+kw.integrate_nd(lambda x, y: x + y, bounds=[(0, 1), (0, 2)])  # approximately 3
+```
+
+Callbacks receive unpacked coordinates by default. For array-based functions,
+pass `argument_style="vector"`, for example
+`kw.gradient(lambda p: p @ p, at=[1, 2], argument_style="vector")`.
+No new vector class is required; derivative and system-solution results are NumPy arrays.
+
+- `gradient`, `jacobian`, and `hessian` accept one point `(n,)` or batches
+  `(..., n)`. Their results have shapes `(..., n)`, `(..., m, n)`, and
+  `(..., n, n)` respectively. Each callback receives one point, not a batch.
+- `gradient` and `jacobian` support central, forward, and backward differences;
+  `hessian` uses central differences. Optional `step` is scalar or one positive
+  value per coordinate; automatic steps scale with coordinate magnitude.
+- Existing expressions and `Function` objects are supported. Use
+  `variables=("x", "y")` to specify coordinate order explicitly. Otherwise
+  expressions use sorted names and `Function` uses declaration order; component
+  lists combine those orders in first-encounter order.
+- `jacobian` and `solve_system` also accept lists of scalar component functions.
+  `solve_system` handles square nonlinear systems using damped Newton iterations,
+  with an optional analytic `jacobian` callback. This is a local solver: the
+  initial guess matters, and convergence is not guaranteed.
+- `integrate_nd` integrates finite rectangular domains using `midpoint` or
+  `trapezoid` grids. `intervals` can be one count or a count per axis.
+  `max_evaluations` (default 100,000) guards against exponential grid growth.
+
+All five methods accept `return_info=True`. System diagnostics include
+`converged`, the residual infinity norm, and `iterations`; non-convergence raises
+`RuntimeError` unless diagnostics were requested. Finite differences and fixed-grid
+integration do not claim a convergence test or error estimate. The scalar API
+remains separate; its differentiation method now also handles arrays of points.
+
+Numerical integration keeps the legacy function names: `reinman(f, a, b, N)`
+now uses midpoint samples across `N-1` intervals, and `simpson(f, a, b, N)`
+increases an even sample count to the next odd count before constructing its
+grid. Both cover the complete interval, including reversed bounds.
+
+`aberth_method(f, derivative, coefficients)` uses distinct initial guesses,
+relative step checks, and coefficient-scaled residuals. Returned roots are no
+longer rounded or merged by a fixed distance; the historical set return type
+remains. Invalid input and non-convergence now raise explicit errors instead
+of silently returning an empty or incomplete set. Repeated and tightly
+clustered roots remain numerically difficult.
+
+Bairstow's method finds real and complex polynomial roots directly from
+coefficients ordered from highest power to constant:
+
+```python
+roots = kw.bairstow_method([1, 0, 0, 0, -1])  # x^4 - 1: ±1 and ±i
+```
+
+It returns a list preserving repeated roots. Optional `r` and `s` guesses
+describe the quadratic factor `x² - r*x - s`; `epsilon` controls the relative
+coefficient remainder, and `nmax` limits iterations per factor. Non-convergence
+raises `RuntimeError`. Repeated or ill-conditioned roots may have substantially
+less accuracy than the remainder tolerance suggests.
+
 - Symbolic monomials, polynomials, fractions, roots, logarithms, trigonometry, factorials, and composite expressions
 - Linear, quadratic, cubic, quartic, polynomial, and system solving
 - Numerical root-finding, integration, differentiation, and optimization methods
@@ -361,6 +507,124 @@ restored.plot()
 - Probability trees
 - PDF exercise and worksheet generation
 - JSON serialization for supported expressions, curves, surfaces, and composed graphs
+
+## Numerical explanations for teaching
+
+Opt in with `explain=True` to retain actual numerical steps. Normal calls keep
+their existing solver loops: the explanation dispatch is outside those loops,
+with no per-iteration trace checks, trace objects, or plotting work.
+
+```python
+lesson = kw.find_root(
+    lambda x: x*x - 2, bracket=(0, 2), method="bisection", explain=True,
+)
+lesson.plot_steps(0)          # zero-based step; omitted index shows the last record
+lesson.plot_convergence()    # measured residual, not unknown true error
+
+area = kw.integrate(lambda x: x*x, 0, 2, intervals=6, method="simpson", explain=True)
+area.plot_steps(1)
+
+# In a Jupyter notebook:
+from IPython.display import HTML, display
+player = lesson.animate()
+display(HTML(player.to_jshtml()))
+```
+
+Supported root explanations are **bisection, Newton, and secant**; supported
+quadrature explanations are **midpoint, trapezoid, and Simpson**. Select bisection
+explicitly: bracketed `method="auto"` still chooses Brent, whose explanation is
+not implemented. Unsupported teaching methods raise rather than silently switch.
+
+`NumericalExplanation.result` contains the usual diagnostics; `.steps` is a tuple
+of frozen `NumericalStep` records containing samples, formulas, decisions, and
+estimates. `explain=True` returns an explanation even on solver non-convergence,
+so failures can be taught; callback errors and invalid inputs still raise.
+`return_info=True` is redundant with explanations. Legacy solver warnings remain.
+
+`trace_limit=1000` caps saved records without changing the computation or result.
+`.truncated` and `.total_steps` expose omitted records; plots label truncation.
+For quadrature, records are geometric panels built from actual evaluations,
+**not the order of floating-point summation**. Simpson retains the existing
+odd/even summation order, while each plotted parabola spans two subintervals.
+
+Plotting lazily samples a background curve and may evaluate the callback again;
+use pure callbacks. Rendering never changes saved records or diagnostic call
+counts. Animation samples the background once, then replays the saved records.
+Its HTML player includes play/pause, previous/next, timeline, and speed controls
+without widget extensions. Native GUI use also offers `next()`, `previous()`,
+`play()`, `pause()`, and `set_speed()`. HTML export closes the source figure to
+avoid an extra static notebook plot. Keep traces short for lightweight HTML.
+
+See the local, Git-ignored `examples/numerical_methods_for_educators.ipynb` for all
+six methods, convergence comparisons, animation, stalled solves, and trace limits.
+Run `python -m scripts.benchmark_tracing` for local median normal/traced timings;
+plotting is excluded and timings are not CI assertions. Regression tests compare
+results, callback order/counts, and warnings between traced and normal execution.
+
+## Initial-value differential equations
+
+`solve_ivp` solves non-stiff, real-valued equations with the same callback style
+for scalar states and systems: `f(t, state)`.
+
+```python
+solution = kw.solve_ivp(lambda t, y: -0.5*y, t_span=(0, 10), initial=2)
+print(solution.t, solution.y, solution.success)
+solution.plot(title="Exponential decay")
+
+def oscillator(t, state):
+    position, velocity = state
+    return [velocity, -position]
+
+motion = kw.solve_ivp(
+    oscillator, t_span=(0, 20), initial=[1, 0],
+    t_eval=np.linspace(0, 20, 201), rtol=1e-8, atol=1e-10,
+)
+motion.plot(labels=["position", "velocity"], title="Harmonic oscillator")
+```
+
+- The default `method="rk45"` uses the Dormand–Prince 5(4) pair
+  ([method reference](https://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.RK45.html)).
+  `rtol` and `atol` control componentwise estimated local error; `atol` may be
+  scalar or one positive tolerance per state component. These are not global
+  error guarantees. No SciPy dependency is added.
+- For fixed steps, use `method="rk4", step=0.01`. RK4 does not use tolerances
+  for error control. Without `step`, both methods start at interval length/100;
+  only RK45 subsequently adapts it. `max_step` caps step magnitude and
+  `max_steps` limits attempts, including rejected steps.
+- Scalar initial values receive scalar callbacks and return `y.shape == (times,)`.
+  A vector initial value receives a copied one-dimensional array and returns
+  `y.shape == (times, components)`. Callback outputs must match the initial shape.
+- Backward integration is supported. Optional `t_eval` must be strictly ordered
+  in the integration direction and lie inside `t_span`. The solver lands directly
+  on requested times, so adding output times can change its step sequence.
+  Without `t_eval`, results include the initial state and every accepted endpoint.
+- `ODESolution` includes `status`, `message`, `steps`, `rejected_steps`,
+  `function_calls`, and `event_calls`. Numerical failure raises `RuntimeError`;
+  `raise_on_failure=False` returns a partial result with `success=False`.
+  Invalid inputs and callback exceptions still propagate.
+
+Events detect scalar zero crossings:
+
+```python
+halfway = kw.ODEEvent(lambda t, y: y - 0.5, terminal=True, direction=-1)
+stopped = kw.solve_ivp(lambda t, y: -y, (0, 10), 1, events=halfway)
+print(stopped.t_events[0])  # approximately [log(2)]
+```
+
+Pass one callback/event or a list. Plain callbacks are nonterminal and detect
+both directions. `direction` is -1, 0, or +1 along integration order, including
+backward solving. Exact initial zeros are recorded regardless of direction.
+`t_events` and `y_events` contain one array per event. A terminal event stops
+successfully and is appended to the output even if absent from `t_eval`.
+Crossings are localized with RK substeps and time bisection to `event_tolerance`
+(default 1e-10), subject to roundoff and ODE solution accuracy. Multiple crossings
+inside one step and tangencies can be missed; reduce `max_step` to resolve them.
+
+Solving creates no figures. `solution.to_graph()` returns an unrendered `Graph2D`
+for further annotations; `solution.plot(show=False)` renders and returns that
+graph without showing it. Select series with `components=[0]` and provide `labels`.
+Stiff solvers, complex states, dense output, and boundary-value problems are not
+part of this initial ODE API.
 
 ## Documentation and learning resources
 

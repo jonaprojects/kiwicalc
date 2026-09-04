@@ -37,7 +37,7 @@ def test_bisection_rejects_invalid_bounds(bounds):
 @pytest.mark.parametrize(
     ('method', 'expected'),
     [
-        (lambda: kw.reinman(lambda x: x, 0, 1, 1001), 0.5005),
+        (lambda: kw.reinman(lambda x: x, 0, 1, 1001), 0.5),
         (lambda: kw.trapz(lambda x: x*x, 0, 1, 1000), 1 / 3),
         (lambda: kw.simpson(math.sin, 0, math.pi, 1001), 2),
         (lambda: kw.numerical_diff(math.sin, 0), 1),

@@ -63,6 +63,11 @@ __all__ = [
     'chebychevs_method', 'aberth_method', 'steffensen_method', 'bisection_method',
     'bairstow_method', 'reinman', 'trapz', 'simpson', 'numerical_diff',
     'gradient_descent', 'gradient_ascent',
+    'NumericalResult', 'differentiate', 'integrate', 'find_root',
+    'gradient', 'jacobian', 'hessian', 'solve_system', 'integrate_nd',
+    'differentiate_samples', 'cumulative_integrate',
+    'solve_ivp', 'ODESolution', 'ODEEvent',
+    'NumericalStep', 'NumericalExplanation', 'NumericalAnimation',
     # Plotting
     'plot_function', 'plot_functions', 'plot_function_3d', 'plot_functions_3d',
     'scatter_function', 'scatter_functions', 'scatter_function_3d', 'scatter_functions_3d',

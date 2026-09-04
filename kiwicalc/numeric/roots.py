@@ -211,11 +211,9 @@ def get_bounds(degree: int, coefficients):
 
 def __aberth_approximations(coefficients):
     n = len(coefficients) - 1
-    if coefficients[-1] == 0:
-        return __durandKerner_approximations(coefficients)
-    radius = abs(coefficients[-1] / coefficients[0]) ** (1 / n)
-    print(f'radius:{radius}')
-    return [complex(radius * cos(angle), radius * sin(angle)) for angle in np.linspace(0, 2 * pi, n)]
+    radius = 1 + max(abs(value / coefficients[0]) for value in coefficients[1:])
+    return np.asarray([radius * np.exp(2j * pi * (index + .37) / n)
+                       for index in range(n)], dtype=np.clongdouble)
 
 def __durandKerner_approximations(coefficients):
     n = len(coefficients) - 1
@@ -297,38 +295,67 @@ def aberth_method(f_0: Callable, f_1: Callable, coefficients, epsilon: float=1e-
     Aberth-Erlich method is a root-finding algorithm, developed in 1967 Oliver Aberth, and later improved
     in the seventies by Louis W. Ehrlich.
     It finds all of the roots of a function - both real and complex, except some special cases.
-    It is considered more efficient than other multi-root finding methods such as durand-kerner,
-    since it converges faster to the roots.
+    Callbacks must evaluate the polynomial and derivative at complex inputs.
+    Convergence requires relative updates and coefficient-scaled residuals.
+    Root accuracy can be much poorer for repeated or clustered roots.
+    Invalid coefficients raise ValueError; exhausted iterations or numerical
+    breakdown raise RuntimeError rather than silently returning incomplete roots.
+    Results are not rounded or merged by distance. The historical set return
+    type is retained, so multiplicity is not represented reliably.
 
     :param f_0: The origin function. f(x).
     :param f_1: The first derivative. f'(x)
-    :param coefficients: A collection of the coefficients of the function.
+    :param coefficients: Polynomial coefficients from highest power to constant.
     :return: Returns a set of all of the different solutions.
     """
-    try:
-        random_guesses = __aberth_approximations(coefficients)
-        for n in range(nmax):
-            offsets = []
-            for k, zk in enumerate(random_guesses):
-                m = f_0(zk) / f_1(zk)
-                sigma = sum((1 / (zk - zj) for j, zj in enumerate(random_guesses) if k != j and zk != zj))
-                denominator = 1 - m * sigma
-                offsets.append(m / denominator)
-            random_guesses = [approximation - offset for approximation, offset in zip(random_guesses, offsets)]
-            if all((negligible_complex(f_0(guess), epsilon) for guess in random_guesses)):
-                break
-        solutions = [complex(round_decimal(result.real), round_decimal(result.imag)) for result in random_guesses]
-        delete_indices = []
-        for index, solution in enumerate(solutions):
-            for i in range(index + 1, len(solutions)):
-                if i in delete_indices:
-                    continue
-                suspect = solutions[i]
-                if abs(solution.real - suspect.real) < 0.0001 and abs(solution.imag - suspect.imag) < 0.0001:
-                    delete_indices.append(i)
-        return {solutions[i] for i in range(len(solutions)) if i not in delete_indices}
-    except ValueError:
+    if not callable(f_0) or not callable(f_1):
+        raise TypeError('f_0 and f_1 must be callable')
+    if isinstance(coefficients, (str, bytes)):
+        raise ValueError('coefficients must be a finite one-dimensional sequence')
+    values = np.asarray(list(coefficients), dtype=np.clongdouble)
+    if values.ndim != 1 or not len(values) or not np.isfinite(values).all():
+        raise ValueError('coefficients must be a finite one-dimensional sequence')
+    nonzero = np.flatnonzero(values)
+    if not len(nonzero):
+        raise ValueError('The zero polynomial has infinitely many roots')
+    values = values[nonzero[0]:]
+    if not np.isscalar(epsilon) or not np.isreal(epsilon) or not np.isfinite(epsilon) or epsilon <= 0:
+        raise ValueError('epsilon must be positive and finite')
+    if isinstance(nmax, (bool, np.bool_)) or not isinstance(nmax, (int, np.integer)) or nmax <= 0:
+        raise ValueError('nmax must be a positive integer')
+    if len(values) == 1:
         return set()
+    if len(values) == 2:
+        return {complex(-values[1] / values[0])}
+    scale = max(abs(values))
+    normalized = values / scale
+    guesses = np.asarray(__aberth_approximations(normalized), dtype=np.clongdouble)
+    for _ in range(nmax):
+        offsets = np.zeros_like(guesses)
+        for k, z in enumerate(guesses):
+            f = f_0(z) / scale
+            derivative = f_1(z) / scale
+            if not np.isfinite(f) or not np.isfinite(derivative):
+                raise RuntimeError('Aberth encountered a non-finite function or derivative value')
+            if f == 0:
+                continue
+            differences = z - np.delete(guesses, k)
+            if np.any(differences == 0):
+                raise RuntimeError('Aberth iterates collided; polynomial roots may be ill-conditioned')
+            denominator = derivative - f * np.sum(1 / differences)
+            if denominator == 0:
+                offsets[k] = epsilon * (1 + abs(z)) * (1+1j)
+            else:
+                offsets[k] = f / denominator
+        guesses -= offsets
+        if not np.isfinite(guesses).all():
+            raise RuntimeError('Aberth produced non-finite root approximations')
+        if np.all(abs(offsets) <= epsilon * np.maximum(1, abs(guesses))):
+            residuals = np.asarray([abs(f_0(z) / scale) for z in guesses])
+            bounds = np.polyval(abs(normalized), abs(guesses))
+            if np.all(residuals <= epsilon * bounds):
+                return {complex(z) for z in guesses}
+    raise RuntimeError('Aberth did not converge; increase nmax or use another polynomial solver')
 
 def steffensen_method(f: Callable, initial: float, epsilon: float=1e-06, nmax=100000):
     """
@@ -404,6 +431,143 @@ def bisection_method(f: Callable, a: float, b: float, epsilon: float=1e-05, nmax
             b = c
     return None
 
-def bairstow_method():
-    from kiwicalc.equations.single import solve_quadratic_real
-    pass
+def bairstow_method(coefficients, epsilon=1e-12, nmax=1000, *, r=0.0, s=-1.0):
+    """Find the real and complex roots of a real polynomial.
+
+    ``coefficients`` are ordered from highest power to constant, e.g.
+    ``[1, 0, -1]`` represents ``x**2 - 1``. The returned list preserves
+    multiplicity (its order is unspecified). Leading zeros are ignored; a
+    nonzero constant has no roots and the zero polynomial is rejected.
+
+    Bairstow iteration refines factors ``x**2 - r*x - s`` using real
+    synthetic division and a two-variable Newton update, then deflates the
+    polynomial. ``epsilon`` is a relative coefficient-remainder tolerance,
+    not a guarantee on root accuracy, especially for repeated roots.
+    ``nmax`` bounds Newton iterations per quadratic factor, including
+    deterministic restarts. Failure raises RuntimeError rather than returning
+    an incomplete set of roots. Inputs are never modified.
+
+    Reference: https://dlmf.nist.gov/3.8#iv (Bairstow's method).
+    """
+    if isinstance(coefficients, (str, bytes)):
+        raise TypeError('coefficients must be an iterable of real numbers')
+    try:
+        raw = np.asarray(list(coefficients))
+    except TypeError as exc:
+        raise TypeError('coefficients must be an iterable of real numbers') from exc
+    if raw.ndim != 1 or raw.size == 0:
+        raise ValueError('coefficients must be a nonempty one-dimensional sequence')
+    if np.iscomplexobj(raw):
+        raise ValueError('Bairstow requires real coefficients')
+    try:
+        values = raw.astype(float)
+    except (TypeError, ValueError) as exc:
+        raise TypeError('coefficients must contain real numbers') from exc
+    if not np.isfinite(values).all():
+        raise ValueError('coefficients must be finite')
+    for name, value in (('epsilon', epsilon), ('r', r), ('s', s)):
+        if isinstance(value, (bool, complex)) or not np.isscalar(value):
+            raise ValueError(f'{name} must be a finite real number')
+        try:
+            finite = np.isfinite(float(value))
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(f'{name} must be a finite real number') from exc
+        if not finite:
+            raise ValueError(f'{name} must be a finite real number')
+    epsilon, r, s = float(epsilon), float(r), float(s)
+    if epsilon <= 0:
+        raise ValueError('epsilon must be positive')
+    if isinstance(nmax, bool) or not isinstance(nmax, (int, np.integer)) or nmax <= 0:
+        raise ValueError('nmax must be a positive integer')
+    nonzero = np.flatnonzero(values)
+    if not len(nonzero):
+        raise ValueError('The zero polynomial has infinitely many roots')
+    values = values[nonzero[0]:].copy()
+    roots = []
+    while len(values) > 1 and values[-1] == 0:
+        roots.append(0.0)
+        values = values[:-1]
+    if len(values) == 1:
+        return roots
+    values /= np.max(np.abs(values))
+    rng = np.random.default_rng(0)
+    while len(values) > 3:
+        # Several short Newton runs avoid stagnation at singular Jacobians.
+        radius = max(1.0, abs(values[-1] / values[0]) ** (1 / (len(values) - 1)))
+        current_r, current_s = r, s
+        run_length = max(1, nmax // 10)
+        converged = False
+        with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
+            for iteration in range(nmax):
+                if iteration and iteration % run_length == 0:
+                    current_r, current_s = rng.uniform(-2, 2, 2) * (radius, radius**2)
+                b, jacobian = _bairstow_division(values, current_r, current_s)
+                error = np.max(np.abs(b[-2:]))
+                if np.isfinite(error) and error <= epsilon * np.max(np.abs(values)):
+                    converged = True
+                    break
+                try:
+                    correction = np.linalg.solve(jacobian, -b[-2:])
+                except np.linalg.LinAlgError:
+                    correction = np.full(2, np.nan)
+                accepted = False
+                if np.isfinite(correction).all():
+                    for backtrack in range(16):
+                        trial_r, trial_s = np.array((current_r, current_s)) + correction * 0.5**backtrack
+                        trial_b, _ = _bairstow_division(values, trial_r, trial_s)
+                        trial_error = np.max(np.abs(trial_b[-2:]))
+                        if np.isfinite(trial_error) and trial_error < error:
+                            current_r, current_s = trial_r, trial_s
+                            accepted = True
+                            break
+                if not accepted:
+                    current_r, current_s = rng.uniform(-2, 2, 2) * (radius, radius**2)
+            # Permit convergence on the last allowed update.
+            if not converged:
+                b, _ = _bairstow_division(values, current_r, current_s)
+                converged = np.isfinite(b).all() and np.max(np.abs(b[-2:])) <= epsilon * np.max(np.abs(values))
+        if not converged:
+            raise RuntimeError(
+                f'Bairstow did not converge for the remaining degree-{len(values) - 1} '
+                'polynomial; increase nmax or try different r and s guesses'
+            )
+        roots.extend(_bairstow_quadratic(1.0, -current_r, -current_s))
+        values = b[:-2]
+        values = values / np.max(np.abs(values))
+    if len(values) == 3:
+        roots.extend(_bairstow_quadratic(*values))
+    elif len(values) == 2:
+        roots.append(float(-values[1] / values[0]))
+    return roots
+
+
+def _bairstow_division(coefficients, r, s):
+    """Synthetic coefficients and derivatives of the last two coefficients."""
+    b = np.zeros(len(coefficients))
+    dr, ds = np.zeros_like(b), np.zeros_like(b)
+    for i, coefficient in enumerate(coefficients):
+        b[i] = coefficient
+        if i >= 1:
+            b[i] += r * b[i - 1]
+            dr[i] += b[i - 1] + r * dr[i - 1]
+            ds[i] += r * ds[i - 1]
+        if i >= 2:
+            b[i] += s * b[i - 2]
+            dr[i] += s * dr[i - 2]
+            ds[i] += b[i - 2] + s * ds[i - 2]
+    return b, np.column_stack((dr[-2:], ds[-2:]))
+
+
+def _bairstow_quadratic(a, b, c):
+    """Cancellation-resistant quadratic roots, retaining multiplicity."""
+    scale = max(abs(a), abs(b), abs(c))
+    a, b, c = a / scale, b / scale, c / scale
+    discriminant = b * b - 4 * a * c
+    if discriminant < 0:
+        imaginary = math.sqrt(-discriminant) / (2 * a)
+        real = -b / (2 * a)
+        return [complex(real, imaginary), complex(real, -imaginary)]
+    q = -0.5 * (b + math.copysign(math.sqrt(discriminant), b))
+    if q == 0:
+        return [0.0, 0.0]
+    return [float(q / a), float(c / q)]

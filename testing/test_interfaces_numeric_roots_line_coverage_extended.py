@@ -89,9 +89,10 @@ def test_ostrowski_chebyshev_aberth_and_steffensen_paths(monkeypatch):
     with pytest.warns(UserWarning):
         numeric_roots.chebychevs_method(lambda x: 1, lambda x: 1, lambda x: 0, 0, nmax=1)
     aberth = numeric_roots.aberth_method(lambda x: x**2 - 1, lambda x: 2 * x, [1, 0, -1])
-    assert aberth == {complex(-1, 0), complex(1, 0)}
+    assert sorted(aberth, key=lambda z: z.real) == pytest.approx([-1, 1], abs=1e-6)
     monkeypatch.setattr(numeric_roots, "__aberth_approximations", lambda coefficients: (_ for _ in ()).throw(ValueError("bad coefficients")))
-    assert numeric_roots.aberth_method(lambda x: x, lambda x: 1, [0, 0]) == set()
+    with pytest.raises(ValueError):
+        numeric_roots.aberth_method(lambda x: x, lambda x: 1, [0, 0])
     assert numeric_roots.steffensen_method(lambda x: x**2 - 4, 3) == pytest.approx(2, abs=1e-4)
     with pytest.warns(UserWarning):
         numeric_roots.steffensen_method(lambda x: 1, 0)
@@ -104,4 +105,4 @@ def test_bisection_validation_and_terminal_paths():
     with pytest.raises(ValueError):
         numeric_roots.bisection_method(lambda x: x**2 + 1, -1, 1)
     assert numeric_roots.bisection_method(lambda x: x - 2, 0, 3, nmax=0) is None
-    assert numeric_roots.bairstow_method() is None
+    assert sorted(numeric_roots.bairstow_method([1, 0, -1])) == pytest.approx([-1, 1])

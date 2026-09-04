@@ -34,7 +34,7 @@ class TestOutsideMethods(unittest.TestCase):
 
     def test_expression_integration_methods(self):
         x = kw.Var('x')
-        self.assertAlmostEqual(x.reinman(0, 1, 101), 0.505)
+        self.assertAlmostEqual(x.reinman(0, 1, 101), 0.5)
         self.assertAlmostEqual(x.trapz(0, 1, 100), 0.5)
         self.assertAlmostEqual(x.simpson(0, 1, 101), 0.5)
 
