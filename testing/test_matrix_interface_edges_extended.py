@@ -69,8 +69,10 @@ def test_matrix_row_operations_and_validation():
         matrix.replace_rows(0, 3)
     with pytest.raises(ZeroDivisionError):
         matrix.divide_row(0, 0)
+    matrix.multiply_row(2, 0)
+    assert matrix[0] == [3, 4]
     with pytest.raises(IndexError):
-        matrix.multiply_row(2, 0)
+        matrix.multiply_row(2, 2)
 
 
 def test_matrix_rank_determinant_and_inverse():
@@ -122,8 +124,7 @@ def test_matrix_arithmetic_and_shape_errors():
         matrix - object()
     with pytest.raises(TypeError):
         matrix * object()
-    with pytest.raises(TypeError):
-        matrix == object()
+    assert (matrix == object()) is False
 
 
 def test_matrix_indexing_columns_and_mutation():

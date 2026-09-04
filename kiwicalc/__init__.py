@@ -49,6 +49,10 @@ __all__ = [
     'Paraboloid', 'HyperbolicParaboloid', 'Hyperboloid',
     # Linear Algebra
     'Matrix', 'Surface', 'column', 'mav', 'msv', 'mrv',
+    'LinearSolveResult', 'LUDecomposition', 'QRDecomposition', 'SVDDecomposition',
+    'EigenDecomposition', 'VectorSpaceBasis', 'GramSchmidtStep', 'GramSchmidtResult',
+    'ProjectionResult', 'RowOperation', 'RowReductionExplanation', 'LinearAlgebraPlot',
+    'AffineTransformation',
     # Sequences
     'Sequence', 'GeometricSeq', 'ArithmeticProg', 'RecursiveSeq',
     # Probability

@@ -78,13 +78,89 @@ print(system.get_solutions())
 import kiwicalc as kw
 
 matrix = kw.Matrix([[1, 2], [3, 4]])
+column = kw.Matrix.column_vector([5, 6])
 vector = kw.Vector([3, 4])
 point = kw.Point2D(2, 5)
 
 print(matrix.determinant())
+print(matrix @ column)
+print(matrix.rref())       # returns a new matrix
+print(matrix.rank())       # tolerance-aware for numeric matrices
 print(vector.length())
 print(point)
 ```
+
+Convenient constructors and NumPy conversion are also available:
+
+```python
+import numpy as np
+
+identity = kw.Matrix.identity(3)
+zeroes = kw.Matrix.zeros(2, 3)
+matrix = kw.Matrix.from_numpy(np.array([[1, 2], [3, 4]]))
+numpy_array = matrix.to_numpy()
+
+# Element-wise multiplication is explicit and does not mutate either operand.
+product = matrix.hadamard([[2, 2], [2, 2]])
+```
+
+Solving systems is deliberately concise. A flat right-hand side is treated as
+a column vector:
+
+```python
+A = kw.Matrix([[3, 1], [1, 2]])
+x = A.solve([9, 8])                    # [[2], [3]]
+
+fit = A.least_squares([9, 8])
+pinv = A.pseudoinverse()
+condition = A.condition_number()
+
+details = A.solve([9, 8], return_info=True)
+print(details.solution, details.residual_norm, details.rank)
+```
+
+Common matrix decompositions return named results and can also be unpacked:
+
+```python
+P, L, U = A.lu()             # P @ A == L @ U
+Q, R = A.qr()
+lower = A.cholesky()
+
+svd = A.svd()
+U, singular_values, Vt = svd
+original = svd.reconstruct()
+
+eigenvalues, eigenvectors = A.eigen()
+hermitian_values, hermitian_vectors = A.eigh()
+```
+
+For complex matrices, `A.H` returns the conjugate transpose; `A.T` remains the
+ordinary transpose.
+
+Vector-space tools return a small `VectorSpaceBasis` object. Its vectors are
+column matrices, while `basis.matrix` combines them as columns:
+
+```python
+A = kw.Matrix([[1, 2, 3], [2, 4, 6]])
+
+columns = A.column_space()
+rows = A.row_space()
+kernel = A.null_space()                 # stable SVD basis
+simple_kernel = A.null_space(method="rref")
+
+print(kernel.dimension)
+print(kernel.matrix)
+print(A.is_independent(axis="rows"))
+
+orthonormal = A.orthonormalize(axis="rows")
+projection = A.T.project_onto([1, 2, 3])
+
+steps = A.orthonormalize(axis="rows", return_steps=True)
+print(steps.basis, steps.steps)
+```
+
+The trivial space is represented explicitly: its basis has dimension zero,
+`basis.matrix` is `None`, and `basis.to_numpy()` has shape `(ambient, 0)`.
 
 ### Plotting
 
@@ -200,6 +276,57 @@ Animation controllers support pause, resume, GIF/video saving, and embeddable
 HTML. Interaction controllers expose their slider value and can be updated
 programmatically with `set_value`. Live notebook sliders use Matplotlib's
 interactive backend when available; no widget package is required by KiwiCalc.
+
+Matrices include teaching-oriented explanations and visualizations using the
+same Matplotlib installation as the graph system. Row reduction is inspectable
+as text, data, or a figure:
+
+```python
+A = kw.Matrix([[1, 2, 1], [2, 4, 0]])
+explanation = A.explain_rref()
+print(explanation.as_text())
+explanation.plot(theme="classroom")
+```
+
+Transformation, eigenvector, and SVD geometry are one method call away:
+
+```python
+A = kw.Matrix([[2, 1], [0, 1]])
+A.visualize_transformation(vectors=[(1, 1)], theme="engineering")
+A.visualize_eigenvectors()
+A.visualize_svd()
+```
+
+For regression lessons, a design matrix can display its observations, fitted
+values, and residuals together. KiwiCalc automatically finds the one varying
+predictor column; pass `x=...` for polynomial or multi-predictor designs.
+
+```python
+design = kw.Matrix([[1, 0], [1, 1], [1, 2], [1, 3]])
+design.visualize_least_squares([1, 2.8, 5.2, 6.9])
+```
+
+Linear algebra and geometry meet through immutable affine transformations.
+They work with KiwiCalc's existing points, vectors, point collections, and
+curves—there is no second vector type to learn:
+
+```python
+transform = (
+    kw.AffineTransformation.rotation(30, degrees=True)
+    .scale(2)
+    .translate(4, 1)
+)
+
+point = transform(kw.Point2D(1, 0))
+vector = transform(kw.Vector2D(1, 0))
+curve = transform(kw.Ellipse(3, 2))
+```
+
+Constructors cover 2D and 3D translation, scaling around a center, rotation
+around a point or axis, shearing, and reflection. Transformations compose in
+reading order with `.then(...)`, support inversion, and expose their linear
+part, translation, determinant, orientation, and rigidity. Existing matrices
+join the same workflow with `matrix.as_affine(translation=...)`.
 
 Set `sampling="adaptive"` on a parametric or polar curve when you want its
 sampling density to follow its shape. Space curves and surfaces—including

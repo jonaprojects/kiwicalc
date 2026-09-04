@@ -88,7 +88,7 @@ def test_matrix_validation_paths():
         kw.Matrix(dimensions=object())
     with pytest.raises(ValueError):
         kw.Matrix.random_matrix((1, 1), dtype="decimal")
-    with pytest.raises(ValueError):
+    with pytest.raises(ZeroDivisionError):
         kw.Matrix([[1]]) / 0
     with pytest.raises(ValueError):
         kw.Matrix([[1, 2]]) @ kw.Matrix([[1, 2]])

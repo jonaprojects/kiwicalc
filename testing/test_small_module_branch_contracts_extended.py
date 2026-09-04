@@ -164,11 +164,11 @@ def test_surface_constructor_equality_and_zero_sample_edges():
     assert surface.d == 0
     assert surface == kw.Surface((1, 2, 3, 0))
     assert surface == (1, 2, 3, 0)
-    assert surface == {0, 1, 2, 3}
+    assert (surface == {0, 1, 2, 3}) is False
     assert surface is not None and surface != None
     zero_c = kw.Surface((1, 2, 0, 3))
-    with pytest.warns(UserWarning, match="c = 0"):
-        assert zero_c.to_lambda()(4, 5) == 0
+    with pytest.raises(ValueError, match="vertical plane"):
+        zero_c.to_lambda()
     for metric in (kw.mav, kw.msv, kw.mrv):
         with pytest.raises(ZeroDivisionError, match="0 points"):
             metric(lambda x: x, lambda x: x, 2, 1, 1)

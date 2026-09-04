@@ -142,8 +142,7 @@ def test_surface_construction_equality_metrics_and_copy():
 
     with pytest.raises(ValueError):
         kw.Surface((1, 2))
-    with pytest.raises(TypeError):
-        surface == "invalid"
+    assert (surface == "invalid") is False
 
     assert kw.mav(lambda x: x, lambda x: x + 1, 0, 2, 1) == pytest.approx(1)
     assert kw.msv(lambda x: x, lambda x: x + 2, 0, 2, 1) == pytest.approx(4)

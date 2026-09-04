@@ -2,6 +2,7 @@ from __future__ import annotations
 import numpy as np
 import warnings
 from contextlib import contextmanager
+from copy import copy as shallow_copy
 from math import sqrt
 from typing import Union, Tuple, List, Optional, Any, Callable, Iterable
 from kiwicalc.core.interfaces import IPlottable3D, IScatterable3D
@@ -30,6 +31,10 @@ class Surface(Surface3D):
                 self.__a, self.__b, self.__c, self.__d = (coefficients[0], coefficients[1], coefficients[2], 0)
             else:
                 raise ValueError(f'Invalid number of coefficients in coefficients of surface. Got {len(coefficients)}, expected 4 or 3')
+        else:
+            raise TypeError('Surface coefficients must be a string or an iterable of three or four values')
+        if self.__a == self.__b == self.__c == 0:
+            raise ValueError('A plane must have at least one non-zero normal coefficient')
 
     @property
     def a(self):
@@ -57,32 +62,42 @@ class Surface(Surface3D):
         :return: Returns a list of the coordinates of the intersection. If get_point = True, returns corresponding
         point object.
         """
-        general_point = vector.general_point('t')
-        expression = (
-            self.__a * general_point[0]
-            + self.__b * general_point[1]
-            + self.__c * general_point[2]
-            + self.__d
-        )
-        t_solution = LinearEquation(f'{expression} = 0', variables=('t',), calc_now=True).solution
-        for polynomial in general_point:
-            polynomial.assign(t=t_solution)
-        if get_point:
-            return Point((polynomial.expressions[0].coefficient for polynomial in general_point))
-        return [polynomial.expressions[0].coefficient for polynomial in general_point]
+        if not isinstance(vector, Vector):
+            raise TypeError('intersection expects a Vector')
+        if len(vector.direction) != 3 or len(vector.start_coordinate) != 3:
+            raise ValueError('Plane intersections require a three-dimensional vector')
+        normal = np.asarray((self.__a, self.__b, self.__c), dtype=float)
+        origin = np.asarray(vector.start_coordinate, dtype=float)
+        direction = np.asarray(vector.direction, dtype=float)
+        denominator = float(normal @ direction)
+        numerator = -float(normal @ origin + self.__d)
+        tolerance = np.finfo(float).eps * max(1.0, np.linalg.norm(normal) * np.linalg.norm(direction)) * 10
+        if abs(denominator) <= tolerance:
+            return None
+        coordinates = (origin + (numerator / denominator) * direction).tolist()
+        return Point(coordinates) if get_point else coordinates
 
     def __str__(self) -> str:
         """Getting the string representation of the algebraic formula of the surface. ax + by + cz + d = 0"""
-        accumulator = f'{self.__a}'
-        return accumulator + ''.join((f'+{val}{var}' if val > 0 else f'-{val}{var}' for val, var in zip((self.__b, self.__c, self.__d), ('x', 'y', 'z', '')) if val != 0))
+        terms = []
+        for coefficient, variable in ((self.__a, 'x'), (self.__b, 'y'), (self.__c, 'z'), (self.__d, '')):
+            if coefficient == 0:
+                continue
+            sign = '-' if coefficient < 0 else '+'
+            magnitude = abs(coefficient)
+            value = '' if variable and magnitude == 1 else str(magnitude)
+            terms.append((sign, f'{value}{variable}'))
+        first_sign, first_value = terms[0]
+        expression = ('' if first_sign == '+' else '-') + first_value
+        expression += ''.join(sign + value for sign, value in terms[1:])
+        return f'{expression}=0'
 
     def __repr__(self):
         return f'Surface("{self.__str__()}")'
 
     def to_lambda(self):
         if self.__c == 0:
-            warnings.warn('c = 0 might lead to unexpected behaviors in this version.')
-            return lambda x, y: 0
+            raise ValueError('This vertical plane cannot be represented as z = f(x, y); use sample() or plot() instead')
         return lambda x, y: (-self.__a * x - self.__b * y - self.__d) / self.__c
 
     def _sample_plane(self, start=-3, stop=3, resolution=None):
@@ -131,21 +146,29 @@ class Surface(Surface3D):
         return self.plot(*args, **kwargs)
 
     def __eq__(self, other):
-        """Equating between surfaces. Surfaces are equal if they have the same a,b,c,d coefficients """
+        """Return whether two coefficient collections describe the same plane."""
         if other is None:
             return False
         if isinstance(other, Surface):
-            return (self.__a, self.__b, self.__c, self.__d) == (other.__a, other.__b, other.__c, other.__d)
-        if isinstance(other, list):
-            return [self.__a, self.__b, self.__c, self.__d] == other
-        if isinstance(other, tuple):
-            return (self.__a, self.__b, self.__c, self.__d) == other
-        if isinstance(other, set):
-            return {self.__a, self.__b, self.__c, self.__d} == other
-        raise TypeError(f"Invalid type '{type(other)}' for checking equality with object of instance of class Surface.Expected types 'Surface', 'list', 'tuple', 'set'. ")
+            other_coefficients = (other.__a, other.__b, other.__c, other.__d)
+        elif isinstance(other, (list, tuple, np.ndarray)):
+            if len(other) not in (3, 4):
+                return False
+            other_coefficients = tuple(other) if len(other) == 4 else (*other, 0)
+        else:
+            return NotImplemented
+        left = np.asarray((self.__a, self.__b, self.__c, self.__d), dtype=float)
+        right = np.asarray(other_coefficients, dtype=float)
+        left_index = next(index for index, value in enumerate(left[:3]) if value != 0)
+        right_nonzero = np.flatnonzero(right[:3])
+        if right_nonzero.size == 0:
+            return False
+        ratio = right[int(right_nonzero[0])] / left[left_index]
+        return bool(np.allclose(right, left * ratio))
 
     def __ne__(self, other):
-        return not self.__eq__(other)
+        result = self.__eq__(other)
+        return NotImplemented if result is NotImplemented else not result
 
 def mav(func1: Callable, func2: Callable, start: float, stop: float, step: float):
     """ Mean absolute value"""
@@ -182,15 +205,9 @@ def mrv(func1: Callable, func2: Callable, start: float, stop: float, step: float
 
 @contextmanager
 def copy(expression):
+    """Yield a shallow copy while retaining the historical context-manager API."""
+    copy_of_expression = shallow_copy(expression)
     try:
-        copy_method = getattr(expression, '__copy__', None)
-        if callable(copy_method):
-            copy_of_expression = expression.__copy__()
-            yield copy_of_expression
-        else:
-            copy_method = getattr(expression, 'copy', None)
-            if callable(copy_method):
-                copy_of_expression = expression.copy()
-                yield copy_of_expression
+        yield copy_of_expression
     finally:
         del copy_of_expression

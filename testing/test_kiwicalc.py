@@ -236,14 +236,14 @@ class TestMatrix(unittest.TestCase):
     def test_min(self):
         my_matrix = [1, 2, 3, 4, 5]
         matrix_obj = kw.Matrix(my_matrix)
-        self.assertEqual(min(matrix_obj), matrix_obj.min())
+        self.assertEqual(min(my_matrix), matrix_obj.min())
         other_matrix = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
         self.assertEqual(1, kw.Matrix(other_matrix).min())
 
     def test_max(self):
         my_matrix = [1, 2, 3, 4, 5]
         matrix_obj = kw.Matrix(my_matrix)
-        self.assertEqual(max(matrix_obj), matrix_obj.max())
+        self.assertEqual(max(my_matrix), matrix_obj.max())
         other_matrix = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
         self.assertEqual(9, kw.Matrix(other_matrix).max())
 

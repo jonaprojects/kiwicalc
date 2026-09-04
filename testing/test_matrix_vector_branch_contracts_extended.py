@@ -17,7 +17,9 @@ def test_flat_matrix_mapping_copy_and_aggregates():
     assert matrix.max() == 3
     assert matrix.min() == 1
     matrix.apply_to_all(lambda value: value * 2)
-    assert matrix.matrix == [6, 2, 4]
+    assert matrix.matrix == [[6, 2, 4]]
+    assert matrix.sum() == 12
+    assert matrix.transpose() == [[6], [2], [4]]
     copied = matrix.__copy__()
     assert copied.matrix == matrix.matrix and copied is not matrix
 
@@ -71,17 +73,17 @@ def test_matrix_equality_false_branches():
     assert matrix == ((1, 2), (3, 4))
 
 
-def test_matrix_add_subtract_flexible_and_warning_branches():
+def test_matrix_add_subtract_flexible_and_error_branches():
     assert kw.Matrix([[1, 2]]).add([[3, 4]]) == [[4, 6]]
     assert kw.Matrix([[4, 6]]).subtract(((1, 2),)) == [[3, 4]]
-    with pytest.warns(UserWarning, match="different"):
-        assert kw.Matrix([[1, 2]]).add([[1]]) is None
-    with pytest.warns(UserWarning, match="Expected types"):
-        assert kw.Matrix([[1]]).add(object()) is None
-    with pytest.warns(UserWarning, match="different"):
-        assert kw.Matrix([[1, 2]]).subtract([[1]]) is None
-    with pytest.warns(UserWarning, match="Expected types"):
-        assert kw.Matrix([[1]]).subtract(object()) is None
+    with pytest.raises(ValueError, match="different shapes"):
+        kw.Matrix([[1, 2]]).add([[1]])
+    with pytest.raises(TypeError, match="invalid type"):
+        kw.Matrix([[1]]).add(object())
+    with pytest.raises(ValueError, match="different shapes"):
+        kw.Matrix([[1, 2]]).subtract([[1]])
+    with pytest.raises(TypeError, match="invalid type"):
+        kw.Matrix([[1]]).subtract(object())
 
 
 def test_matrix_filter_map_foreach_and_ordering_protocols():
@@ -135,8 +137,8 @@ def test_jacobian_and_polynomial_matrix_branches():
     functions = [kw.Poly("x^2+y"), kw.Poly("x-y^2")]
     jacobian = generate_jacobian(functions, ("x", "y"))
     assert len(jacobian) == 2 and len(jacobian[0]) == 2
-    with pytest.raises(ValueError, match="equal number"):
-        generate_jacobian(functions, ("x",))
+    rectangular = generate_jacobian(functions, ("x",))
+    assert len(rectangular) == 2 and len(rectangular[0]) == 1
     approximate = approximate_jacobian(
         [lambda x, y: x + y, lambda x, y: x * y], [2.0, 3.0]
     )
