@@ -40,7 +40,17 @@ from kiwicalc.expressions.mono import Mono
 class Var(Mono):
 
     def __init__(self, variable='x'):
+        if not isinstance(variable, str):
+            raise TypeError('variable must be a string')
+        if not variable:
+            raise ValueError('variable cannot be empty')
+        self._variable_name = variable
         super().__init__(coefficient=1, variables_dict={variable: 1})
+
+    @property
+    def name(self):
+        """The stable symbolic name represented by this variable."""
+        return self._variable_name
 
     def __iadd__(self, other):
         return super().__add__(other)

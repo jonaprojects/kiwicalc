@@ -17,7 +17,7 @@ from kiwicalc.probability.theory import combinations as combinations
 
 __all__ = [
     # Core
-    'TRIGONOMETRY_CONSTANTS', 'MATHEMATICAL_CONSTANTS', 'IExpression',
+    'TRIGONOMETRY_CONSTANTS', 'MATHEMATICAL_CONSTANTS', 'IExpression', 'IVariable',
     'IPlottable', 'IScatterable', 'IPlottable3D', 'IScatterable3D',
     'Range', 'RangeCollection', 'RangeOR', 'RangeAND', 'create_range',
     'factorial', 'float_gcd', 'gamma', 'round_decimal', 'to_lambda', 'decimal_range',
@@ -82,6 +82,16 @@ __all__ = [
     'Distribution', 'DiscreteDistribution', 'ContinuousDistribution', 'Bernoulli',
     'Binomial', 'Geometric', 'Hypergeometric', 'Poisson', 'DiscreteUniform',
     'Categorical', 'Uniform', 'ContinuousUniform', 'Normal', 'Gaussian', 'Exponential',
+    'ContinuousFormulaDistribution', 'DiscreteFormulaDistribution', 'distribution',
+    'ProbabilityEstimate', 'MultivariateDistribution',
+    'MultivariateDiscreteDistribution', 'MultivariateContinuousDistribution',
+    'JointDiscreteDistribution', 'IndependentJointDistribution',
+    'ProductDistribution', 'Multinomial', 'Dirichlet', 'MultivariateNormal',
+    'ConfidenceInterval', 'TestResult', 'mean_confidence_interval',
+    'confidence_interval', 'mean_test', 'one_sample_t_test', 'compare_means',
+    'two_sample_t_test', 'proportion_confidence_interval', 'proportion_test',
+    'compare_proportions', 'chi_square_test', 'chi_square_independence',
+    'one_way_anova', 'anova', 'correlation_test',
     # Numeric & Calculus
     'newton_raphson', 'halleys_method', 'secant_method', 'inverse_interpolation',
     'laguerre_method', 'durand_kerner', 'durand_kerner2', 'ostrowski_method',
@@ -103,6 +113,7 @@ __all__ = [
     'Graph', 'Graph2D', 'Graph3D',
     'GraphAnimation', 'GraphInteraction',
     'PlotTheme', 'THEMES', 'available_themes', 'get_theme',
+    'plot_distribution', 'scatter_distribution',
     # PDF
     'PDFWorksheet', 'PDFPage', 'PDFExercise', 'worksheet', 'create_pdf', 'create_pages',
     'PDFMath', 'PDFPlot', 'PDFText', 'PDFArray', 'PDFMatrix', 'PDFVector',

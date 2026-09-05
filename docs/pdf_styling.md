@@ -189,6 +189,6 @@ Math and plots are still raster images. Tagged document structure, accessible
 formula alternatives, arbitrary rich-text markup, and vector embedding are not
 provided. Use good text/background contrast, and don't rely on color alone.
 
-`examples/pdf_styling.ipynb` is an executable, git-ignored demonstration. Regression
+`examples/pdf_demos/pdf_styling.ipynb` is an executable, git-ignored demonstration. Regression
 tests cover style validation, overrides, all batch families, math inheritance,
 plain/rich parity, hanging numbers, narrow-page overflow, and figure ownership.

@@ -49,6 +49,26 @@ The same functions support axes, weights, degrees of freedom, and explicit missi
 value policies. Frequency, contingency, covariance, Pearson, and Spearman tools are
 included. See the [descriptive statistics guide](docs/descriptive_statistics.md).
 
+Statistical inference returns readable, consistent result objects:
+
+```python
+interval = kw.confidence_interval(scores, confidence=0.95)
+test = kw.mean_test(scores, expected=80)
+
+interval.as_tuple()
+test.p_value
+test.significant()
+
+kw.compare_means(control, treatment)
+kw.proportion_test(63, 100, expected=0.5)
+kw.chi_square_independence(count_table)
+kw.one_way_anova(group_a, group_b, group_c)
+```
+
+Student-t and z inference, Wilson proportion intervals, Welch and paired tests,
+chi-square procedures, one-way ANOVA, and correlation tests are covered in the
+[statistical inference guide](docs/statistical_inference.md).
+
 Finite probability experiments can be modeled directly:
 
 ```python
@@ -81,6 +101,24 @@ measurements.sample(500, random_state=42)
 
 See the [probability distributions guide](docs/probability_distributions.md) for
 the discrete and continuous families, vectorized evaluation, and sampling API.
+
+Multidimensional models use a separate vector-oriented API:
+
+```python
+model = kw.MultivariateNormal(
+    mean=[0, 0],
+    covariance=[[1, 0.6], [0.6, 1]],
+)
+
+model.pdf([0, 0])
+model.marginal(0)
+model.conditional(observed_indices=[0], observed_values=[1])
+model.sample(500, random_state=42)
+```
+
+Finite joint distributions, independent products, multinomial counts, Dirichlet
+simplexes, and multivariate normals are documented in the
+[multidimensional probability guide](docs/multivariate_distributions.md).
 
 ## Why KiwiCalc?
 
@@ -622,7 +660,7 @@ without widget extensions. Native GUI use also offers `next()`, `previous()`,
 `play()`, `pause()`, and `set_speed()`. HTML export closes the source figure to
 avoid an extra static notebook plot. Keep traces short for lightweight HTML.
 
-See the local, Git-ignored `examples/numerical_methods_for_educators.ipynb` for all
+See the local, Git-ignored `examples/numerical_demos/numerical_methods_for_educators.ipynb` for all
 six methods, convergence comparisons, animation, stalled solves, and trace limits.
 Run `python -m scripts.benchmark_tracing` for local median normal/traced timings;
 plotting is excluded and timings are not CI assertions. Regression tests compare

@@ -1,10 +1,28 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
-from typing import Union, Tuple, List, Optional, Any, Callable, TYPE_CHECKING
+from typing import (
+    Union, Tuple, List, Optional, Any, Callable, TYPE_CHECKING,
+    Protocol, runtime_checkable,
+)
 import copy
 
 if TYPE_CHECKING:
     import numpy as np
+
+
+@runtime_checkable
+class IVariable(Protocol):
+    """Structural contract for an object that identifies a named variable.
+
+    This intentionally does not inherit from :class:`IExpression`.  A variable
+    is used as a lightweight name selector by APIs such as
+    ``kiwicalc.distribution``; KiwiCalc's :class:`Var` also happens to be an
+    expression so it can participate in algebra.
+    """
+
+    @property
+    def name(self) -> str:
+        ...
 
 class IPlottable(ABC):
 

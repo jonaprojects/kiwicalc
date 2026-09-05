@@ -123,6 +123,16 @@ class Distribution:
 
     rvs = sample
 
+    def plot(self, *args, **kwargs):
+        """Plot this distribution with KiwiCalc's probability renderer."""
+        from kiwicalc.plotting.distributions import plot_distribution
+        return plot_distribution(self, *args, **kwargs)
+
+    def scatter(self, *args, **kwargs):
+        """Scatter samples from this distribution."""
+        from kiwicalc.plotting.distributions import scatter_distribution
+        return scatter_distribution(self, *args, **kwargs)
+
 
 class DiscreteDistribution(Distribution):
     """Base interface for integer or categorical probability masses."""

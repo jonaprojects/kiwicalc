@@ -32,7 +32,7 @@ Document these limitations explicitly; do not imply PDF/UA compliance.
 - Section/caption/answer-space rendering and narrow overflow tested. Visual review
   found and fixed an oversized-question heading-stranding defect; a dedicated
   regression now guards it.
-- `examples/pdf_styling.ipynb` validated and all code cells executed successfully.
+- `examples/pdf_demos/pdf_styling.ipynb` validated and all code cells executed successfully.
   All five final showcase pages and four narrow overflow pages inspected visually.
 - Full suite: 1,826 passed, 11 warnings; line coverage 94.3821%, branch coverage
   90.4075%. Both existing 90% gates passed. `git diff --check` passed.
