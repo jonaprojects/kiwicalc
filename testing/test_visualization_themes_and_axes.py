@@ -174,6 +174,35 @@ def test_graph_export_supports_png_svg_pdf_and_friendly_defaults(tmp_path):
     assert explicit.suffix == ".pdf"
 
 
+def test_graph_export_can_render_lazily_and_return_memory_formats(tmp_path):
+    graph = kw.Graph2D().theme("publication").add("x^2", label="quadratic")
+
+    png = graph.to_bytes(plot_options={"values": [-1, 0, 1], "title": "Memory"})
+    svg = graph.to_svg(render=False)
+    pdf = graph.to_bytes(format="pdf", render=False)
+    output = kw.Graph3D([lambda x, y: x + y]).save(
+        tmp_path / "surface.svg",
+        plot_options={"start": -1, "stop": 1, "step": 0.5},
+    )
+
+    assert png.startswith(b"\x89PNG")
+    assert "<svg" in svg
+    assert pdf.startswith(b"%PDF")
+    assert output.read_text(encoding="utf-8").lstrip().startswith("<?xml")
+    assert graph.ax.get_title() == "Memory"
+
+
+def test_graph_export_validates_render_and_output_options(tmp_path):
+    graph = kw.Graph2D([lambda x: x])
+
+    with pytest.raises(ValueError, match="positive finite"):
+        graph.to_bytes(dpi=0)
+    with pytest.raises(TypeError, match="render"):
+        graph.to_bytes(render="yes")
+    with pytest.raises(ValueError, match="plot_options"):
+        graph.save(tmp_path / "plot.png", render=False, plot_options={"title": "No"})
+
+
 def test_2d_theme_and_axis_configuration_survive_json_round_trip():
     graph = kw.Graph2D([kw.Ellipse(samples=20)]).theme("engineering")
     graph.plot(

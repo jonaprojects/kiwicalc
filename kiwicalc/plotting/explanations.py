@@ -95,6 +95,7 @@ def roots(source, x_values, y_values=None):
     finite = np.isfinite(y)
     scale = max(1.0, float(np.nanmax(np.abs(y[finite]))) if finite.any() else 1.0)
     near = max(1e-8, scale * 1e-5)
+    zero_tolerance = max(1e-10, np.finfo(float).eps * scale * 100)
     candidates = []
     for index in range(len(x) - 1):
         if not (finite[index] and finite[index + 1]):
@@ -105,7 +106,18 @@ def roots(source, x_values, y_values=None):
                 candidates.append(candidate)
     for index in range(1, len(x) - 1):
         if finite[index] and abs(y[index]) <= near and abs(y[index]) <= abs(y[index - 1]) and abs(y[index]) <= abs(y[index + 1]):
-            candidates.append(x[index])
+            candidate = x[index]
+            try:
+                coefficients = np.polyfit(x[index - 1:index + 2], y[index - 1:index + 2], 2)
+                if abs(coefficients[0]) > np.finfo(float).eps:
+                    vertex = -coefficients[1] / (2 * coefficients[0])
+                    if x[index - 1] <= vertex <= x[index + 1]:
+                        candidate = float(vertex)
+                value = float(as_callable(source)(candidate))
+            except (ArithmeticError, TypeError, ValueError, OverflowError, np.linalg.LinAlgError):
+                continue
+            if math.isfinite(value) and abs(value) <= zero_tolerance:
+                candidates.append(candidate)
     tolerance = max(np.ptp(x) / max(len(x) - 1, 1) * 2.5, 1e-7)
     return [0.0 if abs(value) <= tolerance else value for value in _dedupe(candidates, tolerance)]
 
@@ -114,13 +126,15 @@ def derivatives(source, x_values):
     x = np.asarray(x_values, dtype=float)
     y = evaluate(source, x)
     finite = np.isfinite(y)
-    if finite.sum() < 3:
-        return y, np.full_like(y, np.nan), np.full_like(y, np.nan)
-    filled = np.interp(x, x[finite], y[finite])
-    first = np.gradient(filled, x, edge_order=2)
-    second = np.gradient(first, x, edge_order=2)
-    first[~finite] = np.nan
-    second[~finite] = np.nan
+    first = np.full_like(y, np.nan)
+    second = np.full_like(y, np.nan)
+    boundaries = np.flatnonzero(np.diff(np.r_[False, finite, False]))
+    for start, stop in boundaries.reshape(-1, 2):
+        if stop - start < 3:
+            continue
+        segment = slice(start, stop)
+        first[segment] = np.gradient(y[segment], x[segment], edge_order=2)
+        second[segment] = np.gradient(first[segment], x[segment], edge_order=2)
     return y, first, second
 
 
@@ -294,15 +308,21 @@ def render(ax, decoration, default_values):
         return artists
     if kind == "monotonicity":
         _, first, _ = derivatives(source, x)
+        valid = np.isfinite(first)
         signs = np.where(first >= 0, 1, -1)
-        artists, start = [], 0
+        artists = []
         colors = decoration.get("colors", ("#54a24b", "#e45756"))
+        if len(colors) != 2:
+            raise ValueError("colors must contain increasing and decreasing colors")
         alpha = style.pop("alpha", 0.12)
-        for index in range(1, len(x) + 1):
-            if index == len(x) or signs[index] != signs[start]:
-                color = colors[0] if signs[start] > 0 else colors[1]
-                artists.append(ax.axvspan(x[start], x[index - 1], color=color, alpha=alpha, **style))
-                start = index
+        boundaries = np.flatnonzero(np.diff(np.r_[False, valid, False]))
+        for segment_start, segment_stop in boundaries.reshape(-1, 2):
+            start = segment_start
+            for index in range(segment_start + 1, segment_stop + 1):
+                if index == segment_stop or signs[index] != signs[start]:
+                    color = colors[0] if signs[start] > 0 else colors[1]
+                    artists.append(ax.axvspan(x[start], x[index - 1], color=color, alpha=alpha, **style))
+                    start = index
         return artists
     if kind == "solution":
         first = evaluate(source, x)
@@ -316,7 +336,9 @@ def render(ax, decoration, default_values):
         return [ax.fill_between(x, first, second, where=operators[relation], interpolate=True, label=decoration.get("label"), **style)]
     if kind == "riemann":
         left, right = map(float, decoration["interval"])
-        count = int(decoration.get("rectangles", 8))
+        count = decoration.get("rectangles", 8)
+        if not isinstance(count, int) or isinstance(count, bool):
+            raise ValueError("rectangles must be a positive integer")
         method = decoration.get("method", "midpoint")
         if count < 1:
             raise ValueError("rectangles must be at least 1")
@@ -361,11 +383,14 @@ def render(ax, decoration, default_values):
     if kind == "integral":
         y = evaluate(source, x)
         finite = np.isfinite(y)
-        y = np.where(finite, y, 0.0)
-        cumulative = np.zeros_like(y)
-        cumulative[1:] = np.cumsum((y[:-1] + y[1:]) * np.diff(x) / 2)
-        cumulative += float(decoration.get("constant", 0))
-        cumulative[~finite] = np.nan
+        constant = float(decoration.get("constant", 0))
+        cumulative = np.full_like(y, np.nan)
+        boundaries = np.flatnonzero(np.diff(np.r_[False, finite, False]))
+        for start, stop in boundaries.reshape(-1, 2):
+            cumulative[start] = constant
+            if stop - start > 1:
+                increments = (y[start:stop - 1] + y[start + 1:stop]) * np.diff(x[start:stop]) / 2
+                cumulative[start + 1:stop] = constant + np.cumsum(increments)
         line, = ax.plot(x, cumulative, label=decoration.get("label", "integral"), **style)
         return [line]
     raise ValueError(f"Unknown explanation kind: {kind}")

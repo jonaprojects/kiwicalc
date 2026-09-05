@@ -1,7 +1,10 @@
 """Scoped visualization themes for KiwiCalc graphs."""
 
 from dataclasses import asdict, dataclass, replace
+import math
 from typing import Any, Dict, Mapping, Optional, Tuple, Union
+
+from matplotlib.colors import is_color_like
 
 
 @dataclass(frozen=True)
@@ -30,6 +33,30 @@ class PlotTheme:
     )
     grid: bool = True
     minor_grid: bool = False
+
+    def __post_init__(self) -> None:
+        positive = ("font_size", "title_size", "label_size", "line_width", "marker_size")
+        for name in positive:
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+                raise ValueError(f"{name} must be a positive finite number")
+        for name in ("grid_alpha", "minor_grid_alpha"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 <= value <= 1:
+                raise ValueError(f"{name} must be between 0 and 1")
+        colors = {
+            "figure_facecolor": self.figure_facecolor,
+            "axes_facecolor": self.axes_facecolor,
+            "foreground": self.foreground,
+            "grid_color": self.grid_color,
+        }
+        for name, color in colors.items():
+            if not is_color_like(color):
+                raise ValueError(f"{name} must be a Matplotlib color")
+        if not self.color_cycle:
+            raise ValueError("color_cycle must contain at least one color")
+        if any(not is_color_like(color) for color in self.color_cycle):
+            raise ValueError("color_cycle must contain only Matplotlib colors")
 
     def with_overrides(self, **overrides: Any) -> 'PlotTheme':
         """Return a modified copy without changing this theme."""

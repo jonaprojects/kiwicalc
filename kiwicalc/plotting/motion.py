@@ -129,7 +129,7 @@ def _prepare(graph, source, initial, parameter, x_values, label, title, line_sty
     line, = graph.ax.plot(frame_x, frame_y, label=label, **style)
     graph._artists.append(line)
     if legend_requested:
-        graph.ax.legend()
+        graph._legend_artist = graph.ax.legend()
     return line
 
 
@@ -206,6 +206,9 @@ class GraphInteraction:
         return self.slider.val
 
     def set_value(self, value):
+        value = float(value)
+        if not self.slider.valmin <= value <= self.slider.valmax:
+            raise ValueError("value must be inside parameter_range")
         self.slider.set_val(value)
         return self
 
@@ -221,6 +224,11 @@ def animate_parameter(
     stop=10, samples=400, values=None, interval=50, repeat=True, blit=False,
     label=None, title=None, show=True, line_style=None, **plot_options,
 ):
+    if not isinstance(parameter, str) or not parameter:
+        raise ValueError("parameter must be a non-empty string")
+    interval = float(interval)
+    if not math.isfinite(interval) or interval <= 0:
+        raise ValueError("interval must be a positive finite number")
     frame_values = tuple(frames)
     if not frame_values:
         raise ValueError("frames must contain at least one parameter value")
@@ -247,7 +255,7 @@ def animate_parameter(
         return (line,)
 
     animation = FuncAnimation(
-        graph.fig, update, frames=frame_values, interval=float(interval),
+        graph.fig, update, frames=frame_values, interval=interval,
         repeat=bool(repeat), blit=bool(blit),
     )
     graph.fig.canvas.draw_idle()
@@ -263,6 +271,8 @@ def interactive_parameter(
     start=-10, stop=10, samples=400, values=None, label=None, title=None,
     show=True, line_style=None, **plot_options,
 ):
+    if not isinstance(parameter, str) or not parameter:
+        raise ValueError("parameter must be a non-empty string")
     try:
         minimum, maximum = map(float, parameter_range)
     except (TypeError, ValueError):
@@ -272,8 +282,8 @@ def interactive_parameter(
     initial = (minimum + maximum) / 2 if initial is None else float(initial)
     if not minimum <= initial <= maximum:
         raise ValueError("initial must be inside parameter_range")
-    if step is not None and float(step) <= 0:
-        raise ValueError("step must be positive")
+    if step is not None and (not math.isfinite(float(step)) or float(step) <= 0):
+        raise ValueError("step must be a positive finite number")
     if values is None:
         if int(samples) < 2:
             raise ValueError("samples must be at least 2")
@@ -284,7 +294,9 @@ def interactive_parameter(
             raise ValueError("values must contain at least two x coordinates")
 
     plot_options = dict(plot_options)
-    envelope_x, envelope_y = _motion_envelope(source, (minimum, initial, maximum), x_values, parameter)
+    envelope_parameters = np.linspace(minimum, maximum, 17)
+    envelope_x, envelope_y = _motion_envelope(source, envelope_parameters, x_values, parameter)
+    automatic_ylim = "ylim" not in plot_options
     plot_options.setdefault("xlim", envelope_x)
     plot_options.setdefault("ylim", envelope_y)
     line = _prepare(graph, source, initial, parameter, x_values, label, title, line_style, plot_options)
@@ -299,6 +311,11 @@ def interactive_parameter(
     def update(value):
         frame_x, frame_y = sample_frame(source, value, x_values, parameter)
         line.set_data(frame_x, frame_y)
+        if automatic_ylim:
+            low, high = _automatic_ylim(frame_y)
+            current_low, current_high = graph.ax.get_ylim()
+            if low < current_low or high > current_high:
+                graph.ax.set_ylim(min(low, current_low), max(high, current_high))
         next_title = _title(title, parameter, value)
         if next_title is not None:
             graph.ax.set_title(next_title)

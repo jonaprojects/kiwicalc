@@ -378,9 +378,9 @@ class Vector2D(Vector, IPlottable):
     def y_step(self):
         return self._direction_vector[1]
 
-    def plot(self, show=True, arrow_length_ratio: float=0.05, fig=None, ax=None):
+    def plot(self, show=True, arrow_length_ratio: float=0.05, fig=None, ax=None, label=None, **style):
         from kiwicalc.plotting.plots import plot_vector_2d
-        return plot_vector_2d(self._start_coordinate[0], self._start_coordinate[1], self._direction_vector[0], self._direction_vector[1], show=show, fig=fig, ax=ax)
+        return plot_vector_2d(self._start_coordinate[0], self._start_coordinate[1], self._direction_vector[0], self._direction_vector[1], show=show, fig=fig, ax=ax, label=label, **style)
 
 class Vector3D(Vector, IPlottable):
 
@@ -405,11 +405,11 @@ class Vector3D(Vector, IPlottable):
     def z_step(self):
         return self._direction_vector[2]
 
-    def plot(self, show=True, arrow_length_ratio: float=0.05, fig=None, ax=None):
+    def plot(self, show=True, arrow_length_ratio: float=0.05, fig=None, ax=None, label=None, **style):
         from kiwicalc.plotting.plots import plot_vector_3d
         u, v, w = (self._direction_vector[0], self._direction_vector[1], self._direction_vector[2])
         start_x, start_y, start_z = (self._start_coordinate[0], self._start_coordinate[1], self._start_coordinate[2])
-        plot_vector_3d((start_x, start_y, start_z), (u, v, w), arrow_length_ratio=arrow_length_ratio, show=show, fig=fig, ax=ax)
+        return plot_vector_3d((start_x, start_y, start_z), (u, v, w), arrow_length_ratio=arrow_length_ratio, show=show, fig=fig, ax=ax, label=label, **style)
 
 class VectorCollection:
 

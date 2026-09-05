@@ -25,6 +25,7 @@ from kiwicalc.plotting.axis import (
 )
 from kiwicalc.plotting.themes import PlotTheme, ThemeInput, apply_theme, get_theme
 from kiwicalc.plotting.motion import GraphAnimation, GraphInteraction
+from kiwicalc.plotting.sampling import normalize_sampling, sample_for_plot
 
 
 FillBoundary = Union[int, float, str, Callable[[float], Any], IExpression, Function, Curve2D]
@@ -34,15 +35,50 @@ FieldDensity = Union[int, Sequence[int]]
 ContourLevels = Union[int, Iterable[float]]
 
 
+def _validate_positive_step(step):
+    try:
+        numeric = float(step)
+    except (TypeError, ValueError):
+        raise ValueError('step must be a positive finite number')
+    if not math.isfinite(numeric) or numeric <= 0:
+        raise ValueError('step must be a positive finite number')
+
+
+def _sample_plot_points(func, start, stop, step, ymin, ymax, values, sampling,
+                        tolerance, max_points, max_depth):
+    mode = normalize_sampling(sampling)
+    if mode == 'fixed':
+        if values is None:
+            _validate_positive_step(step)
+        sampled_values, results = process_to_points(
+            func, start, stop, step, ymin, ymax, values
+        )
+        return sampled_values, results, None
+    sample = sample_for_plot(
+        func, start=start, stop=stop, step=step, values=values,
+        sampling=mode, tolerance=tolerance, max_points=max_points,
+        max_depth=max_depth,
+    )
+    return sample.x, sample.y, sample
+
+
 def _figure_and_axes(fig=None, ax=None, projection=None):
     if ax is not None:
+        if fig is not None and ax.figure is not fig:
+            raise ValueError("fig and ax must refer to the same figure")
+        if projection == '3d' and not hasattr(ax, 'zaxis'):
+            raise ValueError("a 3D plotting method requires 3D axes")
         return ax.figure, ax
     if fig is None:
         fig = plt.figure() if projection == '3d' else plt.subplots(figsize=(10, 8))[0]
     if projection == '3d':
-        ax = fig.add_subplot(111, projection='3d')
+        ax = next((candidate for candidate in fig.axes if hasattr(candidate, 'zaxis')), None)
+        if ax is None:
+            ax = fig.add_subplot(111, projection='3d')
     else:
-        ax = fig.axes[0] if fig.axes else fig.add_subplot(111)
+        ax = next((candidate for candidate in fig.axes if not hasattr(candidate, 'zaxis')), None)
+        if ax is None:
+            ax = fig.add_subplot(111)
     return fig, ax
 
 
@@ -85,7 +121,8 @@ def plot_implicit_curve_2d(curve, show=True, fig=None, ax=None, label=None, **st
         linewidth = style.get('linewidths', style.get('linewidth'))
         if linewidth is not None:
             proxy_style['linewidth'] = linewidth
-        ax.plot([], [], label=label, **proxy_style)
+        proxy, = ax.plot([], [], label=label, **proxy_style)
+        contour._kiwicalc_proxy = proxy
     if show:
         plt.show()
     return contour
@@ -124,60 +161,82 @@ def plot_surface_3d(surface, show=True, fig=None, ax=None, label=None, wireframe
         plt.show()
     return artist
 
-def scatter_dots(x_values, y_values, title: str='', ymin: float=-10, ymax: float=10, color=None, show_axis=True, show=True, fig=None, ax=None):
+def scatter_dots(x_values, y_values, title: str='', ymin: float=-10, ymax: float=10, color=None, show_axis=True, show=True, fig=None, ax=None, **style):
     if (length := len(x_values)) != (y_length := len(y_values)):
         raise ValueError(f'You must enter an equal number of x and y values. Got {length} x values and {y_length} y values.')
-    if None in (fig, ax):
-        fig, ax = create_grid()
+    fig, ax = _figure_and_axes(fig, ax)
     if show_axis:
         draw_axis(ax)
-    plt.title(title, fontsize=14)
-    plt.ylim(ymin, ymax)
-    plt.scatter(x=x_values, y=y_values, s=90, c=color)
+    ax.set_title(title, fontsize=14)
+    ax.set_ylim(ymin, ymax)
+    style.setdefault('s', 90)
+    if color is not None:
+        style.setdefault('c', color)
+    artist = ax.scatter(x=x_values, y=y_values, **style)
     if show:
         plt.show()
+    return artist
 
-def scatter_dots_3d(x_values, y_values, z_values, title: str='', xlabel: str='X Values', ylabel: str='Y Values', zlabel: str='Z Values', fig=None, ax=None, show=True, write_labels=True):
-    if None in (fig, ax):
-        fig = plt.figure()
-        ax = fig.add_subplot(111, projection='3d')
-    if title:
-        plt.title(title)
-    ax.scatter(x_values, y_values, z_values)
+def scatter_dots_3d(x_values, y_values, z_values, title: str='', xlabel: str='X Values', ylabel: str='Y Values', zlabel: str='Z Values', fig=None, ax=None, show=True, write_labels=True, label=None, **style):
+    lengths = tuple(map(len, (x_values, y_values, z_values)))
+    if len(set(lengths)) != 1:
+        raise ValueError("x, y, and z values must have equal lengths")
+    fig, ax = _figure_and_axes(fig, ax, projection='3d')
+    ax.set_title(title)
+    artist = ax.scatter(x_values, y_values, z_values, label=label, **style)
     if write_labels:
         ax.set_xlabel(xlabel)
         ax.set_ylabel(ylabel)
         ax.set_zlabel(zlabel)
     if show:
         plt.show()
+    return artist
 
-def scatter_function(func: Union[Callable, str], start: float=-10, stop: float=10, step: float=0.5, ymin: float=-10, ymax: float=10, title='', color=None, show_axis=True, show=True, fig=None, ax=None, values=None):
-    if isinstance(func, str):
-        func = Function(func)
-    if values is not None:
-        results = [func(value) for value in values]
+def scatter_function(func: Union[Callable, str], start: float=-10, stop: float=10, step: float=0.5, ymin: float=-10, ymax: float=10, title='', color=None, show_axis=True, show=True, fig=None, ax=None, values=None, sampling='fixed', tolerance=1e-3, max_points=5000, max_depth=12):
+    mode = normalize_sampling(sampling)
+    sample = None
+    if mode == 'fixed':
+        if isinstance(func, str):
+            func = Function(func)
+        if values is not None:
+            results = [func(value) for value in values]
+        else:
+            _validate_positive_step(step)
+            values, results = values_in_range(func, start, stop, step)
     else:
-        values, results = values_in_range(func, start, stop, step)
-    scatter_dots(values, results, title=title, ymin=ymin, ymax=ymax, color=color, show_axis=show_axis, show=show, fig=fig, ax=ax)
+        values, results, sample = _sample_plot_points(
+            func, start, stop, step, ymin, ymax, values, mode,
+            tolerance, max_points, max_depth,
+        )
+    artist = scatter_dots(values, results, title=title, ymin=ymin, ymax=ymax, color=color, show_axis=show_axis, show=show, fig=fig, ax=ax)
+    if sample is not None:
+        artist.kiwicalc_sample = sample
+    return artist
 
-def scatter_function_3d(func: 'Union[Callable, str, IExpression]', start: float=-3, stop: float=3, step: float=0.3, xlabel: str='X Values', ylabel: str='Y Values', zlabel: str='Z Values', show=True, fig=None, ax=None, write_labels=True, meshgrid=None, title=''):
+def scatter_function_3d(func: 'Union[Callable, str, IExpression]', start: float=-3, stop: float=3, step: float=0.3, xlabel: str='X Values', ylabel: str='Y Values', zlabel: str='Z Values', show=True, fig=None, ax=None, write_labels=True, meshgrid=None, title='', label=None, **style):
     if isinstance(func, str):
         func = Function(func)
     if meshgrid is None:
+        _validate_positive_step(step)
         x = y = np.arange(start, stop, step)
         X, Y = np.meshgrid(x, y)
     else:
         X, Y = meshgrid
-    zs = np.array([])
-    for x_value, y_value in zip(np.ravel(X), np.ravel(Y)):
+    X, Y = np.asarray(X, dtype=float), np.asarray(Y, dtype=float)
+    if X.shape != Y.shape:
+        raise ValueError("meshgrid arrays must have matching shapes")
+    zs = np.empty(X.size, dtype=float)
+    for index, (x_value, y_value) in enumerate(zip(np.ravel(X), np.ravel(Y))):
         try:
-            zs = np.append(zs, func(x_value, y_value))
-        except:
-            zs = np.append(zs, np.nan)
+            value = float(func(x_value, y_value))
+            zs[index] = value if math.isfinite(value) else np.nan
+        except (ArithmeticError, TypeError, ValueError, OverflowError):
+            zs[index] = np.nan
     Z = zs.reshape(X.shape)
-    scatter_dots_3d(X, Y, Z, fig=fig, ax=ax, title=title, show=show, xlabel=xlabel, ylabel=ylabel, zlabel=zlabel, write_labels=write_labels)
+    return scatter_dots_3d(X.ravel(), Y.ravel(), Z.ravel(), fig=fig, ax=ax, title=title, show=show, xlabel=xlabel, ylabel=ylabel, zlabel=zlabel, write_labels=write_labels, label=label, **style)
 
 def scatter_functions_3d(functions: 'Iterable[Union[Callable, str, IExpression]]', start: float=-5, stop: float=5, step: float=0.1, xlabel: str='X Values', ylabel: str='Y Values', zlabel: str='Z Values', show=True, fig=None, ax=None):
+    _validate_positive_step(step)
     fig, ax = _figure_and_axes(fig, ax, projection='3d')
     x = y = np.arange(start, stop, step)
     meshgrid = np.meshgrid(x, y)
@@ -200,12 +259,14 @@ def scatter_functions_3d(functions: 'Iterable[Union[Callable, str, IExpression]]
         plt.show()
     return artists
 
-def plot_function(func: Union[Callable, str], start: float=-10, stop: float=10, step: float=0.01, ymin: float=-10, ymax: float=10, title=None, show_axis=True, show=True, fig=None, ax=None, formatText=False, values=None, label=None, **style):
-    if None in (fig, ax):
-        fig, ax = create_grid()
+def plot_function(func: Union[Callable, str], start: float=-10, stop: float=10, step: float=0.01, ymin: float=-10, ymax: float=10, title=None, show_axis=True, show=True, fig=None, ax=None, formatText=False, values=None, label=None, sampling='fixed', tolerance=1e-3, max_points=5000, max_depth=12, **style):
+    fig, ax = _figure_and_axes(fig, ax)
     if show_axis:
         draw_axis(ax)
-    values, results = process_to_points(func, start, stop, step, ymin, ymax, values)
+    values, results, sample = _sample_plot_points(
+        func, start, stop, step, ymin, ymax, values, sampling,
+        tolerance, max_points, max_depth,
+    )
     if title is not None:
         if formatText:
             ax.set_title(f'${format_matplot(title)}$', fontsize=14)
@@ -213,11 +274,15 @@ def plot_function(func: Union[Callable, str], start: float=-10, stop: float=10, 
             ax.set_title(f'{title}', fontsize=14)
     ax.set_ylim(ymin, ymax)
     line, = ax.plot(values, results, label=label, **style)
+    if sample is not None:
+        line.kiwicalc_sample = sample
     if show:
         plt.show()
     return line
 
 def plot_function_3d(given_function: 'Union[Callable, str, IExpression]', start: float=-3, stop: float=3, step: float=0.3, xlabel: str='X Values', ylabel: str='Y Values', zlabel: str='Z Values', show=True, fig=None, ax=None, write_labels=True, meshgrid=None, label=None, wireframe=False, **style):
+    if meshgrid is None:
+        _validate_positive_step(step)
     if step < 0.1:
         step = 0.3
         warnings.warn('step parameter modified to 0.3 to avoid lag when plotting in 3D')
@@ -233,24 +298,25 @@ def plot_function_3d(given_function: 'Union[Callable, str, IExpression]', start:
             pass
         else:
             raise ValueError(f"This type of algebraic expression isn't supported for plotting in 3D!")
-    if fig is None:
-        fig = plt.figure()
-    if ax is None:
-        ax = fig.add_subplot(111, projection='3d')
+    fig, ax = _figure_and_axes(fig, ax, projection='3d')
     if meshgrid is None:
         x = y = np.arange(start, stop, step)
         X, Y = np.meshgrid(x, y)
     else:
         X, Y = meshgrid
-    zs = np.array([])
-    for x_value, y_value in zip(np.ravel(X), np.ravel(Y)):
+    X, Y = np.asarray(X, dtype=float), np.asarray(Y, dtype=float)
+    if X.shape != Y.shape:
+        raise ValueError("meshgrid arrays must have matching shapes")
+    zs = np.empty(X.size, dtype=float)
+    for index, (x_value, y_value) in enumerate(zip(np.ravel(X), np.ravel(Y))):
         try:
             result = given_function(x_value, y_value)
             if result is None:
                 result = np.nan
-            zs = np.append(zs, result)
-        except ValueError:
-            zs = np.append(zs, np.nan)
+            result = float(result)
+            zs[index] = result if math.isfinite(result) else np.nan
+        except (ArithmeticError, TypeError, ValueError, OverflowError):
+            zs[index] = np.nan
     Z = zs.reshape(X.shape)
     artist = ax.plot_wireframe(X, Y, Z, **style) if wireframe else ax.plot_surface(X, Y, Z, **style)
     if label:
@@ -264,6 +330,7 @@ def plot_function_3d(given_function: 'Union[Callable, str, IExpression]', start:
     return artist
 
 def plot_functions_3d(functions: 'Iterable[Union[Callable, str, IExpression]]', start: float=-5, stop: float=5, step: float=0.1, xlabel: str='X Values', ylabel: str='Y Values', zlabel: str='Z Values', show=True, fig=None, ax=None):
+    _validate_positive_step(step)
     fig, ax = _figure_and_axes(fig, ax, projection='3d')
     x = y = np.arange(start, stop, step)
     artists = []
@@ -276,17 +343,20 @@ def plot_functions_3d(functions: 'Iterable[Union[Callable, str, IExpression]]', 
         plt.show()
     return artists
 
-def plot_functions(functions, start: float=-10, stop: float=10, step: float=0.01, ymin: float=-10, ymax: float=10, title: str=None, formatText: bool=False, show_axis: bool=True, show: bool=True, with_legend=True):
-    fig, ax = create_grid()
+def plot_functions(functions, start: float=-10, stop: float=10, step: float=0.01, ymin: float=-10, ymax: float=10, title: str=None, formatText: bool=False, show_axis: bool=True, show: bool=True, with_legend=True, fig=None, ax=None, sampling='fixed', tolerance=1e-3, max_points=5000, max_depth=12):
+    mode = normalize_sampling(sampling)
+    _validate_positive_step(step)
+    fig, ax = _figure_and_axes(fig, ax)
     if show_axis:
         draw_axis(ax)
-    values = np.arange(start, stop, step)
-    plt.ylim(ymin, ymax)
+    values = np.arange(start, stop, step) if mode == 'fixed' else None
+    ax.set_ylim(ymin, ymax)
     if title is not None:
         if formatText:
-            plt.title(f'${format_matplot(title)}$', fontsize=14)
+            ax.set_title(f'${format_matplot(title)}$', fontsize=14)
         else:
-            plt.title(title, fontsize=14)
+            ax.set_title(title, fontsize=14)
+    artists = []
     for given_function in functions:
         if isinstance(given_function, str):
             label = given_function
@@ -302,48 +372,67 @@ def plot_functions(functions, start: float=-10, stop: float=10, step: float=0.01
                 raise ValueError(f'Invalid algebraic expression for plotting: {given_function}')
         else:
             label = None
-        plt.plot(values, [given_function(value) for value in values], label=label)
+        if mode == 'fixed':
+            sampled_values = values
+            results = [given_function(value) for value in values]
+            sample = None
+        else:
+            sample = sample_for_plot(
+                given_function, start=start, stop=stop, step=step,
+                sampling=mode, tolerance=tolerance, max_points=max_points,
+                max_depth=max_depth,
+            )
+            sampled_values, results = sample.x, sample.y
+        line, = ax.plot(sampled_values, results, label=label)
+        if sample is not None:
+            line.kiwicalc_sample = sample
+        artists.append(line)
     if with_legend:
-        plt.legend()
+        handles, labels = ax.get_legend_handles_labels()
+        if handles and any(not item.startswith('_') for item in labels):
+            ax.legend()
     if show:
         plt.show()
+    return artists
 
-def scatter_functions(functions, start: float=-10, stop: float=10, step: float=0.5, ymin: float=-10, ymax: float=10, title: str=None, show_axis: bool=True, show: bool=True):
-    fig, ax = create_grid()
+def scatter_functions(functions, start: float=-10, stop: float=10, step: float=0.5, ymin: float=-10, ymax: float=10, title: str=None, show_axis: bool=True, show: bool=True, fig=None, ax=None, sampling='fixed', tolerance=1e-3, max_points=5000, max_depth=12):
+    mode = normalize_sampling(sampling)
+    _validate_positive_step(step)
+    fig, ax = _figure_and_axes(fig, ax)
     cycol = cycle('bgrcmykw')
-    values = np.arange(start, stop, step)
-    for index, current_function in enumerate(functions):
-        scatter_function(func=current_function, start=start, stop=stop, step=step, ymin=ymin, ymax=ymax, title=title, color=next(cycol), show_axis=True, show=False, fig=fig, ax=ax, values=values)
-    plt.show()
+    values = np.arange(start, stop, step) if mode == 'fixed' else None
+    artists = []
+    for current_function in functions:
+        artists.append(scatter_function(func=current_function, start=start, stop=stop, step=step, ymin=ymin, ymax=ymax, title=title, color=next(cycol), show_axis=show_axis, show=False, fig=fig, ax=ax, values=values, sampling=mode, tolerance=tolerance, max_points=max_points, max_depth=max_depth))
+    if show:
+        plt.show()
+    return artists
 
-def plot_vector_2d(x_start: float, y_start: float, x_distance: float, y_distance: float, show=True, fig=None, ax=None):
-    if None in (fig, ax):
-        fig, ax = plt.subplots(figsize=(10, 8))
-    artist = ax.arrow(x_start, y_start, x_distance, y_distance, head_width=0.1, width=0.01)
+def plot_vector_2d(x_start: float, y_start: float, x_distance: float, y_distance: float, show=True, fig=None, ax=None, label=None, **style):
+    fig, ax = _figure_and_axes(fig, ax)
+    style.setdefault('head_width', 0.1)
+    style.setdefault('width', 0.01)
+    artist = ax.arrow(x_start, y_start, x_distance, y_distance, label=label, **style)
     if show:
         plt.show()
     return artist
 
-def plot_vector_3d(starts: Tuple[float, float, float], distances: Tuple[float, float, float], arrow_length_ratio=0.08, show=True, fig=None, ax=None):
+def plot_vector_3d(starts: Tuple[float, float, float], distances: Tuple[float, float, float], arrow_length_ratio=0.08, show=True, fig=None, ax=None, label=None, **style):
     """plot a 3d vector"""
     u, v, w = distances
     start_x, start_y, start_z = starts
-    if (fig, ax) == (None, None):
-        fig = plt.figure()
-        ax = fig.add_subplot(111, projection='3d')
+    supplied = fig is not None or ax is not None
+    fig, ax = _figure_and_axes(fig, ax, projection='3d')
+    if not supplied:
         ax.set_xlim([start_x, start_x + u])
         ax.set_ylim([start_y, start_y + v])
         ax.set_zlim([start_z, start_z + w])
-    if fig is None:
-        fig = plt.figure()
-    if ax is None:
-        ax = fig.add_subplot(111, projection='3d')
-    artist = ax.quiver(start_x, start_y, start_z, u, v, w, arrow_length_ratio=arrow_length_ratio)
+    artist = ax.quiver(start_x, start_y, start_z, u, v, w, arrow_length_ratio=arrow_length_ratio, label=label, **style)
     if show:
         plt.show()
     return artist
 
-def plot_complex(*numbers: complex, title: str='', show=True):
+def plot_complex(*numbers: complex, title: str='', show=True, fig=None, ax=None, **style):
     """
     plot complex numbers on the complex plane
 
@@ -351,24 +440,37 @@ def plot_complex(*numbers: complex, title: str='', show=True):
     :param show: If set to false, the plotted
     :return: fig, ax
     """
-    fig, ax = plt.subplots(subplot_kw={'projection': 'polar'})
+    if not numbers:
+        raise ValueError('at least one complex number is required')
+    if ax is not None:
+        if fig is not None and ax.figure is not fig:
+            raise ValueError("fig and ax must refer to the same figure")
+        if getattr(ax, 'name', None) != 'polar':
+            raise ValueError('plot_complex requires polar axes')
+        fig = ax.figure
+    else:
+        if fig is None:
+            fig = plt.figure()
+        ax = fig.add_subplot(111, projection='polar')
     ax.set_title(title, va='bottom')
     ax.set_rlabel_position(-22.5)
     ax.grid(True)
-    plt.title(title)
     max_radius = abs(numbers[0])
     for c in numbers:
         radius = abs(c)
         if radius > max_radius:
             max_radius = radius
-        ax.scatter(cmath.phase(c), radius)
-    ax.set_rticks(np.linspace(0, int(max_radius) * 2, num=5))
-    ax.set_rmax(max_radius * 1.25)
+        ax.scatter(cmath.phase(c), radius, **style)
+    radial_max = max(max_radius * 1.25, 1.0)
+    ax.set_rticks(np.linspace(0, radial_max, num=5))
+    ax.set_rmax(radial_max)
     if show:
         plt.show()
     return (fig, ax)
 
 def generate_subplot_shape(num_of_functions: int):
+    if not isinstance(num_of_functions, int) or isinstance(num_of_functions, bool) or num_of_functions < 1:
+        raise ValueError('num_of_functions must be a positive integer')
     square_root = sqrt(num_of_functions)
     if square_root == int(square_root):
         return (int(square_root), int(square_root))
@@ -380,28 +482,68 @@ def generate_subplot_shape(num_of_functions: int):
     except ValueError:
         return (ceil(square_root), ceil(square_root))
 
-def plot_multiple(funcs, shape: Tuple[int, int]=None, start: float=-10, stop: float=10, step: float=0.01, ymin: float=-10, ymax: float=10, title=None, show_axis=True, show=True, values=None):
+
+def _subplot_title(function):
+    """Return descriptive formula text, never a callable's Python repr."""
+    if isinstance(function, str):
+        return function
+    if isinstance(function, Function):
+        return function.function_string
+    if isinstance(function, IExpression):
+        return str(function)
+    return None
+
+
+def plot_multiple(funcs, shape: Tuple[int, int]=None, start: float=-10, stop: float=10, step: float=0.01, ymin: float=-10, ymax: float=10, title=None, show_axis=True, show=True, values=None, subplot_titles=None, sampling='fixed', tolerance=1e-3, max_points=5000, max_depth=12):
+    mode = normalize_sampling(sampling)
     num_of_functions = len(funcs)
+    if num_of_functions < 1:
+        raise ValueError('funcs must contain at least one function')
     if shape is None:
         shape = generate_subplot_shape(num_of_functions)
-    fig, ax = plt.subplots(shape[0], shape[1])
+    try:
+        rows, columns = map(int, shape)
+    except (TypeError, ValueError):
+        raise ValueError('shape must be a (rows, columns) pair')
+    if rows < 1 or columns < 1:
+        raise ValueError('shape rows and columns must be positive')
+    if rows * columns < num_of_functions:
+        raise ValueError('shape must have room for every function')
+    if values is None:
+        _validate_positive_step(step)
+    if subplot_titles is not None:
+        subplot_titles = tuple(subplot_titles)
+        if len(subplot_titles) != num_of_functions:
+            raise ValueError('subplot_titles must contain one title per function')
+    fig, ax = plt.subplots(rows, columns, squeeze=False)
     fig.tight_layout()
     func_index = 0
-    for i in range(shape[0]):
+    for i in range(rows):
         if func_index >= num_of_functions:
             break
-        for j in range(shape[1]):
+        for j in range(columns):
             if func_index >= num_of_functions:
                 break
-            values, results = process_to_points(funcs[func_index], start, stop, step, ymin, ymax, values)
-            current_ax = ax[i, j] if shape[0] > 1 else ax[j]
-            current_ax.plot(values, results, label=funcs[func_index])
-            current_ax.set_title(funcs[func_index])
+            sampled_values, results, sample = _sample_plot_points(
+                funcs[func_index], start, stop, step, ymin, ymax, values,
+                mode, tolerance, max_points, max_depth,
+            )
+            current_ax = ax[i, j]
+            item_title = subplot_titles[func_index] if subplot_titles is not None else _subplot_title(funcs[func_index])
+            line, = current_ax.plot(sampled_values, results, label=item_title)
+            if sample is not None:
+                line.kiwicalc_sample = sample
+            if item_title:
+                current_ax.set_title(str(item_title))
             if show_axis:
                 draw_axis(current_ax)
             func_index += 1
     if title is not None:
-        plt.title(title)
+        fig.suptitle(title)
+    for unused in np.asarray(ax).reshape(-1)[num_of_functions:]:
+        unused.remove()
+    if title is not None:
+        fig.subplots_adjust(top=0.9)
     if show:
         try:
             wm = plt.get_current_fig_manager()
@@ -409,6 +551,7 @@ def plot_multiple(funcs, shape: Tuple[int, int]=None, start: float=-10, stop: fl
         except:
             warnings.warn("Couldn't plot in full screen!")
         plt.show()
+    return fig, ax
 
 class Graph:
 
@@ -425,6 +568,7 @@ class Graph:
         self._secondary_axis_specs = []
         self._secondary_axes = []
         self._colorbars = []
+        self._legend_artist = None
         self._animations = []
         self._interactions = []
 
@@ -451,6 +595,18 @@ class Graph:
     def artists(self):
         return list(self._artists)
 
+    @property
+    def sampling_results(self):
+        """Adaptive sampling diagnostics for artists from the latest render."""
+        results = []
+        for artist in self._artists:
+            candidates = artist if isinstance(artist, (list, tuple)) else (artist,)
+            for candidate in candidates:
+                sample = getattr(candidate, 'kiwicalc_sample', None)
+                if sample is not None:
+                    results.append(sample)
+        return tuple(results)
+
     def is_empty(self):
         return not self._items
 
@@ -473,17 +629,48 @@ class Graph:
                 return obj
         raise ValueError('The object is not in this graph')
 
-    def clear(self):
-        self._items.clear()
-        self._item_options.clear()
-        self._artists.clear()
-        self._decorations.clear()
-        for colorbar in self._colorbars:
+    @staticmethod
+    def _remove_artist(artist):
+        if isinstance(artist, (list, tuple)):
+            for child in reversed(artist):
+                Graph._remove_artist(child)
+            return
+        proxy = getattr(artist, '_kiwicalc_proxy', None)
+        if proxy is not None:
+            Graph._remove_artist(proxy)
+        try:
+            artist.remove()
+        except (AttributeError, KeyError, NotImplementedError, ValueError):
+            pass
+
+    def _clear_rendered(self):
+        """Remove artists created by the previous render without touching user artists."""
+        for colorbar in reversed(self._colorbars):
             try:
                 colorbar.remove()
             except (KeyError, ValueError):
                 pass
         self._colorbars.clear()
+        for secondary in reversed(self._secondary_axes):
+            try:
+                secondary.remove()
+            except (KeyError, ValueError):
+                pass
+        self._secondary_axes.clear()
+        if self._legend_artist is not None:
+            self._remove_artist(self._legend_artist)
+            self._legend_artist = None
+        for artist in reversed(self._artists):
+            self._remove_artist(artist)
+        self._artists.clear()
+
+    def clear(self):
+        self._clear_rendered()
+        self._items.clear()
+        self._item_options.clear()
+        self._decorations.clear()
+        if self._ax is not None:
+            self._ax.set_title('')
         for animation in self._animations:
             animation.pause()
         self._animations.clear()
@@ -515,28 +702,83 @@ class Graph:
         self._axis_options.update(options)
         return self
 
-    def save(self, path, *, dpi=300, transparent=False, tight=True, format=None, **kwargs):
-        """Save this graph as PNG, SVG, or PDF and return the resulting path."""
-        self._ensure_figure()
-        output = Path(path)
-        chosen_format = (format or output.suffix.lstrip('.') or 'png').lower()
+    @staticmethod
+    def _export_format(format, suffix=''):
+        chosen_format = format or suffix.lstrip('.') or 'png'
+        if not isinstance(chosen_format, str):
+            raise TypeError("Graph export format must be a string")
+        chosen_format = chosen_format.lower()
         if chosen_format not in {'png', 'svg', 'pdf'}:
             raise ValueError("Graph export format must be PNG, SVG, or PDF")
+        return chosen_format
+
+    def _prepare_export(self, render, plot_options):
+        if render is not None and not isinstance(render, bool):
+            raise TypeError("render must be True, False, or None")
+        options = dict(plot_options or {})
+        if options and render is False:
+            raise ValueError("plot_options require rendering to be enabled")
+        should_render = bool(options) or render is True or (render is None and not self._has_plotted)
+        if should_render:
+            options.pop('return_artists', None)
+            options['show'] = False
+            self.plot(**options)
+        else:
+            self._ensure_figure()
+
+    @staticmethod
+    def _export_options(dpi, transparent, tight, chosen_format, kwargs):
+        try:
+            numeric_dpi = float(dpi)
+        except (TypeError, ValueError):
+            raise ValueError("dpi must be a positive finite number")
+        if isinstance(dpi, bool) or not math.isfinite(numeric_dpi) or numeric_dpi <= 0:
+            raise ValueError("dpi must be a positive finite number")
+        options = dict(dpi=numeric_dpi, transparent=bool(transparent), format=chosen_format)
+        if tight:
+            options['bbox_inches'] = 'tight'
+        options.update(kwargs)
+        return options
+
+    def save(self, path, *, dpi=300, transparent=False, tight=True, format=None,
+             render=None, plot_options=None, **kwargs):
+        """Save this graph as PNG, SVG, or PDF and return the resulting path.
+
+        An unrendered graph is plotted automatically. Pass ``plot_options`` to
+        control that render, ``render=True`` to force a fresh render, or
+        ``render=False`` to export the current Matplotlib figure unchanged.
+        """
+        output = Path(path)
+        chosen_format = self._export_format(format, output.suffix)
         if output.suffix and output.suffix.lstrip('.').lower() != chosen_format:
             raise ValueError("Graph export format must match the file extension")
         if not output.suffix:
             output = output.with_suffix(f'.{chosen_format}')
+        self._prepare_export(render, plot_options)
         output.parent.mkdir(parents=True, exist_ok=True)
-        save_options = dict(dpi=dpi, transparent=transparent, format=chosen_format)
-        if tight:
-            save_options['bbox_inches'] = 'tight'
-        save_options.update(kwargs)
+        save_options = self._export_options(dpi, transparent, tight, chosen_format, kwargs)
         self._fig.savefig(output, **save_options)
         return output
 
     def export(self, path, **kwargs):
         """Alias for :meth:`save`."""
         return self.save(path, **kwargs)
+
+    def to_bytes(self, *, format='png', dpi=300, transparent=False, tight=True,
+                 render=None, plot_options=None, **kwargs):
+        """Return an in-memory PNG, SVG, or PDF representation of this graph."""
+        from io import BytesIO
+
+        chosen_format = self._export_format(format)
+        self._prepare_export(render, plot_options)
+        save_options = self._export_options(dpi, transparent, tight, chosen_format, kwargs)
+        data = BytesIO()
+        self._fig.savefig(data, **save_options)
+        return data.getvalue()
+
+    def to_svg(self, *, encoding='utf-8', **kwargs):
+        """Return this graph as SVG text."""
+        return self.to_bytes(format='svg', **kwargs).decode(encoding)
 
     def to_dict(self):
         from kiwicalc.serialization import graph_to_dict
@@ -882,6 +1124,8 @@ class Graph2D(Graph):
         minor_ticks: Optional[bool]=None, minor_grid: Optional[bool]=None,
         xscale: Optional[str]=None, yscale: Optional[str]=None,
         pi_step: Optional[float]=None, degree_step: Optional[float]=None,
+        sampling: str='fixed', tolerance: float=1e-3,
+        max_points: int=5000, max_depth: int=12,
     ):
         """Render the graph, using ``title`` only when an explicit title is wanted.
 
@@ -894,6 +1138,10 @@ class Graph2D(Graph):
 
         if title is not None and text is not None:
             raise ValueError("Use either title or text, not both")
+        sampling = normalize_sampling(sampling)
+        if values is None:
+            _validate_positive_step(step)
+        self._clear_rendered()
         if theme is not None:
             self._theme = get_theme(theme)
         elif self._theme is None and self._restored_view.get('theme'):
@@ -917,15 +1165,8 @@ class Graph2D(Graph):
             values = list(decimal_range(start=start, stop=stop, step=step))
         requested_title = title if title is not None else text
         graph_title = self._restored_view.get('title') if requested_title is None else requested_title
-        if graph_title:
-            self._ax.set_title(f'${format_matplot(graph_title)}$' if formatText else graph_title)
-        self._artists = []
-        for colorbar in self._colorbars:
-            try:
-                colorbar.remove()
-            except (KeyError, ValueError):
-                pass
-        self._colorbars = []
+        shown_title = f'${format_matplot(graph_title)}$' if graph_title and formatText else (graph_title or '')
+        self._ax.set_title(shown_title)
         for obj, options in self._entries():
             if not options['visible']:
                 continue
@@ -941,18 +1182,18 @@ class Graph2D(Graph):
             elif isinstance(obj, Function):
                 if resolved_theme is not None:
                     style.setdefault('linewidth', resolved_theme.line_width)
-                artist = plot_function(obj.lambda_expression, values=values, ymin=ymin, ymax=ymax, show_axis=False, show=False, fig=self._fig, ax=self._ax, label=label, **style)
+                artist = plot_function(obj.lambda_expression, values=values, ymin=ymin, ymax=ymax, show_axis=False, show=False, fig=self._fig, ax=self._ax, label=label, sampling=sampling, tolerance=tolerance, max_points=max_points, max_depth=max_depth, **style)
             elif isinstance(obj, IExpression):
                 if resolved_theme is not None:
                     style.setdefault('linewidth', resolved_theme.line_width)
-                artist = plot_function(obj.to_lambda(), values=values, ymin=ymin, ymax=ymax, show_axis=False, show=False, fig=self._fig, ax=self._ax, label=label, **style)
+                artist = plot_function(obj.to_lambda(), values=values, ymin=ymin, ymax=ymax, show_axis=False, show=False, fig=self._fig, ax=self._ax, label=label, sampling=sampling, tolerance=tolerance, max_points=max_points, max_depth=max_depth, **style)
             elif isinstance(obj, Line2D):
                 if resolved_theme is not None:
                     style.setdefault('linewidth', resolved_theme.line_width)
                 if obj.to_lambda() is None:
                     artist = self._ax.axvline(obj._point1.x, label=label, **style)
                 else:
-                    artist = plot_function(obj.to_lambda(), values=values, ymin=ymin, ymax=ymax, show_axis=False, show=False, fig=self._fig, ax=self._ax, label=label, **style)
+                    artist = plot_function(obj.to_lambda(), values=values, ymin=ymin, ymax=ymax, show_axis=False, show=False, fig=self._fig, ax=self._ax, label=label, sampling=sampling, tolerance=tolerance, max_points=max_points, max_depth=max_depth, **style)
             elif isinstance(obj, Circle):
                 if resolved_theme is not None:
                     style.setdefault('linewidth', resolved_theme.line_width)
@@ -976,7 +1217,7 @@ class Graph2D(Graph):
             elif callable(obj) or isinstance(obj, str):
                 if resolved_theme is not None:
                     style.setdefault('linewidth', resolved_theme.line_width)
-                artist = plot_function(obj, values=values, ymin=ymin, ymax=ymax, show_axis=False, show=False, fig=self._fig, ax=self._ax, label=label, **style)
+                artist = plot_function(obj, values=values, ymin=ymin, ymax=ymax, show_axis=False, show=False, fig=self._fig, ax=self._ax, label=label, sampling=sampling, tolerance=tolerance, max_points=max_points, max_depth=max_depth, **style)
             else:
                 raise TypeError(f'{type(obj).__name__} cannot be plotted on Graph2D')
             self._artists.append(artist)
@@ -1089,19 +1330,71 @@ class Graph2D(Graph):
             self._ax.set_aspect('auto')
         self._render_secondary_axes(resolved_theme)
         if legend:
-            self._ax.legend()
+            handles, labels = self._ax.get_legend_handles_labels()
+            if handles and any(not item.startswith('_') for item in labels):
+                self._legend_artist = self._ax.legend()
         if show:
             plt.show()
         self._has_plotted = True
         if return_artists:
             return self.artists
 
+    def scatter(self, *args: Any, **kwargs: Any):
+        """Render sampleable 2D graph items as points where practical.
+
+        Geometric patches, vectors, implicit contours, and explanatory layers
+        keep their natural renderers. All ordinary function and curve lines are
+        replaced by scatter artists.
+        """
+        from matplotlib.lines import Line2D as MatplotlibLine2D
+        from kiwicalc.geometry.curves import Curve2D, ImplicitCurve2D
+
+        return_artists = bool(kwargs.pop('return_artists', False))
+        show = bool(kwargs.pop('show', True))
+        kwargs['return_artists'] = True
+        kwargs['show'] = False
+        self.plot(*args, **kwargs)
+        visible_entries = [
+            (obj, options) for obj, options in self._entries()
+            if options['visible']
+        ]
+        for index, (obj, options) in enumerate(visible_entries):
+            if index >= len(self._artists):
+                break
+            eligible = (
+                isinstance(obj, (Function, IExpression, Curve2D))
+                and not isinstance(obj, ImplicitCurve2D)
+            ) or callable(obj) or isinstance(obj, str)
+            line = self._artists[index]
+            if not eligible or not isinstance(line, MatplotlibLine2D):
+                continue
+            scatter_style = {
+                'color': line.get_color(),
+                'label': line.get_label(),
+                'alpha': line.get_alpha(),
+                'zorder': line.get_zorder(),
+                's': (self._theme.marker_size if self._theme else 7) ** 2,
+            }
+            x_data = line.get_xdata()
+            y_data = line.get_ydata()
+            sample = getattr(line, 'kiwicalc_sample', None)
+            self._remove_artist(line)
+            self._artists[index] = self._ax.scatter(x_data, y_data, **scatter_style)
+            if sample is not None:
+                self._artists[index].kiwicalc_sample = sample
+        if show:
+            plt.show()
+        if return_artists:
+            return self.artists
+
 class Graph3D(Graph):
 
     def __init__(self, objs=tuple()):
-        fig = plt.figure()
-        ax = fig.add_subplot(111, projection='3d')
-        super(Graph3D, self).__init__(objs, fig, ax)
+        super(Graph3D, self).__init__(objs, None, None)
+
+    def _ensure_figure(self):
+        if self._fig is None or self._ax is None:
+            self._fig, self._ax = _figure_and_axes(projection='3d')
 
     def _finish(self, xlabel, ylabel, zlabel, title, legend, grid, xlim, ylim, zlim,
                 show, return_artists, resolved_theme=None, axis_options=None):
@@ -1123,8 +1416,7 @@ class Graph3D(Graph):
         self._ax.set_xlabel(axis_label(xlabel, units[0]))
         self._ax.set_ylabel(axis_label(ylabel, units[1]))
         self._ax.set_zlabel(axis_label(zlabel, units[2]))
-        if title:
-            self._ax.set_title(title)
+        self._ax.set_title(title or '')
         apply_theme(self._fig, self._ax, resolved_theme)
         if grid is None:
             grid = resolved_theme.grid if resolved_theme else False
@@ -1149,8 +1441,12 @@ class Graph3D(Graph):
             configure_ticks(axis, axis_options.get(name), unit=unit, pi_step=pi_step, degree_step=degree_step)
         if axis_options.get('minor_ticks'):
             self._ax.minorticks_on()
+        elif axis_options.get('minor_ticks') is False:
+            self._ax.minorticks_off()
         if legend:
-            self._ax.legend()
+            handles, labels = self._ax.get_legend_handles_labels()
+            if handles and any(not item.startswith('_') for item in labels):
+                self._legend_artist = self._ax.legend()
         if show:
             plt.show()
         self._has_plotted = True
@@ -1162,6 +1458,8 @@ class Graph3D(Graph):
         from kiwicalc.geometry.surfaces import Surface3D
         from kiwicalc.geometry.vectors import Vector3D
 
+        self._ensure_figure()
+        self._clear_rendered()
         if theme is not None:
             self._theme = get_theme(theme)
         elif self._theme is None and self._restored_view.get('theme'):
@@ -1196,9 +1494,12 @@ class Graph3D(Graph):
                     wireframe = style.pop('wireframe', False)
                     artist = plot_surface_3d(obj, show=False, fig=self._fig, ax=self._ax, label=label, wireframe=wireframe, **style)
                 elif isinstance(obj, Vector3D):
-                    before = len(self._ax.collections)
-                    obj.plot(show=False, fig=self._fig, ax=self._ax)
-                    artist = self._ax.collections[before:]
+                    if resolved_theme is not None:
+                        style.setdefault('linewidth', resolved_theme.line_width)
+                    artist = plot_vector_3d(
+                        tuple(obj._start_coordinate), tuple(obj._direction_vector),
+                        show=False, fig=self._fig, ax=self._ax, label=label, **style
+                    )
                 elif hasattr(obj, 'to_lambda'):
                     artist = plot_function_3d(obj.to_lambda(), start=start, stop=stop, step=step, show=False, fig=self._fig, ax=self._ax, write_labels=False, label=label, **style)
                 elif callable(obj) or isinstance(obj, str) or isinstance(obj, IExpression):
@@ -1211,6 +1512,8 @@ class Graph3D(Graph):
     def scatter(self, functions=None, start: float=-5, stop: float=5, step: float=0.1, xlabel: str='X Values', ylabel: str='Y Values', zlabel: str='Z Values', show=True, title=None, legend=None, grid=None, return_artists=False, theme: ThemeInput=None, units=None, x_ticks=None, y_ticks=None, z_ticks=None, minor_ticks=None):
         from kiwicalc.geometry.curves import Curve3D
 
+        self._ensure_figure()
+        self._clear_rendered()
         if theme is not None:
             self._theme = get_theme(theme)
         resolved_theme = self._theme

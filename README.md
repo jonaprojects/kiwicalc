@@ -291,6 +291,19 @@ x = kw.Var("x")
 (kw.Sin(x) + 0.25*x).plot(start=-10, stop=10)
 ```
 
+Function sampling remains fixed by default. For plots where a uniform grid can
+hide a narrow peak, alias rapid oscillation, or bridge a discontinuity, adaptive
+sampling is an explicit opt-in:
+
+```python
+line = kw.plot_function(
+    lambda x: np.sin(100 * np.pi * x),
+    start=0, stop=0.2, step=0.01,
+    sampling="adaptive", tolerance=1e-3,
+)
+print(line.kiwicalc_sample.point_count)
+```
+
 Curves and graphs use the same simple plotting style:
 
 ```python
@@ -321,7 +334,25 @@ graph.save("sine-wave.svg")
 
 Built-in themes include `classroom`, `projector`, `publication`, `engineering`,
 and `colorblind`. Tick modes include `pi`, `degrees`, `scientific`, and
-`engineering`; graphs can be exported directly as PNG, SVG, or PDF.
+`engineering`; graphs can be exported directly as PNG, SVG, or PDF with
+`save()`, or returned in memory with `to_bytes()` and `to_svg()`.
+
+Standalone helpers cover scientific fields and common mathematical diagrams:
+
+```python
+kw.plot_vector_field(lambda x, y: -y, lambda x, y: x)
+kw.plot_contour(lambda x, y: x*x + y*y, levels=[1, 4, 9])
+kw.plot_inequality("x^2 + y^2 <= 4")
+kw.plot_piecewise([
+    ((-2, 0), lambda x: -x, "[)"),
+    ((0, 2), lambda x: x*x, "[]"),
+])
+```
+
+Direct parametric, polar, sequence, error-band, phase-portrait, complex-domain,
+convergence, transformation, and bifurcation plots are also available. See the
+[plotting methods guide](docs/plotting.md) for their contracts and bounded-work
+controls.
 
 Parametric, polar, implicit, Bézier, and spline curves are available in 2D, along
 with named curves such as cardioids, rose curves, cycloids, superellipses,
@@ -916,6 +947,12 @@ in `add_math()` blocks. Unsupported Mathtext raises a descriptive error.
 
 ## Documentation and learning resources
 
+- [Plotting methods and lifecycle](docs/plotting.md)
+- [Plotting stabilization demo notebook](docs/plotting_stabilization_demo.ipynb)
+- [Why adaptive sampling matters](docs/adaptive_sampling_motivation.ipynb)
+- [Expanded plotting API: Phase 1 notebook](docs/plotting_functions_phase1.ipynb)
+- [Expanded plotting API: Phase 2 notebook](docs/plotting_functions_phase2.ipynb)
+- [Expanded plotting API: Phase 3 notebook](docs/plotting_functions_phase3.ipynb)
 - [Full documentation](https://jona-projects.gitbook.io/kiwicalc)
 - [Official website](https://jonaprojects.github.io/kiwicalc_landing_page/)
 - [Google Colab examples](https://colab.research.google.com/drive/1x411iW1nczAp67YBfp55Erd-72Nd7k7Z?usp=sharing)

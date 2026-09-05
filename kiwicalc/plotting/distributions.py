@@ -166,8 +166,6 @@ def plot_distribution(distribution, kind=None, *, start=None, stop=None,
         MultivariateDistribution, MultivariateNormal,
     )
 
-    if not isinstance(points, int) or isinstance(points, bool) or points < 2:
-        raise ValueError("points must be an integer of at least 2")
     if (not isinstance(max_discrete_points, Integral) or isinstance(max_discrete_points, bool)
             or max_discrete_points < 1):
         raise ValueError("max_discrete_points must be a positive integer")
@@ -177,6 +175,8 @@ def plot_distribution(distribution, kind=None, *, start=None, stop=None,
         raise TypeError("kind must be a string or None")
 
     if isinstance(distribution, ContinuousDistribution):
+        if not isinstance(points, int) or isinstance(points, bool) or points < 2:
+            raise ValueError("points must be an integer of at least 2")
         kind = "pdf" if kind is None else kind.lower()
         if kind not in {"pdf", "cdf"}:
             raise ValueError("continuous distributions support kind='pdf' or kind='cdf'")
@@ -277,6 +277,8 @@ def plot_distribution(distribution, kind=None, *, start=None, stop=None,
     kind = "contour" if kind is None else kind.lower()
     if kind not in {"contour", "contourf", "surface"}:
         raise ValueError("continuous joint distributions support contour, contourf, or surface")
+    if not isinstance(points, int) or isinstance(points, bool) or points < 2:
+        raise ValueError("points must be an integer of at least 2")
     components = (density.marginal(0), density.marginal(1)) if isinstance(
         density, MultivariateNormal) else density.components
     x_bounds = xlim or _continuous_domain(components[0], None, None, tail_probability)
@@ -309,9 +311,10 @@ def scatter_distribution(distribution, *, size=500, values=None, dimensions=None
     from kiwicalc.probability.distributions import Distribution
     from kiwicalc.probability.multivariate import MultivariateDistribution
 
-    if not isinstance(size, Integral) or isinstance(size, bool) or size < 1:
-        raise ValueError("size must be a positive integer")
-    size = int(size)
+    if values is None:
+        if not isinstance(size, Integral) or isinstance(size, bool) or size < 1:
+            raise ValueError("size must be a positive integer")
+        size = int(size)
     if not isinstance(distribution, (Distribution, MultivariateDistribution)):
         raise TypeError("distribution must be a KiwiCalc probability distribution")
     samples = np.asarray(distribution.sample(size, random_state=random_state)
@@ -332,6 +335,12 @@ def scatter_distribution(distribution, *, size=500, values=None, dimensions=None
     else:
         samples = samples.reshape(-1)
         x, labels = _numeric_or_encoded(samples)
+        try:
+            jitter = float(jitter)
+        except (TypeError, ValueError):
+            raise ValueError("jitter must be a non-negative finite number")
+        if not math.isfinite(jitter) or jitter < 0:
+            raise ValueError("jitter must be a non-negative finite number")
         generator = np.random.default_rng(random_state)
         y = generator.normal(0, jitter, x.size) if jitter else np.zeros(x.size)
         artist = ax.scatter(x, y, label=label, **style)

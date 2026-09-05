@@ -241,9 +241,11 @@ def graph_to_dict(graph):
         for field in object_fields & encoded.keys():
             encoded[field] = object_to_dict(encoded[field])
         decorations.append(_value(encoded))
-    view = {}
+    view = {"axis_options": _value(graph._axis_options)}
+    if graph._theme is not None:
+        view["theme"] = graph._theme.to_dict()
     if graph._has_plotted:
-        view = {
+        view.update({
             "title": graph.ax.get_title(), "xlim": graph.ax.get_xlim(), "ylim": graph.ax.get_ylim(),
             "xlabel": graph.ax.get_xlabel(), "ylabel": graph.ax.get_ylabel(),
             "legend": graph.ax.get_legend() is not None,
@@ -251,13 +253,11 @@ def graph_to_dict(graph):
             "equal_aspect": graph.ax.get_aspect() == 1.0,
             "xscale": graph.ax.get_xscale(), "yscale": graph.ax.get_yscale(),
             "axis_options": _value(graph._axis_options),
-        }
-        if graph._theme is not None:
-            view["theme"] = graph._theme.to_dict()
+        })
     if isinstance(graph, Graph3D) and graph._has_plotted:
         view["zlim"] = graph.ax.get_zlim()
         view.update(zlabel=graph.ax.get_zlabel(), zscale=graph.ax.get_zscale())
-    return _value({"type": type(graph).__name__, "items": entries, "decorations": decorations, "view": view})
+    return _value({"version": 1, "type": type(graph).__name__, "items": entries, "decorations": decorations, "view": view})
 
 
 def graph_from_dict(data):
