@@ -26,6 +26,10 @@ dev = [
     "build>=1.2.1",
     "twine>=5.1.0",
 ]
+validation = [
+    "scipy>=1.10.0",
+    "hypothesis>=6.80.0",
+]
 
 [tool.setuptools.packages.find]
 include = ["kiwicalc*"]
@@ -37,6 +41,9 @@ addopts = [
     "--strict-config",
     "--strict-markers",
     "-ra",
+]
+markers = [
+    "validation: cross-library statistical oracle and property tests",
 ]
 
 [tool.coverage.run]

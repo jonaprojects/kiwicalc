@@ -22,6 +22,8 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
+            python-version: "3.8"
+          - os: ubuntu-latest
             python-version: "3.12"
           - os: windows-latest
             python-version: "3.12"
@@ -61,9 +63,36 @@ jobs:
           fail_ci_if_error: true
           use_oidc: true
 
+  statistical-validation:
+    name: Statistical reference validation
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install validation dependencies
+        run: python -m pip install --upgrade --editable ".[dev,validation]"
+
+      - name: Validate statistics against independent references
+        env:
+          MPLBACKEND: Agg
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python -m pytest -m validation testing/test_probability_reference_validation.py
+
   package:
     name: Build and verify distributions
-    needs: test
+    needs: [test, statistical-validation]
     runs-on: ubuntu-latest
 
     steps:

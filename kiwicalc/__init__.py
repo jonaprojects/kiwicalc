@@ -83,6 +83,8 @@ __all__ = [
     'Binomial', 'Geometric', 'Hypergeometric', 'Poisson', 'DiscreteUniform',
     'Categorical', 'Uniform', 'ContinuousUniform', 'Normal', 'Gaussian', 'Exponential',
     'ContinuousFormulaDistribution', 'DiscreteFormulaDistribution', 'distribution',
+    'ECDFResult', 'QQData', 'PPData', 'AssumptionSummary',
+    'ecdf', 'qq_data', 'pp_data', 'assumption_summary',
     'ProbabilityEstimate', 'MultivariateDistribution',
     'MultivariateDiscreteDistribution', 'MultivariateContinuousDistribution',
     'JointDiscreteDistribution', 'IndependentJointDistribution',
@@ -114,6 +116,8 @@ __all__ = [
     'GraphAnimation', 'GraphInteraction',
     'PlotTheme', 'THEMES', 'available_themes', 'get_theme',
     'plot_distribution', 'scatter_distribution',
+    'plot_ecdf', 'qq_plot', 'pp_plot', 'histogram_plot',
+    'confidence_interval_plot', 'diagnostic_plots',
     # PDF
     'PDFWorksheet', 'PDFPage', 'PDFExercise', 'worksheet', 'create_pdf', 'create_pages',
     'PDFMath', 'PDFPlot', 'PDFText', 'PDFArray', 'PDFMatrix', 'PDFVector',

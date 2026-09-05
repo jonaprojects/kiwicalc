@@ -69,6 +69,21 @@ Student-t and z inference, Wilson proportion intervals, Welch and paired tests,
 chi-square procedures, one-way ANOVA, and correlation tests are covered in the
 [statistical inference guide](docs/statistical_inference.md).
 
+Visual diagnostics are available individually or as a compact dashboard:
+
+```python
+summary = kw.assumption_summary(sample)
+kw.qq_plot(sample)
+kw.histogram_plot(sample, fit="normal")
+fig, axes = kw.diagnostic_plots(sample, theme="classroom")
+```
+
+See the [statistical diagnostics guide](docs/statistical_diagnostics.md) for
+ECDFs, Q-Q and P-P plots, fitted-density histograms, assumption summaries, and
+confidence-interval plots. The package's numerical guarantees and independent
+NumPy/SciPy validation workflow are described in the
+[probability and statistics stability guide](docs/probability_stability.md).
+
 Finite probability experiments can be modeled directly:
 
 ```python

@@ -48,6 +48,10 @@ class ConfidenceInterval:
 class TestResult:
     """Unified result returned by KiwiCalc hypothesis tests."""
 
+    # Prevent pytest from mistaking this public result type for a test class
+    # when users import it into test modules.
+    __test__ = False
+
     statistic: object
     p_value: object
     method: str
