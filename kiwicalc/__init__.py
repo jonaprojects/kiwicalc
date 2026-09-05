@@ -11,6 +11,10 @@ from kiwicalc.probability import *
 from kiwicalc.plotting import *
 from kiwicalc.pdf import *
 
+# plotting imports itertools.combinations internally; restore the public
+# probability-theory helper after wildcard-compatible legacy modules load.
+from kiwicalc.probability.theory import combinations as combinations
+
 __all__ = [
     # Core
     'TRIGONOMETRY_CONSTANTS', 'MATHEMATICAL_CONSTANTS', 'IExpression',
@@ -57,6 +61,27 @@ __all__ = [
     'Sequence', 'GeometricSeq', 'ArithmeticProg', 'RecursiveSeq',
     # Probability
     'Occurrence', 'ProbabilityTree',
+    'FrequencyTable', 'FiveNumberSummary', 'OutlierFences', 'ContingencyTable',
+    'DescriptiveSummary', 'count', 'mean', 'weighted_mean', 'median', 'mode',
+    'minimum', 'maximum', 'data_range', 'quantile', 'percentile',
+    'quartiles', 'iqr', 'variance', 'standard_deviation', 'standard_dev', 'std',
+    'population_variance', 'sample_variance', 'population_standard_deviation',
+    'sample_standard_deviation', 'mean_absolute_deviation',
+    'median_absolute_deviation', 'geometric_mean', 'harmonic_mean', 'trimmed_mean',
+    'skewness', 'kurtosis', 'coefficient_of_variation', 'frequency_table',
+    'proportion_table', 'five_number_summary', 'outlier_fences', 'detect_outliers',
+    'covariance', 'pearson_correlation', 'spearman_correlation', 'pearson',
+    'spearman', 'contingency_table', 'describe',
+    'complement_probability', 'addition_rule', 'independent_intersection',
+    'independent_union', 'conditional_probability', 'joint_probability',
+    'total_probability', 'law_of_total_probability', 'bayes_theorem', 'bayes',
+    'are_independent', 'are_mutually_exclusive', 'odds', 'probability_from_odds',
+    'permutations', 'combinations', 'multinomial', 'SampleSpace', 'Event',
+    'DiscreteRandomVariable', 'RandomVariable', 'expected_value', 'expectation',
+    'probability_variance',
+    'Distribution', 'DiscreteDistribution', 'ContinuousDistribution', 'Bernoulli',
+    'Binomial', 'Geometric', 'Hypergeometric', 'Poisson', 'DiscreteUniform',
+    'Categorical', 'Uniform', 'ContinuousUniform', 'Normal', 'Gaussian', 'Exponential',
     # Numeric & Calculus
     'newton_raphson', 'halleys_method', 'secant_method', 'inverse_interpolation',
     'laguerre_method', 'durand_kerner', 'durand_kerner2', 'ostrowski_method',

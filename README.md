@@ -15,6 +15,73 @@
 
 KiwiCalc is a Python mathematics library built around readable, math-like expressions. It combines symbolic expressions, equation solving, numerical methods, geometry, linear algebra, plotting, probability, sequences, and printable worksheets behind one approachable API.
 
+Probability trees validate branch values and ownership while retaining a compact
+API:
+
+```python
+tree = kw.ProbabilityTree(root=kw.Occurrence(1, 'start'))
+success = tree.add(0.7, 'success')
+tree.add(0.3, 'failure')
+tree.add(0.25, 'excellent', parent=success)
+
+tree.get_probability('start/success/excellent')
+tree.path_probabilities()
+tree.validate()
+```
+
+Trees support structural equality, copying, subtree removal, completeness checks,
+and safe JSON/XML round trips. Event helpers make independence explicit. See the
+[probability foundation guide](docs/probability_foundation.md).
+
+Descriptive statistics share a compact API for lists and NumPy arrays:
+
+```python
+scores = [72, 81, 81, 89, 94]
+
+kw.mean(scores)
+kw.quartiles(scores)
+kw.sample_standard_deviation(scores)
+kw.detect_outliers(scores)
+kw.describe(scores).as_dict()
+```
+
+The same functions support axes, weights, degrees of freedom, and explicit missing
+value policies. Frequency, contingency, covariance, Pearson, and Spearman tools are
+included. See the [descriptive statistics guide](docs/descriptive_statistics.md).
+
+Finite probability experiments can be modeled directly:
+
+```python
+die = kw.SampleSpace(range(1, 7))
+even = die.event(lambda roll: roll % 2 == 0)
+high = die.event([4, 5, 6])
+
+(even & high).probability
+even.conditional_probability(high)
+
+roll = die.random_variable(lambda outcome: outcome)
+roll.expectation
+roll.variance
+```
+
+Probability laws, Bayes' theorem, odds, counting, event algebra, and discrete random
+variables are covered in the [probability theory guide](docs/probability_theory.md).
+
+Common probability distributions follow one compact interface:
+
+```python
+arrivals = kw.Poisson(rate=3)
+measurements = kw.Normal(mean=100, std=15)
+
+arrivals.pmf(2)
+arrivals.cdf(4)
+measurements.probability_between(85, 115)
+measurements.sample(500, random_state=42)
+```
+
+See the [probability distributions guide](docs/probability_distributions.md) for
+the discrete and continuous families, vectorized evaluation, and sampling API.
+
 ## Why KiwiCalc?
 
 Python is excellent for numerical work, but sophisticated mathematical expressions can become difficult to read and manipulate. KiwiCalc lets you construct expressions with familiar notation, substitute values, simplify them, convert them to callable functions, solve equations, and visualize results.

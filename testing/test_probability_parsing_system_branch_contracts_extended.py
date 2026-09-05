@@ -34,7 +34,7 @@ def test_probability_tree_default_invalid_and_warning_branches():
     assert default.root.name.identifier == "root"
     with pytest.raises(TypeError):
         kw.ProbabilityTree(root="root")
-    with pytest.warns(UserWarning, match="bigger than 1"):
+    with pytest.warns(UserWarning, match="expected 1 or less"):
         default.add(0.8, "one")
         default.add(0.8, "two")
 
@@ -51,13 +51,13 @@ def test_probability_tree_navigation_false_and_error_branches():
     assert "missing" not in tree
     with pytest.raises(TypeError):
         _ = 3 in tree
-    with pytest.raises(NotImplementedError):
-        tree.remove(left)
     assert kw.ProbabilityTree.biggest_probability_node(tree.root) is tree.root
     assert "root:1" in str(tree)
     payload = tree.to_dict()
     assert payload["root"]["parent"] is None
-    assert payload["leaf"]["parent"] is left
+    assert payload["leaf"]["parent"] == 'left'
+    assert tree.remove(left) is tree
+    assert 'left' not in tree and 'leaf' not in tree
 
 
 def test_probability_json_unknown_parent_warning(tmp_path):
@@ -71,9 +71,8 @@ def test_probability_json_unknown_parent_warning(tmp_path):
         ),
         encoding="utf-8",
     )
-    with pytest.warns(UserWarning, match="couldn't find parent"):
-        root = kw.ProbabilityTree.tree_from_json(path)
-    assert root.name.identifier == "root"
+    with pytest.raises(ValueError, match="unresolved"):
+        kw.ProbabilityTree.tree_from_json(path)
 
 
 def test_probability_xml_unknown_parent_warning(tmp_path):
@@ -85,9 +84,8 @@ def test_probability_xml_unknown_parent_warning(tmp_path):
         "</Tree>",
         encoding="utf-8",
     )
-    with pytest.warns(UserWarning, match="couldn't find parent"):
-        root = kw.ProbabilityTree.tree_from_xml(path)
-    assert root.name.identifier == "root"
+    with pytest.raises(ValueError, match="unresolved"):
+        kw.ProbabilityTree.tree_from_xml(path)
 
 
 def test_coefficient_list_alignment_modes_and_empty_result():
