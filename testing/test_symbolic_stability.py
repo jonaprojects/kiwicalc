@@ -155,6 +155,6 @@ def test_scalar_equation_steps_are_structural_and_replayable():
 def test_real_system_fallback_never_discards_imaginary_residuals():
     with pytest.raises(ValueError, match="not real-valued"):
         kw.solve_equation_system(
-            ("sqrt(x)+x=-1",), variables=("x",),
-            numeric_fallback=True, initial={"x": -1},
+            ("sqrt(x)*sqrt(x+1)=2",), variables=("x",),
+            numeric_fallback=True, initial={"x": -0.5},
         )

@@ -209,9 +209,12 @@ def test_symbolic_function_edge_branches_remain_complete_or_honestly_unresolved(
     assert kw.solve_equation("abs(x)=0").solutions == (kw.ExactNumber(0),)
     assert kw.solve_equation("2^x=2").solutions == (kw.ExactNumber(1),)
     assert kw.solve_equation("2^x=3").complete
-    for equation in ("exp(x^2)=2", "abs(x^2)=1", "sqrt(sin(x))=1"):
+    for equation in ("exp(x^2)=2", "abs(x^2)=1"):
         result = kw.solve_equation(equation, variable="x", method="symbolic")
         assert result.status == "unresolved" and not result.complete
+    nested = kw.solve_equation("sqrt(sin(x))=1", variable="x", method="symbolic")
+    assert nested.status == "solved" and nested.complete
+    assert isinstance(nested.solution_set, kw.ParametricSolutionSet)
 
 
 @pytest.mark.parametrize(
@@ -270,9 +273,9 @@ def test_system_validation_serialization_and_failure_modes():
         with pytest.raises(ValueError):
             kw.solve_equation_system(("x=1",), variables=variables)
     with pytest.raises(ValueError, match="initial values"):
-        kw.solve_equation_system(("x^2+y=1", "x+y^2=1"), numeric_fallback=True)
+        kw.solve_equation_system(("sin(x)+y=1", "2*x+y=1"), numeric_fallback=True)
     with pytest.raises(ValueError, match="initial keys"):
-        kw.solve_equation_system(("x^2+y=1", "x+y^2=1"), numeric_fallback=True, initial={"x": 1})
+        kw.solve_equation_system(("sin(x)+y=1", "2*x+y=1"), numeric_fallback=True, initial={"x": 1})
 
     result = kw.solve_equation_system(("x+y=2",), steps=True)
     restored = kw.EquationSystemSolution.from_dict(result.to_dict())
@@ -294,7 +297,7 @@ def test_system_result_constructor_invariants():
 
 def test_numeric_system_sequence_initial_and_steps():
     result = kw.solve_equation_system(
-        ("x^2+y^2=5", "x*y=2"), variables=("x", "y"),
-        numeric_fallback=True, initial=(1.2, 1.8), steps=True,
+        ("sin(x)+y=1", "2*x+y=1"), variables=("x", "y"),
+        numeric_fallback=True, initial=(0.2, 0.6), steps=True,
     )
     assert result.status == "solved" and result.steps[-1].rule == "local_newton"

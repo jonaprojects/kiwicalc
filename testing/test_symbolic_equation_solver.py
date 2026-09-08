@@ -202,14 +202,14 @@ def test_nonlinear_system_is_unresolved_or_uses_explicit_local_fallback():
     assert exact.method == "symbolic" and exact.complete and len(exact.solutions) == 2
     pairs = sorted((numeric(item["x"]).real, numeric(item["y"]).real) for item in exact.solutions)
     assert pairs == pytest.approx([(-math.sqrt(2), -math.sqrt(2)), (math.sqrt(2), math.sqrt(2))])
-    unresolved = kw.solve_equation_system(("x^2+y^2=1", "x*y=1"))
-    assert unresolved.status == "unresolved"
+    inconsistent = kw.solve_equation_system(("x^2+y^2=1", "x*y=1"))
+    assert inconsistent.status == "inconsistent" and inconsistent.complete
     result = kw.solve_equation_system(
-        ("x^2+y^2=5", "x*y=2"), numeric_fallback=True,
-        initial={"x": 1.2, "y": 1.8},
+        ("sin(x)+y=1", "2*x+y=1"), numeric_fallback=True,
+        initial={"x": 0.2, "y": 0.6},
     )
     assert result.method == "numeric"
-    assert result.solutions[0] == pytest.approx({"x": 1, "y": 2})
+    assert result.solutions[0] == pytest.approx({"x": 0, "y": 1}, abs=1e-7)
 
 
 @pytest.mark.parametrize(

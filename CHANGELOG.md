@@ -12,6 +12,65 @@
 - Native solver restrictions, conditional branches, interval guards, and
   derivation-step conditions now retain machine-readable predicates and use
   them to reject invalid candidates or resolve known branches.
+- Formalized the native basic canonical-form contract and added an executable
+  `is_canonical_symbolic()` fixed-point check. Canonicalization is deterministic,
+  exact, immutable, idempotent, and domain-safe, while expansion and
+  factorization remain explicit non-goals.
+- Fixed domain-sensitive zero-power canonicalization and nested guarded-zero
+  products found by randomized idempotence testing.
+- Added deterministic guarded rewrite infrastructure with auditable rule
+  applications, three-valued assumption guards, automatic domain preservation,
+  cycle/node/step limits, structural serialization, and initial reciprocal,
+  exponential/logarithm, and real square-root rules.
+- Simplified real-domain conditions for positive even integer powers so
+  universally nonnegative squares do not create spurious assumptions.
+- Added conservative sign and domain inference to `AssumptionSet`, including
+  structural propagation, interval and substitution knowledge, three-valued
+  definedness, composite-relation entailment, and domain-aware guard proofs.
+- Added exact `normalize_polynomial_symbolic()` and guarded
+  `normalize_rational_symbolic()` APIs for bounded univariate normalization,
+  primitive coefficient scaling, polynomial-GCD cancellation, and deterministic
+  fixed points.
+- Added the opt-in `normalize-rational` rewrite rule. It preserves all source
+  domain restrictions and explicitly records exclusions introduced by removed
+  factors; exact polynomial nonzero assumptions can now prove nonzero factors.
+- Refactored unified-solver transformations onto a deterministic guarded-rule
+  pipeline. Denominator clearing, polynomial and symbolic-linear solving,
+  logarithmic/exponential/radical inversion, absolute-value branching, and
+  periodic trigonometric solving now share structural contexts, guard handling,
+  resource bounds, and auditable `SolutionStep` generation.
+- Marked real-only solver rules explicitly and retained final verification
+  against the original equation, preserving complex completeness guarantees and
+  rejection of roots introduced by denominator clearing or squaring.
+- Replaced fixed-grid scalar numerical fallback with cached adaptive isolation.
+  The isolator refines curvature, residual valleys, oscillation, and domain
+  boundaries; uses safeguarded sign-change refinement for crossing roots and
+  bounded local minimization for tangent/even roots; and enforces depth and
+  evaluation budgets.
+- Root deduplication now requires overlapping isolation evidence rather than
+  distance alone. Pole crossings and merely small asymptotic tails are rejected,
+  while nearby roots and floating-point roots at interval endpoints are retained.
+- Added guarded algebraic substitution for sparse polynomial powers, repeated
+  nonlinear and rational expressions, repeated elementary functions, compatible
+  exponential arguments, and exact related bases such as `4^x` and `2^x`.
+- Substitution now solves every outer root through the existing rule pipeline,
+  propagates finite-root multiplicities and domain restrictions, applies
+  intervals only to final target-variable branches, and declines incomplete
+  inner solves. Degree, transformation, and branch limits bound expansion.
+- Began exact nonlinear-system solving with complete triangular and affine
+  substitution, safe rational elimination, and bounded bivariate polynomial
+  resultants. Every resultant candidate is verified in the original system;
+  unsupported or resource-limited systems remain explicitly unresolved.
+- Added parameter-aware symbolic quadratic solving with complete leading-
+  coefficient and discriminant cases, exact degree reduction, zero-product
+  solving for factored low-degree forms, and symbolic biquadratic substitution.
+- Added `solve_inequality()` for exact real univariate polynomial and rational
+  inequalities. Its multiplicity-aware sign chart preserves poles and cancelled
+  denominator holes and returns serializable bounded or unbounded intervals.
+- Extended guarded radical solving to repeated additive and nested square roots
+  through bounded expansion and original-equation candidate verification.
+- Added real Pythagorean, double-angle, and triple-angle reductions that feed
+  exact zero-product, algebraic-substitution, and periodic-family solving.
 
 ### Equations and parsing
 

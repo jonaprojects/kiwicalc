@@ -14,7 +14,7 @@ from fractions import Fraction as Rational
 from functools import reduce
 from itertools import product
 from types import MappingProxyType
-from typing import Any, Iterable, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Iterable, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -559,6 +559,25 @@ _RELATION_NEGATIONS = {"=": "!=", "!=": "=", ">": "<=", ">=": "<", "<": ">=", "<
 
 def _relation_implies(given, target):
     if given.left != target.left:
+        if given.relation == target.relation == "!=":
+            given_right, target_right = _numeric_value(given.right), _numeric_value(target.right)
+            variables = given.left.variables | target.left.variables
+            if given_right == target_right == 0 and len(variables) == 1:
+                variable = next(iter(variables))
+                try:
+                    given_poly = _poly_fraction(given.left, variable)
+                    target_poly = _poly_fraction(target.left, variable)
+                    if (
+                        given_poly is not None and target_poly is not None
+                        and given_poly[1] and target_poly[1]
+                        and max(given_poly[1]) == max(target_poly[1]) == 0
+                        and target_poly[0]
+                    ):
+                        _, remainder = _poly_divmod(given_poly[0], target_poly[0])
+                        if not remainder:
+                            return True
+                except (UnsupportedExpressionError, ZeroDivisionError):
+                    pass
         return False
     given_right, target_right = _numeric_value(given.right), _numeric_value(target.right)
     if given_right is None or target_right is None or isinstance(given_right, complex) or isinstance(target_right, complex):
@@ -742,6 +761,9 @@ class AssumptionSet:
                 excluded = RelationCondition(condition.left, "!=", condition.right)
                 if self.entails(boundary) and self.entails(excluded):
                     return True
+            inferred = _relation_truth_from_signs(condition, _possible_signs(condition.left, self))
+            if inferred is True and _defined_under_assumptions(condition.left, self, "real") is True:
+                return True
         return False
 
     def refutes(self, condition):
@@ -750,6 +772,33 @@ class AssumptionSet:
             return not condition.value
         negated = negate_condition(condition)
         return self.entails(negated)
+
+    def infer_sign(self, expression):
+        """Return the strongest supported sign class for ``expression``.
+
+        The result is one of ``positive``, ``negative``, ``zero``,
+        ``nonnegative``, ``nonpositive``, ``nonzero``, ``unknown``, or
+        ``undefined``. Inference is exact and conservative; it never samples.
+        """
+        expression = simplify_symbolic(expression)
+        return _SIGN_NAMES[_possible_signs(expression, self)]
+
+    def is_defined(self, expression, domain="real"):
+        """Return ``True``, ``False``, or ``None`` for definedness in a domain."""
+        return _defined_under_assumptions(simplify_symbolic(expression), self, domain)
+
+    def infer_domain(self, expression):
+        """Infer ``real``, ``complex``, ``undefined``, or ``unknown``."""
+        expression = simplify_symbolic(expression)
+        real = _defined_under_assumptions(expression, self, "real")
+        if real is True:
+            return "real"
+        complex_defined = _defined_under_assumptions(expression, self, "complex")
+        if real is False and complex_defined is True:
+            return "complex"
+        if real is False and complex_defined is False:
+            return "undefined"
+        return "unknown"
 
     def to_dict(self):
         return {"type": "assumptions", "conditions": [condition.to_dict() for condition in self.conditions]}
@@ -884,7 +933,7 @@ def _add(*items):
         elif _requires_domain_guard(base):
             # Cancellation is algebraically zero only where the original term
             # is defined.  Keep a guarded zero so its domain survives parsing.
-            flat.append(Multiply((ZERO, base)))
+            flat.append(_mul(ZERO, base))
     flat.sort(key=str)
     if number:
         flat.insert(0, ExactNumber(number))
@@ -943,7 +992,10 @@ def _pow(base, exponent):
     base, exponent = _coerce(base), _coerce(exponent)
     if isinstance(exponent, ExactNumber):
         if exponent.value == 0:
-            return ONE
+            # ``u**0`` is one only where ``u`` itself is defined.  Retain the
+            # power node for partial expressions so domain collection can see
+            # exclusions such as x != 0 in ``(1/x)**0``.
+            return Power(base, exponent) if _requires_domain_guard(base) else ONE
         if exponent.value == 1:
             return base
         if isinstance(base, ExactNumber) and exponent.denominator == 1:
@@ -1307,7 +1359,24 @@ def _legacy_expression_supported(value):
 
 
 def simplify_symbolic(value):
-    """Return the deterministic canonical form produced by the native factories."""
+    """Return KiwiCalc's deterministic, domain-safe basic canonical form.
+
+    Contract:
+
+    * exact numeric constants are reduced and locally folded;
+    * nested sums/products are flattened, like additive terms are collected,
+      and commutative operands have deterministic lexical ordering;
+    * additive zero and multiplicative one are removed;
+    * multiplication by zero and cancellation retain guarded subexpressions
+      whenever their original domain can be smaller than the ambient domain;
+    * trivial powers and the documented exact elementary-function values are
+      reduced; and
+    * the operation is immutable and idempotent.
+
+    This is deliberately a *basic* canonical form.  It does not promise
+    expansion, factorization, rational cancellation, or general algebraic and
+    transcendental identity rewriting.
+    """
     value = to_symbolic(value)
     if isinstance(value, Add): return _add(*(simplify_symbolic(item) for item in value.terms))
     if isinstance(value, Multiply): return _mul(*(simplify_symbolic(item) for item in value.factors))
@@ -1316,8 +1385,655 @@ def simplify_symbolic(value):
     return value
 
 
+def is_canonical_symbolic(value):
+    """Return whether ``value`` already satisfies the basic canonical contract."""
+    value = to_symbolic(value)
+    return value == simplify_symbolic(value)
+
+
 def structurally_equal(first, second):
     return simplify_symbolic(first) == simplify_symbolic(second)
+
+
+# ---------------------------------------------------------------------------
+# Guarded rewrite rules
+
+
+@dataclass(frozen=True)
+class RewriteContext:
+    """Read-only context supplied to rewrite transforms and guards."""
+
+    assumptions: AssumptionSet = field(default_factory=AssumptionSet)
+    domain: str = "real"
+
+    def __post_init__(self):
+        if not isinstance(self.assumptions, AssumptionSet):
+            raise TypeError("rewrite context assumptions must be an AssumptionSet")
+        if self.domain not in {"real", "complex"}:
+            raise ValueError("rewrite domain must be 'real' or 'complex'")
+
+
+@dataclass(frozen=True)
+class RewriteRule:
+    """One deterministic local rewrite with an optional semantic guard.
+
+    ``transform(expression, context)`` returns a replacement expression or
+    ``None`` when the rule does not match. Once matched,
+    ``guard(before, after, context)`` returns ``True``, ``False``, or one or
+    more conditions required for the replacement to be valid.
+    """
+
+    identifier: str
+    transform: Callable = field(repr=False, compare=False)
+    guard: Optional[Callable] = field(default=None, repr=False, compare=False)
+    explanation: str = ""
+    domain_preserving: bool = False
+
+    def __post_init__(self):
+        if not isinstance(self.identifier, str) or not re.fullmatch(r"[a-z][a-z0-9-]*", self.identifier):
+            raise ValueError("rewrite rule identifiers must use lowercase kebab-case")
+        if not callable(self.transform):
+            raise TypeError("rewrite rule transform must be callable")
+        if self.guard is not None and not callable(self.guard):
+            raise TypeError("rewrite rule guard must be callable")
+        if not isinstance(self.explanation, str):
+            raise TypeError("rewrite rule explanation must be text")
+        if not isinstance(self.domain_preserving, bool):
+            raise TypeError("domain_preserving must be boolean")
+
+
+@dataclass(frozen=True)
+class RewriteApplication:
+    """Auditable record of one accepted local rewrite."""
+
+    rule: str
+    path: Tuple[int, ...]
+    before: SymbolicExpression
+    after: SymbolicExpression
+    required: AssumptionSet = field(default_factory=AssumptionSet)
+    introduced: AssumptionSet = field(default_factory=AssumptionSet)
+    explanation: str = ""
+
+    def __post_init__(self):
+        if not isinstance(self.rule, str) or not self.rule:
+            raise ValueError("rewrite application rule must be nonempty")
+        path = tuple(self.path)
+        if any(isinstance(index, bool) or not isinstance(index, int) or index < 0 for index in path):
+            raise ValueError("rewrite paths must contain nonnegative integer indices")
+        if not isinstance(self.before, SymbolicExpression) or not isinstance(self.after, SymbolicExpression):
+            raise TypeError("rewrite application expressions must be symbolic")
+        if not isinstance(self.required, AssumptionSet) or not isinstance(self.introduced, AssumptionSet):
+            raise TypeError("rewrite application conditions must be assumption sets")
+        if not isinstance(self.explanation, str):
+            raise TypeError("rewrite application explanation must be text")
+        object.__setattr__(self, "path", path)
+
+    @property
+    def conditions(self):
+        """Rendered view of all conditions required by the rule."""
+        return self.required.rendered
+
+    def to_dict(self):
+        return {
+            "type": "rewrite_application", "rule": self.rule,
+            "path": list(self.path), "before": self.before.to_dict(),
+            "after": self.after.to_dict(), "required": self.required.to_dict(),
+            "introduced": self.introduced.to_dict(),
+            "explanation": self.explanation,
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        if data.get("type") != "rewrite_application":
+            raise ValueError("Invalid rewrite-application payload")
+        return cls(
+            data["rule"], tuple(data["path"]), symbolic_from_dict(data["before"]),
+            symbolic_from_dict(data["after"]), AssumptionSet.from_dict(data["required"]),
+            AssumptionSet.from_dict(data["introduced"]), data.get("explanation", ""),
+        )
+
+
+@dataclass(frozen=True)
+class RewriteResult:
+    """Expression, validity assumptions, and termination diagnostics."""
+
+    expression: SymbolicExpression
+    assumptions: AssumptionSet
+    applications: Tuple[RewriteApplication, ...] = ()
+    status: str = "fixed_point"
+    message: str = ""
+
+    def __post_init__(self):
+        if not isinstance(self.expression, SymbolicExpression):
+            raise TypeError("rewrite result expression must be symbolic")
+        if not isinstance(self.assumptions, AssumptionSet):
+            raise TypeError("rewrite result assumptions must be an AssumptionSet")
+        applications = tuple(self.applications)
+        if any(not isinstance(item, RewriteApplication) for item in applications):
+            raise TypeError("rewrite result applications must be rewrite records")
+        if self.status not in {"fixed_point", "step_limit", "node_limit", "cycle"}:
+            raise ValueError("invalid rewrite result status")
+        object.__setattr__(self, "applications", applications)
+
+    @property
+    def converged(self):
+        return self.status == "fixed_point"
+
+    @property
+    def conditions(self):
+        return self.assumptions.rendered
+
+    def to_dict(self):
+        return {
+            "type": "rewrite_result", "expression": self.expression.to_dict(),
+            "assumptions": self.assumptions.to_dict(),
+            "applications": [item.to_dict() for item in self.applications],
+            "status": self.status, "message": self.message,
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        if data.get("type") != "rewrite_result":
+            raise ValueError("Invalid rewrite-result payload")
+        return cls(
+            symbolic_from_dict(data["expression"]),
+            AssumptionSet.from_dict(data["assumptions"]),
+            tuple(RewriteApplication.from_dict(item) for item in data.get("applications", ())),
+            data.get("status", "fixed_point"), data.get("message", ""),
+        )
+
+
+def _rewrite_children(expression):
+    if isinstance(expression, Add):
+        return expression.terms
+    if isinstance(expression, Multiply):
+        return expression.factors
+    if isinstance(expression, Power):
+        return expression.base, expression.exponent
+    if isinstance(expression, SymbolicFunction):
+        return expression.arguments
+    return ()
+
+
+def _rewrite_paths(expression, strategy):
+    paths = []
+
+    def visit(value, path):
+        if strategy == "top_down":
+            paths.append(path)
+        for index, child in enumerate(_rewrite_children(value)):
+            visit(child, path + (index,))
+        if strategy == "bottom_up":
+            paths.append(path)
+
+    visit(expression, ())
+    return tuple(paths)
+
+
+def _rewrite_node_at(expression, path):
+    value = expression
+    for index in path:
+        children = _rewrite_children(value)
+        if index >= len(children):
+            raise ValueError("rewrite path does not identify an expression node")
+        value = children[index]
+    return value
+
+
+def _rewrite_replace_at(expression, path, replacement):
+    if not path:
+        return simplify_symbolic(replacement)
+    index, tail = path[0], path[1:]
+    children = list(_rewrite_children(expression))
+    if index >= len(children):
+        raise ValueError("rewrite path does not identify an expression node")
+    children[index] = _rewrite_replace_at(children[index], tail, replacement)
+    if isinstance(expression, Add):
+        rebuilt = Add(tuple(children))
+    elif isinstance(expression, Multiply):
+        rebuilt = Multiply(tuple(children))
+    elif isinstance(expression, Power):
+        rebuilt = Power(*children)
+    elif isinstance(expression, SymbolicFunction):
+        rebuilt = SymbolicFunction(expression.name, tuple(children))
+    else:  # pragma: no cover - protected by the path validation above
+        raise ValueError("rewrite path descends through a leaf expression")
+    return simplify_symbolic(rebuilt)
+
+
+def _rewrite_node_count(expression):
+    return 1 + sum(_rewrite_node_count(child) for child in _rewrite_children(expression))
+
+
+def _structurally_real(expression):
+    """Conservatively identify expressions that are real on their real domain."""
+    if isinstance(expression, (ExactNumber, Symbol)):
+        return True
+    if isinstance(expression, SymbolicConstant):
+        return expression.name != "i"
+    if isinstance(expression, RootOf):
+        return expression.interval is not None
+    if isinstance(expression, Add):
+        return all(_structurally_real(term) for term in expression.terms)
+    if isinstance(expression, Multiply):
+        return all(_structurally_real(factor) for factor in expression.factors)
+    if isinstance(expression, Power):
+        return (
+            _structurally_real(expression.base)
+            and isinstance(expression.exponent, ExactNumber)
+            and expression.exponent.denominator == 1
+        )
+    if isinstance(expression, SymbolicFunction):
+        return expression.name == "abs" or all(_structurally_real(argument) for argument in expression.arguments)
+    return False
+
+
+_ALL_SIGNS = frozenset((-1, 0, 1))
+_SIGN_NAMES = {
+    frozenset(): "undefined",
+    frozenset((-1,)): "negative",
+    frozenset((0,)): "zero",
+    frozenset((1,)): "positive",
+    frozenset((-1, 0)): "nonpositive",
+    frozenset((0, 1)): "nonnegative",
+    frozenset((-1, 1)): "nonzero",
+    _ALL_SIGNS: "unknown",
+}
+_SIGNS_FOR_RELATION = {
+    "=": frozenset((0,)), "!=": frozenset((-1, 1)),
+    ">": frozenset((1,)), ">=": frozenset((0, 1)),
+    "<": frozenset((-1,)), "<=": frozenset((-1, 0)),
+}
+_REVERSED_RELATION = {"=": "=", "!=": "!=", ">": "<", ">=": "<=", "<": ">", "<=": ">="}
+
+
+def _normalized_relation_for_expression(condition, expression):
+    if condition.left == expression:
+        return condition
+    if condition.right == expression:
+        return RelationCondition(expression, _REVERSED_RELATION[condition.relation], condition.left)
+    return None
+
+
+def _direct_sign_constraints(expression, assumptions):
+    possible = _ALL_SIGNS
+    targets = tuple(
+        (RelationCondition(expression, relation, ZERO), signs)
+        for relation, signs in _SIGNS_FOR_RELATION.items()
+    )
+    for condition in assumptions.conditions:
+        if isinstance(condition, RelationCondition):
+            normalized = _normalized_relation_for_expression(condition, expression)
+            if normalized is None:
+                continue
+            for target, signs in targets:
+                if _relation_implies(normalized, target):
+                    possible &= signs
+        elif isinstance(condition, BetweenCondition) and condition.expression == expression:
+            lower_relation = ">=" if condition.lower_closed else ">"
+            upper_relation = "<=" if condition.upper_closed else "<"
+            for normalized in (
+                RelationCondition(expression, lower_relation, condition.lower),
+                RelationCondition(expression, upper_relation, condition.upper),
+            ):
+                for target, signs in targets:
+                    if _relation_implies(normalized, target):
+                        possible &= signs
+    return possible
+
+
+def _possible_signs(expression, assumptions, _seen=None):
+    expression = simplify_symbolic(expression)
+    _seen = set() if _seen is None else _seen
+    if expression in _seen or assumptions.contradictory:
+        return frozenset() if assumptions.contradictory else _ALL_SIGNS
+    seen = _seen | {expression}
+    try:
+        substituted = _substitute(expression, assumptions.substitutions)
+    except (ValueError, ZeroDivisionError, OverflowError):
+        return frozenset()
+    if substituted != expression:
+        return _possible_signs(substituted, assumptions, seen)
+
+    if isinstance(expression, ExactNumber):
+        structural = frozenset((0 if expression.value == 0 else 1 if expression.value > 0 else -1,))
+    elif isinstance(expression, SymbolicConstant):
+        structural = frozenset((1,)) if expression.name in {"pi", "e"} else frozenset()
+    elif isinstance(expression, RootOf):
+        if expression.interval is None:
+            structural = _ALL_SIGNS
+        elif expression.interval[0] >= 0:
+            structural = frozenset((1,)) if expression.interval[0] > 0 else frozenset((0, 1))
+        elif expression.interval[1] <= 0:
+            structural = frozenset((-1,)) if expression.interval[1] < 0 else frozenset((-1, 0))
+        else:
+            structural = _ALL_SIGNS
+    elif isinstance(expression, Symbol):
+        structural = _ALL_SIGNS
+    elif isinstance(expression, Add):
+        signs = tuple(_possible_signs(term, assumptions, seen) for term in expression.terms)
+        if any(not values for values in signs):
+            structural = frozenset()
+        elif all(values == frozenset((0,)) for values in signs):
+            structural = frozenset((0,))
+        elif all(values <= frozenset((0, 1)) for values in signs):
+            structural = frozenset((1,)) if any(values == frozenset((1,)) for values in signs) else frozenset((0, 1))
+        elif all(values <= frozenset((-1, 0)) for values in signs):
+            structural = frozenset((-1,)) if any(values == frozenset((-1,)) for values in signs) else frozenset((-1, 0))
+        else:
+            structural = _ALL_SIGNS
+    elif isinstance(expression, Multiply):
+        structural = frozenset((1,))
+        for factor in expression.factors:
+            factor_signs = _possible_signs(factor, assumptions, seen)
+            structural = frozenset(first * second for first in structural for second in factor_signs)
+            if not structural:
+                break
+    elif isinstance(expression, Power) and isinstance(expression.exponent, ExactNumber):
+        base = _possible_signs(expression.base, assumptions, seen)
+        exponent = expression.exponent.value
+        if exponent == 0:
+            structural = frozenset((1,))
+        else:
+            if exponent < 0:
+                base -= frozenset((0,))
+            if exponent.denominator % 2 == 0:
+                base &= frozenset((0, 1))
+            if exponent.numerator % 2 == 0:
+                structural = frozenset((0 if sign == 0 else 1 for sign in base))
+            else:
+                structural = base
+    elif isinstance(expression, Power):
+        structural = _ALL_SIGNS
+    elif isinstance(expression, SymbolicFunction):
+        argument = _possible_signs(expression.arguments[-1], assumptions, seen)
+        if expression.name in {"abs", "sqrt"}:
+            allowed = argument if expression.name == "abs" else argument & frozenset((0, 1))
+            structural = frozenset((0 if sign == 0 else 1 for sign in allowed))
+        elif expression.name == "exp":
+            structural = frozenset((1,))
+        elif expression.name == "ln":
+            if assumptions.entails(RelationCondition(expression.arguments[0], ">", ONE)):
+                structural = frozenset((1,))
+            elif assumptions.entails(RelationCondition(expression.arguments[0], "=", ONE)):
+                structural = frozenset((0,))
+            elif (
+                assumptions.entails(RelationCondition(expression.arguments[0], ">", ZERO))
+                and assumptions.entails(RelationCondition(expression.arguments[0], "<", ONE))
+            ):
+                structural = frozenset((-1,))
+            else:
+                structural = _ALL_SIGNS
+        else:
+            structural = _ALL_SIGNS
+    else:
+        structural = _ALL_SIGNS
+    return structural & _direct_sign_constraints(expression, assumptions)
+
+
+def _relation_truth_from_signs(condition, signs):
+    right = _numeric_value(condition.right)
+    if right is None or isinstance(right, complex) or right != 0 or not signs:
+        return None
+    allowed = _SIGNS_FOR_RELATION[condition.relation]
+    return True if signs <= allowed else False if signs.isdisjoint(allowed) else None
+
+
+def _defined_under_assumptions(expression, assumptions, domain):
+    if domain not in {"real", "complex"}:
+        raise ValueError("domain must be 'real' or 'complex'")
+    if assumptions.contradictory:
+        return False
+    try:
+        substituted = _substitute(expression, assumptions.substitutions)
+    except (ValueError, ZeroDivisionError, OverflowError):
+        return False
+    if substituted != expression:
+        return _defined_under_assumptions(substituted, assumptions, domain)
+    predicate = DefinedCondition(expression, domain)
+    if predicate in assumptions.conditions:
+        return True
+    if assumptions.refutes(predicate):
+        return False
+    if domain == "real" and expression == I:
+        return False
+    variable = sorted(expression.variables)[0] if expression.variables else "x"
+    undecided = False
+    for condition in _domain_conditions(expression, domain, variable):
+        condition = simplify_condition(condition, assumptions.substitutions)
+        if isinstance(condition, TruthCondition):
+            if not condition.value:
+                return False
+        elif assumptions.refutes(condition):
+            return False
+        elif not assumptions.entails(condition):
+            undecided = True
+    if undecided:
+        return None
+    if domain == "real" and not _structurally_real(expression):
+        return None
+    return True
+
+
+def _rewrite_guard_conditions(outcome):
+    if outcome is True:
+        return True, AssumptionSet()
+    if outcome is False:
+        return False, AssumptionSet()
+    if isinstance(outcome, AssumptionSet):
+        return True, outcome
+    if isinstance(outcome, (Condition, str)):
+        return True, _normalize_user_assumptions(outcome)
+    try:
+        return True, _normalize_user_assumptions(tuple(outcome))
+    except TypeError as error:
+        raise TypeError("rewrite guards must return a boolean, condition, or iterable of conditions") from error
+
+
+def _cancel_reciprocal_match(expression):
+    if not isinstance(expression, Multiply):
+        return None
+    for reciprocal_index, reciprocal in enumerate(expression.factors):
+        if not isinstance(reciprocal, Power) or reciprocal.exponent != NEG_ONE:
+            continue
+        for factor_index, factor in enumerate(expression.factors):
+            if factor_index != reciprocal_index and factor == reciprocal.base:
+                remaining = tuple(
+                    value for index, value in enumerate(expression.factors)
+                    if index not in {reciprocal_index, factor_index}
+                )
+                return reciprocal.base, _mul(*remaining)
+    return None
+
+
+def _cancel_reciprocal_transform(expression, context):
+    matched = _cancel_reciprocal_match(expression)
+    return None if matched is None else matched[1]
+
+
+def _cancel_reciprocal_guard(expression, replacement, context):
+    return RelationCondition(_cancel_reciprocal_match(expression)[0], "!=", ZERO)
+
+
+def _exp_log_transform(expression, context):
+    if (
+        isinstance(expression, SymbolicFunction) and expression.name == "exp"
+        and isinstance(expression.arguments[0], SymbolicFunction)
+        and expression.arguments[0].name == "ln"
+    ):
+        return expression.arguments[0].arguments[0]
+    return None
+
+
+def _exp_log_guard(expression, replacement, context):
+    relation = ">" if context.domain == "real" else "!="
+    return RelationCondition(replacement, relation, ZERO)
+
+
+def _sqrt_square_transform(expression, context):
+    if context.domain != "real" or not (
+        isinstance(expression, SymbolicFunction) and expression.name == "sqrt"
+        and isinstance(expression.arguments[0], Power)
+        and expression.arguments[0].exponent == ExactNumber(2)
+        and _structurally_real(expression.arguments[0].base)
+    ):
+        return None
+    return _function("abs", expression.arguments[0].base)
+
+
+def _normalize_rational_rewrite_transform(expression, context):
+    try:
+        return _rational_normalization_data(expression, None, 100)[0]
+    except (AmbiguousVariableError, UnsupportedExpressionError, ValueError, ZeroDivisionError):
+        return None
+
+
+def _normalize_rational_rewrite_guard(expression, replacement, context):
+    try:
+        _, _, condition = _rational_normalization_data(expression, None, 100)
+    except (AmbiguousVariableError, UnsupportedExpressionError, ValueError, ZeroDivisionError):
+        return False
+    return condition or True
+
+
+_STANDARD_REWRITE_RULES = {
+    "cancel-reciprocal": RewriteRule(
+        "cancel-reciprocal", _cancel_reciprocal_transform, _cancel_reciprocal_guard,
+        "Cancel one factor against its reciprocal while retaining the nonzero condition.",
+    ),
+    "exp-log-inverse": RewriteRule(
+        "exp-log-inverse", _exp_log_transform, _exp_log_guard,
+        "Apply the exponential/logarithm inverse on the logarithm's domain.",
+    ),
+    "sqrt-square": RewriteRule(
+        "sqrt-square", _sqrt_square_transform,
+        explanation="Rewrite the real principal square root of a square as an absolute value.",
+    ),
+    "normalize-rational": RewriteRule(
+        "normalize-rational", _normalize_rational_rewrite_transform,
+        _normalize_rational_rewrite_guard,
+        "Expand a univariate rational expression and cancel its exact polynomial GCD.",
+        True,
+    ),
+}
+
+_DEFAULT_REWRITE_RULES = (
+    _STANDARD_REWRITE_RULES["cancel-reciprocal"],
+    _STANDARD_REWRITE_RULES["exp-log-inverse"],
+    _STANDARD_REWRITE_RULES["sqrt-square"],
+)
+
+
+def available_rewrite_rules():
+    """Return the stable identifiers of KiwiCalc's built-in rewrite rules."""
+    return tuple(_STANDARD_REWRITE_RULES)
+
+
+def _coerce_rewrite_rules(rules):
+    if rules is None:
+        return _DEFAULT_REWRITE_RULES
+    if isinstance(rules, (str, RewriteRule)):
+        rules = (rules,)
+    try:
+        rules = tuple(rules)
+    except TypeError as error:
+        raise TypeError("rules must be rewrite rules or built-in rule identifiers") from error
+    result = []
+    for rule in rules:
+        if isinstance(rule, str):
+            try:
+                rule = _STANDARD_REWRITE_RULES[rule]
+            except KeyError as error:
+                raise ValueError(f"Unknown rewrite rule {rule!r}") from error
+        if not isinstance(rule, RewriteRule):
+            raise TypeError("rules must contain RewriteRule objects or built-in identifiers")
+        result.append(rule)
+    identifiers = [rule.identifier for rule in result]
+    if len(set(identifiers)) != len(identifiers):
+        raise ValueError("rewrite rule identifiers must be unique within a run")
+    return tuple(result)
+
+
+def rewrite_symbolic(value, rules=None, assumptions=None, *, domain="real",
+                     strategy="bottom_up", introduce_conditions=False,
+                     max_steps=100, max_nodes=10000):
+    """Apply guarded rules to a deterministic fixed point.
+
+    Unknown guards are skipped by default. With ``introduce_conditions=True``
+    they are accepted and recorded in the returned assumption set. Conditions
+    needed merely to preserve the original expression's domain are collected
+    automatically and therefore never disappear during a rewrite.
+    """
+    if domain not in {"real", "complex"}:
+        raise ValueError("domain must be 'real' or 'complex'")
+    if strategy not in {"bottom_up", "top_down"}:
+        raise ValueError("strategy must be 'bottom_up' or 'top_down'")
+    if not isinstance(introduce_conditions, bool):
+        raise TypeError("introduce_conditions must be boolean")
+    for name, limit in (("max_steps", max_steps), ("max_nodes", max_nodes)):
+        if isinstance(limit, (bool, np.bool_)) or not isinstance(limit, (int, np.integer)) or limit < 1:
+            raise ValueError(f"{name} must be a positive integer")
+    rules = _coerce_rewrite_rules(rules)
+    expression = simplify_symbolic(value)
+    if _rewrite_node_count(expression) > max_nodes:
+        raise UnsupportedExpressionError(f"Expression exceeds the {max_nodes}-node rewrite limit")
+    variable = sorted(expression.variables)[0] if expression.variables else "x"
+    current_assumptions = _normalize_user_assumptions(assumptions).merge(
+        _domain_conditions(expression, domain, variable)
+    )
+    applications = []
+    seen = {(expression, current_assumptions)}
+
+    for _ in range(int(max_steps)):
+        applied = False
+        context = RewriteContext(current_assumptions, domain)
+        for path in _rewrite_paths(expression, strategy):
+            before = _rewrite_node_at(expression, path)
+            for rule in rules:
+                replacement = rule.transform(before, context)
+                if replacement is None:
+                    continue
+                replacement = simplify_symbolic(replacement)
+                if replacement == before:
+                    continue
+                candidate = _rewrite_replace_at(expression, path, replacement)
+                if candidate == expression:
+                    continue
+                if _rewrite_node_count(candidate) > max_nodes:
+                    return RewriteResult(expression, current_assumptions, tuple(applications), "node_limit", f"A rewrite exceeded the {max_nodes}-node limit.")
+                eligible, required = _rewrite_guard_conditions(
+                    True if rule.guard is None else rule.guard(before, replacement, context)
+                )
+                candidate_variable = sorted(candidate.variables)[0] if candidate.variables else variable
+                if not rule.domain_preserving:
+                    required = required.merge(_domain_conditions(candidate, domain, candidate_variable))
+                if not eligible or any(current_assumptions.refutes(condition) for condition in required):
+                    continue
+                introduced = AssumptionSet(tuple(
+                    condition for condition in required
+                    if not current_assumptions.entails(condition)
+                ))
+                if introduced and not introduce_conditions:
+                    continue
+                next_assumptions = current_assumptions.merge(introduced)
+                if next_assumptions.contradictory:
+                    continue
+                state = candidate, next_assumptions
+                if state in seen:
+                    return RewriteResult(expression, current_assumptions, tuple(applications), "cycle", f"Rule {rule.identifier!r} would revisit an earlier rewrite state.")
+                applications.append(RewriteApplication(
+                    rule.identifier, path, before, replacement, required,
+                    introduced, rule.explanation,
+                ))
+                expression, current_assumptions = candidate, next_assumptions
+                seen.add(state)
+                applied = True
+                break
+            if applied:
+                break
+        if not applied:
+            return RewriteResult(expression, current_assumptions, tuple(applications), "fixed_point", "No applicable guarded rewrite remains.")
+    return RewriteResult(expression, current_assumptions, tuple(applications), "step_limit", f"The {max_steps}-step rewrite limit was reached.")
 
 
 def differentiate_symbolic(value, variable="x"):
@@ -1430,6 +2146,15 @@ class IntervalSolutionSet(SolutionSet):
         if lower is not None and upper is not None:
             if isinstance(lower, complex) or isinstance(upper, complex) or lower > upper:
                 raise ValueError("Interval bounds must be ordered real values")
+
+    def __str__(self):
+        lower = "-inf" if self.lower is None else str(self.lower)
+        upper = "inf" if self.upper is None else str(self.upper)
+        return (
+            ("[" if self.lower_closed and self.lower is not None else "(")
+            + f"{lower}, {upper}"
+            + ("]" if self.upper_closed and self.upper is not None else ")")
+        )
 
 
 @dataclass(frozen=True)
@@ -1879,6 +2604,150 @@ def _poly_gcd(first, second):
     return _poly_monic(first)
 
 
+def _normalization_variable(expression, variable):
+    variables = expression.variables
+    if isinstance(variable, Symbol):
+        variable = variable.name
+    if variable is not None and (not isinstance(variable, str) or not re.fullmatch(r"[A-Za-z_]\w*", variable)):
+        raise ValueError("normalization variable must be a valid identifier")
+    if variable is None:
+        if len(variables) > 1:
+            raise AmbiguousVariableError("Specify variable= for multivariable normalization")
+        variable = next(iter(variables), "x")
+    unsupported = variables - {variable}
+    if unsupported:
+        raise UnsupportedExpressionError(
+            "Polynomial normalization currently requires exact numeric coefficients; "
+            f"unsupported symbols: {', '.join(sorted(unsupported))}"
+        )
+    return variable
+
+
+def _normalization_degree(value):
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)) or value < 0:
+        raise ValueError("max_degree must be a nonnegative integer")
+    return int(value)
+
+
+def _polynomial_expression(polynomial, variable):
+    terms = []
+    symbol = Symbol(variable)
+    for degree in sorted(polynomial, reverse=True):
+        coefficient = polynomial[degree]
+        if not coefficient:
+            continue
+        if degree == 0:
+            terms.append(ExactNumber(coefficient))
+            continue
+        power = symbol if degree == 1 else _pow(symbol, ExactNumber(degree))
+        if coefficient == 1:
+            terms.append(power)
+        elif coefficient == -1:
+            terms.append(_neg(power))
+        else:
+            terms.append(_mul(ExactNumber(coefficient), power))
+    return _add(*terms)
+
+
+def _primitive_rational_pair(numerator, denominator):
+    if not denominator:
+        raise ZeroDivisionError("rational expression has an identically zero denominator")
+    values = tuple(numerator.values()) + tuple(denominator.values())
+    scale = reduce(
+        lambda first, second: abs(first * second) // math.gcd(first, second),
+        (value.denominator for value in values), 1,
+    )
+    integers = [int(value * scale) for value in values]
+    content = reduce(math.gcd, (abs(value) for value in integers if value), 0) or 1
+    factor = Rational(scale, content)
+    numerator = {degree: coefficient * factor for degree, coefficient in numerator.items()}
+    denominator = {degree: coefficient * factor for degree, coefficient in denominator.items()}
+    if denominator[max(denominator)] < 0:
+        numerator = {degree: -coefficient for degree, coefficient in numerator.items()}
+        denominator = {degree: -coefficient for degree, coefficient in denominator.items()}
+    return _poly_clean(numerator), _poly_clean(denominator)
+
+
+def _rational_normalization_data(expression, variable, max_degree):
+    expression = simplify_symbolic(expression)
+    variable = _normalization_variable(expression, variable)
+    max_degree = _normalization_degree(max_degree)
+    parsed = _poly_fraction(expression, variable, max_degree=max_degree)
+    if parsed is None:
+        raise UnsupportedExpressionError("Expression is not a univariate rational polynomial")
+    numerator, denominator = map(_poly_clean, parsed)
+    if not denominator:
+        raise ZeroDivisionError("rational expression has an identically zero denominator")
+    common = _poly_gcd(numerator, denominator)
+    cancelled = common if common and max(common) > 0 else None
+    if cancelled is not None:
+        numerator, numerator_remainder = _poly_divmod(numerator, cancelled)
+        denominator, denominator_remainder = _poly_divmod(denominator, cancelled)
+        if numerator_remainder or denominator_remainder:  # pragma: no cover - exact GCD invariant
+            raise ArithmeticError("polynomial GCD did not divide exactly")
+    numerator, denominator = _primitive_rational_pair(numerator, denominator)
+    numerator_expression = _polynomial_expression(numerator, variable)
+    denominator_expression = _polynomial_expression(denominator, variable)
+    normalized = (
+        numerator_expression
+        if denominator == {0: Rational(1)}
+        else _mul(numerator_expression, _pow(denominator_expression, NEG_ONE))
+    )
+    condition = None
+    if cancelled is not None:
+        condition = _condition_predicate(
+            _polynomial_expression(cancelled, variable), "!= 0", variable,
+        )
+    return normalized, variable, condition
+
+
+def normalize_polynomial_symbolic(value, variable=None, *, max_degree=100):
+    """Return the exact expanded canonical form of one univariate polynomial."""
+    expression = simplify_symbolic(value)
+    variable = _normalization_variable(expression, variable)
+    max_degree = _normalization_degree(max_degree)
+    parsed = _poly_fraction(expression, variable, max_degree=max_degree)
+    if parsed is None or not parsed[1] or any(degree != 0 for degree in parsed[1]):
+        raise UnsupportedExpressionError("Expression is not a univariate polynomial")
+    denominator = parsed[1].get(0, Rational(0))
+    if not denominator:
+        raise ZeroDivisionError("polynomial expression has a zero scalar denominator")
+    polynomial = {degree: coefficient / denominator for degree, coefficient in parsed[0].items()}
+    return _polynomial_expression(_poly_clean(polynomial), variable)
+
+
+def normalize_rational_symbolic(value, variable=None, assumptions=None, *,
+                                domain="real", max_degree=100):
+    """Normalize and exactly cancel a univariate rational expression.
+
+    The returned :class:`RewriteResult` retains the source domain and records
+    the nonzero condition for every cancelled polynomial GCD.
+    """
+    if domain not in {"real", "complex"}:
+        raise ValueError("domain must be 'real' or 'complex'")
+    source = simplify_symbolic(value)
+    normalized, variable, cancellation = _rational_normalization_data(
+        source, variable, max_degree,
+    )
+    source_conditions = _domain_conditions(source, domain, variable)
+    required = AssumptionSet(() if cancellation is None else (cancellation,))
+    candidate_conditions = _domain_conditions(normalized, domain, variable)
+    combined = _normalize_user_assumptions(assumptions).merge(
+        source_conditions, candidate_conditions, required,
+    )
+    applications = ()
+    if normalized != source:
+        applications = (RewriteApplication(
+            "normalize-rational", (), source, normalized, required,
+            AssumptionSet(),
+            "Expand the exact rational form and cancel its polynomial GCD while retaining excluded points.",
+        ),)
+    return RewriteResult(
+        normalized, combined, applications, "fixed_point",
+        "The expression is in primitive univariate rational form.",
+    )
+
+
 def _sturm_sequence(polynomial):
     """Return the exact Sturm chain for a square-free rational polynomial."""
     first = _poly_monic(polynomial)
@@ -1998,10 +2867,26 @@ def _sqrt_exact(value, domain):
         if domain == "real":
             return None
         return _mul(I, _sqrt_exact(-value, "real"))
-    numerator, denominator = math.isqrt(value.numerator), math.isqrt(value.denominator)
-    if numerator * numerator == value.numerator and denominator * denominator == value.denominator:
-        return ExactNumber(numerator, denominator)
-    return _function("sqrt", ExactNumber(value))
+    # Rationalize first, then extract the largest integer square.  This keeps
+    # exact trigonometric roots recognizable (sqrt(32)/8 -> sqrt(2)/2) and
+    # avoids needlessly large radical display forms.
+    radicand = value.numerator * value.denominator
+    outside, remaining, factor = 1, radicand, 2
+    while factor <= 10000 and factor * factor <= remaining:
+        square = factor * factor
+        while remaining % square == 0:
+            outside *= factor
+            remaining //= square
+        factor += 1
+    remaining_root = math.isqrt(remaining)
+    if remaining_root * remaining_root == remaining:
+        outside *= remaining_root
+        remaining = 1
+    coefficient = ExactNumber(outside, value.denominator)
+    return (
+        coefficient if remaining == 1
+        else _mul(coefficient, _function("sqrt", ExactNumber(remaining)))
+    )
 
 
 def _numeric_value(value):
@@ -2037,6 +2922,19 @@ def _condition_predicate(expression, relation, variable):
         ">= -1": (">=", NEG_ONE),
         "!= 1": ("!=", ONE),
     }[relation]
+    if (
+        relation == ">= 0"
+        and isinstance(expression, Power)
+        and isinstance(expression.exponent, ExactNumber)
+        and expression.exponent.denominator == 1
+        and expression.exponent.numerator > 0
+        and expression.exponent.numerator % 2 == 0
+        and _structurally_real(expression.base)
+    ):
+        # A positive even integer power of a real-defined base is always
+        # nonnegative. The base is visited separately, so any restrictions
+        # required for the base itself are still retained.
+        return None
     numeric = _numeric_value(expression)
     if numeric is not None:
         predicate = RelationCondition(expression, relation_operator, reference)
@@ -2367,13 +3265,21 @@ def _apply_interval(solution_set, interval):
         return ConditionalSolutionSet(bounded, conditions)
     if isinstance(solution_set, IntervalSolutionSet):
         lower_numeric, upper_numeric = _numeric_value(solution_set.lower), _numeric_value(solution_set.upper)
+        if solution_set.lower is None:
+            lower_numeric = -math.inf
+        if solution_set.upper is None:
+            upper_numeric = math.inf
         if lower_numeric is None or upper_numeric is None:
             conditions = _interval_conditions(solution_set.lower, interval) + _interval_conditions(solution_set.upper, interval)
             return ConditionalSolutionSet(solution_set, conditions)
         lower, upper = max(float(lower_numeric), interval[0]), min(float(upper_numeric), interval[1])
         if lower > upper:
             return EMPTY
-        return IntervalSolutionSet(lower, upper, solution_set.lower_closed, solution_set.upper_closed)
+        return IntervalSolutionSet(
+            lower, upper,
+            True if interval[0] > float(lower_numeric) else solution_set.lower_closed,
+            True if interval[1] < float(upper_numeric) else solution_set.upper_closed,
+        )
     if isinstance(solution_set, FiniteSolutionSet):
         known_values, known_multiplicities, symbolic_parts = [], [], []
         for value, multiplicity in zip(solution_set.values, solution_set.multiplicities):
@@ -2532,6 +3438,14 @@ def _candidate_valid(left, right, variable, candidate, domain, tolerance, assump
         assignments[variable] = numeric
     if numeric is not None and assumptions.evaluate(assignments, tolerance=tolerance) is False:
         return False, math.inf
+    # Parameterized equations often contain roots that can be certified
+    # structurally even though not every parameter has a numeric assignment.
+    # For example, x=1 is always a root of (a*x+b)*(x-1)=0.  Prefer that exact
+    # proof before attempting numerical evaluation of the remaining symbols.
+    symbolic_assignments = dict(assumptions.substitutions)
+    symbolic_assignments[variable] = candidate
+    if _substitute(_add(left, _neg(right)), symbolic_assignments) == ZERO:
+        return True, 0.0
     if isinstance(candidate, RootOf):
         return True, None
     if numeric is None:
@@ -2576,171 +3490,1365 @@ def _verify_finite(solution_set, left, right, variable, domain, tolerance, assum
     return (FiniteSolutionSet(tuple(kept), tuple(multiplicities)) if kept else EMPTY), tuple(residuals)
 
 
-def _symbolic_dispatch(left, right, variable, domain, interval, trace):
-    residual = _collapse_guarded_zeros(_add(left, _neg(right)))
-    trace("normalize", f"{left} = {right}", f"{residual} = 0", "Move all terms to the left side.")
-    rational = _poly_fraction(residual, variable)
-    if rational is not None:
-        numerator, denominator = rational
-        conditions = AssumptionSet()
-        if denominator != {0: Rational(1)}:
-            denominator_expression = _polynomial_expression(denominator, variable)
-            conditions = AssumptionSet((RelationCondition(
-                denominator_expression, "!=", ZERO,
-                f"{_poly_string(denominator, variable)} != 0",
-            ),))
-            trace("clear_denominators", f"{residual} = 0", f"{_poly_string(numerator, variable)} = 0", "Clear denominators while retaining their exclusions.", conditions)
-        solution_set, complete = _solve_polynomial_exact(numerator, variable, domain, interval)
-        if isinstance(solution_set, FiniteSolutionSet) and denominator != {0: Rational(1)}:
-            values, mults = [], []
-            for value, multiplicity in zip(solution_set.values, solution_set.multiplicities):
-                numeric = _numeric_value(value)
-                if numeric is None or abs(complex(_poly_eval_numeric(denominator, numeric))) > 1e-10:
-                    values.append(value); mults.append(multiplicity)
-            solution_set = FiniteSolutionSet(tuple(values), tuple(mults)) if values else EMPTY
-        trace("solve_polynomial", f"{_poly_string(numerator, variable)} = 0", str(solution_set), "Solve the exact polynomial numerator.")
-        return solution_set, conditions, complete, "symbolic"
+@dataclass(frozen=True)
+class _SolverRuleContext:
+    """Immutable context shared by native equation-transformation rules."""
 
-    symbolic_affine = _affine_symbolic(residual, variable)
-    if symbolic_affine is not None and symbolic_affine[0] != ZERO:
-        coefficient, constant = symbolic_affine
-        root = _mul(_neg(constant), _pow(coefficient, NEG_ONE))
-        coefficient_value = _numeric_value(coefficient)
-        if coefficient_value is not None and coefficient_value != 0:
-            result = FiniteSolutionSet((root,)) if _in_interval(root, interval) else EMPTY
-            trace("solve_symbolic_linear", f"{residual} = 0", str(result), "Divide by the known nonzero symbolic coefficient.")
-            return result, AssumptionSet(), True, "symbolic"
-        branches = UnionSolutionSet((
-            ConditionalSolutionSet(FiniteSolutionSet((root,)), (RelationCondition(coefficient, "!=", ZERO),)),
-            ConditionalSolutionSet(UniversalSolutionSet(domain), (
-                RelationCondition(coefficient, "=", ZERO),
-                RelationCondition(constant, "=", ZERO),
-            )),
-        ))
-        trace("solve_conditional_linear", f"{residual} = 0", str(branches), "Divide by a symbolic coefficient only on its nonzero branch; retain the identity branch.")
-        return branches, AssumptionSet(), True, "symbolic"
+    variable: str
+    domain: str
+    interval: Optional[Tuple[float, float]]
+    assumptions: AssumptionSet
 
-    # Non-polynomial complex inversion requires explicit logarithm branches and
-    # other multivalued-function machinery.  Never return a principal branch as
-    # though it were the complete complex solution.
-    if domain == "complex":
-        return None, AssumptionSet(), False, "symbolic"
 
-    left_logs, right_logs = _log_terms(left), _log_terms(right)
-    if left_logs and right_logs and left_logs[0] == right_logs[0]:
-        left_argument = _mul(*left_logs[1])
-        right_argument = _mul(*right_logs[1])
-        combined = _add(left_argument, _neg(right_argument))
-        parsed = _poly_fraction(combined, variable)
-        if parsed is not None:
-            result, complete = _solve_polynomial_exact(parsed[0], variable, domain, interval)
-            restrictions = AssumptionSet(tuple(_render_condition(argument, "> 0", variable) for argument in left_logs[1] + right_logs[1]))
-            trace("combine_logarithms", f"{left} = {right}", f"{left_argument} = {right_argument}", "Combine logarithms with the same base and retain every argument-domain restriction.", restrictions)
-            return result, restrictions, complete, "symbolic"
+@dataclass(frozen=True)
+class _SolverRuleOutcome:
+    """One equation rewrite or terminal solution produced by a solver rule."""
 
-    function_side = _same_function_side(left, right)
-    if function_side:
-        function, constant = function_side
-        argument = function.arguments[-1]
-        if function.name == "exp" and not _variables(constant):
-            affine = _affine_symbolic(argument, variable)
-            numeric = _numeric_value(constant)
-            if numeric is not None and (isinstance(numeric, complex) or numeric <= 0):
-                return EMPTY, AssumptionSet(), True, "symbolic"
-            if affine is not None and affine[0] != ZERO:
-                coefficient, offset = affine
-                inverse = _function("ln", constant)
-                root = _mul(_add(inverse, _neg(offset)), _pow(coefficient, NEG_ONE))
-                result = FiniteSolutionSet((root,))
-                condition = AssumptionSet() if numeric is not None else AssumptionSet((RelationCondition(constant, ">", ZERO),))
-                trace("invert_exponential", f"{function} = {constant}", f"{argument} = {inverse}", "Apply the natural logarithm and retain positivity of the right side.", condition)
-                return result, condition, True, "symbolic"
-        if function.name == "abs" and isinstance(constant, ExactNumber):
-            if constant.value < 0:
-                return EMPTY, AssumptionSet(), True, "symbolic"
-            roots = []
-            for target in (constant, ExactNumber(-constant.value)):
-                root = _solve_affine_equal(argument, target, variable)
-                if root is not None and root not in roots:
-                    roots.append(root)
-            if roots:
-                result = FiniteSolutionSet(tuple(roots))
-                trace("split_absolute", f"abs({argument}) = {constant}", str(result), "Split an absolute-value equation into its positive and negative branches.")
-                return result, AssumptionSet(), True, "symbolic"
-        if function.name == "sqrt":
-            if isinstance(constant, ExactNumber) and constant.value < 0 and domain == "real":
-                return EMPTY, AssumptionSet(), True, "symbolic"
-            squared = _add(argument, _neg(_pow(constant, ExactNumber(2))))
-            parsed = _poly_fraction(squared, variable)
-            if parsed is not None and parsed[1] == {0: Rational(1)}:
-                result, complete = _solve_polynomial_exact(parsed[0], variable, domain, interval)
-                conditions = AssumptionSet((RelationCondition(constant, ">=", ZERO),)) if domain == "real" else AssumptionSet()
-                trace("isolate_radical", f"sqrt({argument}) = {constant}", f"{squared} = 0", "Square the isolated principal radical; candidates will be checked in the original equation.", conditions)
-                return result, conditions, complete, "symbolic"
-        if function.name in {"ln", "log"} and len(function.arguments) in {1, 2}:
-            affine = _affine(argument, variable)
-            if affine and affine[0] and not _variables(constant):
-                inverse = _function("exp", constant) if function.name == "ln" or len(function.arguments) == 1 else _pow(function.arguments[0], constant)
-                root = ExactNumber(-affine[1] / affine[0]) if inverse == ZERO else _mul(ExactNumber(1 / affine[0]), _add(inverse, ExactNumber(-affine[1])))
-                result = FiniteSolutionSet((root,)) if _in_interval(root, interval) else EMPTY
-                condition = _render_condition(argument, "> 0", variable)
-                conditions = AssumptionSet((condition,))
-                trace("invert_logarithm", f"{function} = {constant}", f"{argument} = {inverse}", "Apply the matching exponential function and preserve the logarithm domain.", conditions)
-                return result, conditions, True, "symbolic"
-        if function.name in {"sin", "cos", "tan"} and not _variables(constant):
-            affine, phase = _affine(argument, variable), _trig_phase(function.name, constant)
-            numeric = _numeric_value(constant)
-            if function.name in {"sin", "cos"} and numeric is not None and (isinstance(numeric, complex) or not -1 <= numeric <= 1):
-                return EMPTY, AssumptionSet(), True, "symbolic"
-            if phase is None:
-                phase = _function({"sin": "asin", "cos": "acos", "tan": "atan"}[function.name], constant)
-            if affine and affine[0] and phase is not None:
-                a, b = affine
-                if function.name == "sin":
-                    if constant == ZERO:
-                        families = _parameter_family(variable, a, b, ZERO, PI)
-                    elif constant in {NEG_ONE, ONE}:
-                        families = _parameter_family(variable, a, b, phase, _mul(ExactNumber(2), PI))
-                    else:
-                        families = UnionSolutionSet((_parameter_family(variable, a, b, phase, _mul(ExactNumber(2), PI)), _parameter_family(variable, a, b, _add(PI, _neg(phase)), _mul(ExactNumber(2), PI))))
-                elif function.name == "cos":
-                    if constant in {NEG_ONE, ONE}:
-                        families = _parameter_family(variable, a, b, phase, _mul(ExactNumber(2), PI))
-                    else:
-                        families = UnionSolutionSet((_parameter_family(variable, a, b, phase, _mul(ExactNumber(2), PI)), _parameter_family(variable, a, b, phase, _mul(ExactNumber(2), PI), sign=-1)))
-                else:
-                    families = _parameter_family(variable, a, b, phase, PI)
-                result = _filter_parametric(families, interval)
-                trace("invert_trigonometric", f"{function} = {constant}", str(result), "Return the complete integer-parameterized periodic family." if interval is None else "Enumerate the exact family over the requested interval.")
-                return result, AssumptionSet(), True, "symbolic"
+    after: Any
+    complete: bool = True
+    method: str = "symbolic"
+    explanation: str = ""
+    conditions: AssumptionSet = field(default_factory=AssumptionSet)
 
-    # exp(affine)=constant is represented as a function; constant-base powers
-    # are represented by Power.
-    power_side = (left, right) if isinstance(left, Power) and not _variables(right) else (right, left) if isinstance(right, Power) and not _variables(left) else None
-    if power_side:
-        power, constant = power_side
-        affine = _affine(power.exponent, variable)
-        if affine and affine[0] and not _variables(power.base) and not _variables(constant):
-            base_value, constant_value = _numeric_value(power.base), _numeric_value(constant)
-            if base_value is None or constant_value is None or isinstance(base_value, complex) or isinstance(constant_value, complex):
-                return None, AssumptionSet(), False, "symbolic"
-            if base_value == 1:
-                return (UniversalSolutionSet(domain) if constant_value == 1 else EMPTY), AssumptionSet(), True, "symbolic"
-            if base_value <= 0:
-                return None, AssumptionSet(), False, "symbolic"
-            if constant_value <= 0:
-                return EMPTY, AssumptionSet(), True, "symbolic"
-            if isinstance(constant, Power) and constant.base == power.base and not _variables(constant.exponent):
-                target = constant.exponent
-            elif power.base == constant:
-                target = ONE
+    def __post_init__(self):
+        if not isinstance(self.after, (EquationState, SolutionSet)):
+            raise TypeError("solver-rule outcomes must contain an equation or solution set")
+        if not isinstance(self.complete, bool):
+            raise TypeError("solver-rule completeness must be boolean")
+        if self.method not in {"symbolic"}:
+            raise ValueError("native solver rules currently support the symbolic method")
+        if not isinstance(self.explanation, str):
+            raise TypeError("solver-rule explanations must be text")
+        object.__setattr__(self, "conditions", _coerce_assumption_set(self.conditions))
+
+    @property
+    def terminal(self):
+        return isinstance(self.after, SolutionSet)
+
+
+@dataclass(frozen=True)
+class _SolverRule:
+    """Ordered guarded rule used by the unified symbolic solver."""
+
+    identifier: str
+    transform: Callable = field(repr=False, compare=False)
+    guard: Optional[Callable] = field(default=None, repr=False, compare=False)
+    explanation: str = ""
+    domains: Tuple[str, ...] = ("real", "complex")
+
+    def __post_init__(self):
+        if not isinstance(self.identifier, str) or not re.fullmatch(r"[a-z][a-z0-9_]*", self.identifier):
+            raise ValueError("solver-rule identifiers must use lowercase snake_case")
+        if not callable(self.transform):
+            raise TypeError("solver-rule transform must be callable")
+        if self.guard is not None and not callable(self.guard):
+            raise TypeError("solver-rule guard must be callable")
+        if not isinstance(self.explanation, str):
+            raise TypeError("solver-rule explanation must be text")
+        domains = tuple(self.domains)
+        if not domains or any(domain not in {"real", "complex"} for domain in domains):
+            raise ValueError("solver-rule domains must contain 'real' and/or 'complex'")
+        object.__setattr__(self, "domains", domains)
+
+
+def _solver_residual(state):
+    return _collapse_guarded_zeros(state.residual)
+
+
+def _solver_clear_denominators(state, context):
+    rational = _poly_fraction(_solver_residual(state), context.variable)
+    if rational is None or rational[1] == {0: Rational(1)}:
+        return None
+    return _SolverRuleOutcome(EquationState(
+        _polynomial_expression(rational[0], context.variable), ZERO,
+    ))
+
+
+def _replace_subexpressions(expression, replacements):
+    replacement = replacements.get(expression)
+    if replacement is not None:
+        return replacement
+    if isinstance(expression, Add):
+        return _add(*(_replace_subexpressions(term, replacements) for term in expression.terms))
+    if isinstance(expression, Multiply):
+        return _mul(*(_replace_subexpressions(factor, replacements) for factor in expression.factors))
+    if isinstance(expression, Power):
+        return _pow(
+            _replace_subexpressions(expression.base, replacements),
+            _replace_subexpressions(expression.exponent, replacements),
+        )
+    if isinstance(expression, SymbolicFunction):
+        return _function(
+            expression.name,
+            *(_replace_subexpressions(argument, replacements) for argument in expression.arguments),
+        )
+    return expression
+
+
+def _expression_occurrences(expression, target):
+    if expression == target:
+        return 1
+    return sum(_expression_occurrences(child, target) for child in _rewrite_children(expression))
+
+
+def _substitution_kernels(expression, variable):
+    """Return deterministic repeated/nonlinear kernels supported by solver rules."""
+    kernels = set()
+
+    def visit(value):
+        if isinstance(value, SymbolicFunction) and variable in value.variables:
+            if value.name in {"abs", "exp", "ln", "log", "sin", "cos", "tan", "sqrt"}:
+                kernels.add(value)
+        elif (
+            isinstance(value, Power) and isinstance(value.exponent, ExactNumber)
+            and value.exponent.denominator == 1 and value.exponent.numerator > 1
+            and variable in value.base.variables
+            and _affine_symbolic(value.base, variable) is None
+        ):
+            # A repeated nonlinear algebraic base, such as x^2+1 or x+1/x.
+            kernels.add(value.base)
+        elif (
+            isinstance(value, Power) and variable in value.exponent.variables
+            and variable not in value.base.variables
+        ):
+            kernels.add(value)
+        for child in _rewrite_children(value):
+            visit(child)
+
+    visit(expression)
+    return tuple(sorted(kernels, key=lambda value: (_rewrite_node_count(value), str(value))))
+
+
+def _fresh_substitution_symbol(expression):
+    name = "_kiwi_u"
+    while name in expression.variables:
+        name = "_" + name
+    return Symbol(name)
+
+
+def _integer_affine_ratio(expression, reference, variable):
+    affine = _affine(expression, variable)
+    reference_affine = _affine(reference, variable)
+    if not affine or not reference_affine or not reference_affine[0]:
+        return None
+    ratio = affine[0] / reference_affine[0]
+    if ratio.denominator != 1 or ratio <= 0 or affine[1] != reference_affine[1] * ratio:
+        return None
+    return int(ratio)
+
+
+def _exact_positive_base_power(reference, value, max_power=16):
+    if not isinstance(reference, ExactNumber) or not isinstance(value, ExactNumber):
+        return None
+    if reference.value <= 0 or reference.value == 1 or value.value <= 0:
+        return None
+    result = Rational(1)
+    for power in range(1, max_power + 1):
+        result *= reference.value
+        if result == value.value:
+            return power
+    return None
+
+
+def _family_substitution_maps(expression, variable, auxiliary):
+    """Yield common exponential-family maps such as exp(2x)->u^2."""
+    nodes = []
+
+    def visit(value):
+        if (
+            isinstance(value, SymbolicFunction) and value.name == "exp"
+            and variable in value.arguments[-1].variables
+        ) or (
+            isinstance(value, Power) and variable in value.exponent.variables
+            and variable not in value.base.variables
+        ):
+            nodes.append(value)
+        for child in _rewrite_children(value):
+            visit(child)
+
+    visit(expression)
+    nodes = tuple(dict.fromkeys(nodes))
+    for reference in sorted(nodes, key=str):
+        mapping = {}
+        for node in nodes:
+            if isinstance(reference, SymbolicFunction) != isinstance(node, SymbolicFunction):
+                break
+            if isinstance(reference, SymbolicFunction):
+                ratio = _integer_affine_ratio(
+                    node.arguments[-1], reference.arguments[-1], variable,
+                )
             else:
-                target = _exact_log_ratio(power.base, constant) or _mul(_function("ln", constant), _pow(_function("ln", power.base), NEG_ONE))
-            root = _mul(ExactNumber(1 / affine[0]), _add(target, ExactNumber(-affine[1])))
-            result = FiniteSolutionSet((root,)) if _in_interval(root, interval) else EMPTY
-            trace("invert_exponential", f"{power} = {constant}", str(result), "Apply logarithms to isolate the exponent.")
-            return result, AssumptionSet(), True, "symbolic"
-    return None, AssumptionSet(), False, "symbolic"
+                base_power = _exact_positive_base_power(reference.base, node.base)
+                exponent_ratio = _integer_affine_ratio(
+                    node.exponent, reference.exponent, variable,
+                )
+                ratio = None if base_power is None or exponent_ratio is None else base_power * exponent_ratio
+            if ratio is None:
+                break
+            mapping[node] = auxiliary if ratio == 1 else _pow(auxiliary, ExactNumber(ratio))
+        else:
+            yield reference, mapping
+
+
+def _scale_solution_multiplicity(solution_set, factor):
+    if factor == 1 or isinstance(solution_set, EmptySolutionSet):
+        return solution_set
+    if isinstance(solution_set, FiniteSolutionSet):
+        return FiniteSolutionSet(
+            solution_set.values,
+            tuple(multiplicity * factor for multiplicity in solution_set.multiplicities),
+        )
+    if isinstance(solution_set, UnionSolutionSet):
+        return UnionSolutionSet(tuple(
+            _scale_solution_multiplicity(part, factor) for part in solution_set.sets
+        ))
+    if isinstance(solution_set, ConditionalSolutionSet):
+        return ConditionalSolutionSet(
+            _scale_solution_multiplicity(solution_set.solution_set, factor),
+            solution_set.conditions,
+        )
+    return solution_set
+
+
+def _combine_substitution_solutions(parts):
+    flattened = []
+    for part in parts:
+        if isinstance(part, EmptySolutionSet):
+            continue
+        flattened.extend(part.sets if isinstance(part, UnionSolutionSet) else (part,))
+    finite, symbolic = {}, []
+    for part in flattened:
+        if isinstance(part, FiniteSolutionSet):
+            for value, multiplicity in zip(part.values, part.multiplicities):
+                finite[value] = finite.get(value, 0) + multiplicity
+        elif part not in symbolic:
+            symbolic.append(part)
+    if finite:
+        ordered = sorted(
+            finite.items(),
+            key=lambda pair: (
+                complex(_numeric_value(pair[0]) or 0).real,
+                complex(_numeric_value(pair[0]) or 0).imag,
+                str(pair[0]),
+            ),
+        )
+        symbolic.insert(0, FiniteSolutionSet(
+            tuple(value for value, _ in ordered),
+            tuple(multiplicity for _, multiplicity in ordered),
+        ))
+    return EMPTY if not symbolic else symbolic[0] if len(symbolic) == 1 else UnionSolutionSet(tuple(symbolic))
+
+
+def _solution_branch_count(solution_set):
+    if isinstance(solution_set, EmptySolutionSet):
+        return 0
+    if isinstance(solution_set, FiniteSolutionSet):
+        return len(solution_set.values)
+    if isinstance(solution_set, UnionSolutionSet):
+        return sum(_solution_branch_count(part) for part in solution_set.sets)
+    if isinstance(solution_set, ConditionalSolutionSet):
+        return _solution_branch_count(solution_set.solution_set)
+    return 1
+
+
+def _solve_substituted_polynomial(state, context, kernel, replaced, auxiliary):
+    try:
+        parsed = _poly_fraction(replaced, auxiliary.name, max_degree=32)
+    except UnsupportedExpressionError:
+        return None
+    if parsed is None or not parsed[0] or max(parsed[0], default=0) < 1:
+        return None
+    numerator, denominator = parsed
+    outer_degree = max(numerator)
+    occurrences = _expression_occurrences(_solver_residual(state), kernel)
+    direct_inner_equation = (
+        state.left == kernel and context.variable not in _variables(state.right)
+        or state.right == kernel and context.variable not in _variables(state.left)
+    )
+    if outer_degree == 1 and direct_inner_equation:
+        # The dedicated inverse rule must finish kernel = constant. Replacing
+        # that equation by an identical temporary-variable solve would recurse.
+        return None
+    if (
+        outer_degree < 2 and denominator == {0: Rational(1)} and occurrences < 2
+        and not isinstance(kernel, SymbolicFunction)
+    ):
+        return None
+    outer, complete = _solve_polynomial_exact(
+        numerator, auxiliary.name, context.domain, None,
+    )
+    if not complete or not isinstance(outer, (FiniteSolutionSet, EmptySolutionSet)):
+        return None
+    if isinstance(outer, EmptySolutionSet):
+        return _SolverRuleOutcome(EMPTY, explanation=f"Substitute {auxiliary} = {kernel} and solve the outer polynomial.")
+    parts, conditions = [], AssumptionSet()
+    for target, multiplicity in zip(outer.values, outer.multiplicities):
+        numeric = _numeric_value(target)
+        if denominator != {0: Rational(1)} and numeric is not None:
+            if abs(complex(_poly_eval_numeric(denominator, numeric))) <= 1e-12:
+                continue
+        inner, inner_conditions, inner_complete, _ = _symbolic_dispatch(
+            kernel, target, context.variable, context.domain, context.interval,
+            lambda *args: None, context.assumptions, max_transformations=16,
+        )
+        if inner is None or not inner_complete:
+            return None
+        parts.append(_scale_solution_multiplicity(inner, multiplicity))
+        if sum(_solution_branch_count(part) for part in parts) > 128:
+            return None
+        conditions = conditions.merge(inner_conditions)
+    result = _combine_substitution_solutions(parts)
+    return _SolverRuleOutcome(
+        result, explanation=f"Substitute {auxiliary} = {kernel}, solve the exact outer polynomial, then solve every inner branch.",
+        conditions=conditions,
+    )
+
+
+def _solve_symbolic_substitution_branches(solution_set, kernel, context):
+    """Lift a conditional outer solution set through ``kernel = value``."""
+    if isinstance(solution_set, EmptySolutionSet):
+        return EMPTY, AssumptionSet(), True
+    if isinstance(solution_set, UniversalSolutionSet):
+        return UniversalSolutionSet(context.domain), AssumptionSet(), True
+    if isinstance(solution_set, ConditionalSolutionSet):
+        nested, conditions, complete = _solve_symbolic_substitution_branches(
+            solution_set.solution_set, kernel, context,
+        )
+        return (
+            _condition_solution_set(nested, solution_set.assumptions),
+            conditions,
+            complete,
+        )
+    if isinstance(solution_set, UnionSolutionSet):
+        parts, conditions = [], AssumptionSet()
+        for subset in solution_set.sets:
+            nested, nested_conditions, complete = _solve_symbolic_substitution_branches(
+                subset, kernel, context,
+            )
+            if not complete:
+                return None, conditions, False
+            parts.append(nested)
+            conditions = conditions.merge(nested_conditions)
+        return _combine_substitution_solutions(parts), conditions, True
+    if not isinstance(solution_set, FiniteSolutionSet):
+        return None, AssumptionSet(), False
+    parts, conditions = [], AssumptionSet()
+    for target, multiplicity in zip(
+        solution_set.values, solution_set.multiplicities,
+    ):
+        inner, inner_conditions, complete, _ = _symbolic_dispatch(
+            kernel, target, context.variable, context.domain, context.interval,
+            lambda *args: None, context.assumptions,
+            max_transformations=16,
+        )
+        if inner is None or not complete:
+            return None, conditions, False
+        parts.append(_scale_solution_multiplicity(inner, multiplicity))
+        conditions = conditions.merge(inner_conditions)
+        if sum(_solution_branch_count(part) for part in parts) > 128:
+            return None, conditions, False
+    return _combine_substitution_solutions(parts), conditions, True
+
+
+def _solver_algebraic_substitution(state, context):
+    residual = _solver_residual(state)
+    auxiliary = _fresh_substitution_symbol(residual)
+
+    # Parameter-aware biquadratics and related sparse quartics.  The ordinary
+    # exact-coefficient path below remains preferable when all coefficients are
+    # rational because it produces the most compact RootOf/multiplicity data.
+    symbolic_polynomial = _symbolic_polynomial_coefficients(
+        residual, context.variable, max_degree=4,
+    )
+    if symbolic_polynomial is not None:
+        positive_degrees = tuple(
+            degree for degree in symbolic_polynomial if degree > 0
+        )
+        common_degree = reduce(math.gcd, positive_degrees, 0)
+        outer_degree = max(positive_degrees, default=0) // max(common_degree, 1)
+        symbolic_coefficients = set().union(*(
+            _variables(coefficient) for coefficient in symbolic_polynomial.values()
+        ))
+        if common_degree > 1 and outer_degree == 2 and symbolic_coefficients:
+            kernel = _pow(Symbol(context.variable), ExactNumber(common_degree))
+            outer_expression = _add(*(
+                coefficient if degree == 0 else _mul(
+                    coefficient,
+                    auxiliary if degree == common_degree else _pow(
+                        auxiliary, ExactNumber(degree // common_degree),
+                    ),
+                )
+                for degree, coefficient in symbolic_polynomial.items()
+            ))
+            outer, outer_conditions, complete, _ = _symbolic_dispatch(
+                outer_expression, ZERO, auxiliary.name, context.domain, None,
+                lambda *args: None, context.assumptions,
+                max_transformations=16,
+            )
+            if outer is not None and complete:
+                result, inner_conditions, inner_complete = (
+                    _solve_symbolic_substitution_branches(outer, kernel, context)
+                )
+                if result is not None and inner_complete:
+                    return _SolverRuleOutcome(
+                        result,
+                        explanation=(
+                            f"Substitute {auxiliary} = {kernel}, solve the "
+                            "parameter-aware outer quadratic, then solve every "
+                            "conditional inner branch."
+                        ),
+                        conditions=outer_conditions.merge(inner_conditions),
+                    )
+
+    # Sparse polynomial powers: x^6 - 5*x^3 + 6 becomes u^2 - 5*u + 6.
+    polynomial = _poly_fraction(residual, context.variable)
+    if polynomial is not None and polynomial[1] == {0: Rational(1)}:
+        positive_degrees = tuple(degree for degree in polynomial[0] if degree > 0)
+        common_degree = reduce(math.gcd, positive_degrees, 0)
+        outer_degree = max(positive_degrees, default=0) // max(common_degree, 1)
+        if common_degree > 1 and outer_degree > 1:
+            kernel = _pow(Symbol(context.variable), ExactNumber(common_degree))
+            replaced = _polynomial_expression(
+                {degree // common_degree: coefficient for degree, coefficient in polynomial[0].items()},
+                auxiliary.name,
+            )
+            outcome = _solve_substituted_polynomial(
+                state, context, kernel, replaced, auxiliary,
+            )
+            if outcome is not None:
+                return outcome
+
+    # Exact repeated subexpressions, including powers of one function call.
+    if context.domain == "real":
+        for kernel in _substitution_kernels(residual, context.variable):
+            replaced = _replace_subexpressions(residual, {kernel: auxiliary})
+            outcome = _solve_substituted_polynomial(
+                state, context, kernel, replaced, auxiliary,
+            )
+            if outcome is not None:
+                return outcome
+
+        # Compatible exponential families need not share an identical tree:
+        # exp(2*x) and exp(x), or 4^x and 2^x, map to powers of one u.
+        for kernel, replacements in _family_substitution_maps(
+            residual, context.variable, auxiliary,
+        ):
+            replaced = _replace_subexpressions(residual, replacements)
+            outcome = _solve_substituted_polynomial(
+                state, context, kernel, replaced, auxiliary,
+            )
+            if outcome is not None:
+                return outcome
+    return None
+
+
+def _solver_clear_denominators_guard(state, outcome, context):
+    denominator = _poly_fraction(_solver_residual(state), context.variable)[1]
+    return RelationCondition(
+        _polynomial_expression(denominator, context.variable), "!=", ZERO,
+        f"{_poly_string(denominator, context.variable)} != 0",
+    )
+
+
+def _solver_polynomial(state, context):
+    rational = _poly_fraction(_solver_residual(state), context.variable)
+    if rational is None or rational[1] != {0: Rational(1)}:
+        return None
+    solution_set, complete = _solve_polynomial_exact(
+        rational[0], context.variable, context.domain, context.interval,
+    )
+    return _SolverRuleOutcome(solution_set, complete)
+
+
+def _symbolic_polynomial_coefficients(expression, variable, *, max_degree=4,
+                                      max_terms=64):
+    """Collect a bounded polynomial whose coefficients may be symbolic."""
+    if variable not in _variables(expression):
+        return {0: expression}
+    if isinstance(expression, Symbol):
+        return {1: ONE} if expression.name == variable else {0: expression}
+    if isinstance(expression, Add):
+        result = {}
+        for term in expression.terms:
+            parsed = _symbolic_polynomial_coefficients(
+                term, variable, max_degree=max_degree, max_terms=max_terms,
+            )
+            if parsed is None:
+                return None
+            for degree, coefficient in parsed.items():
+                result[degree] = _add(result.get(degree, ZERO), coefficient)
+            result = {degree: value for degree, value in result.items() if value != ZERO}
+            if len(result) > max_terms:
+                return None
+        return result
+    if isinstance(expression, Multiply):
+        result = {0: ONE}
+        for factor in expression.factors:
+            parsed = _symbolic_polynomial_coefficients(
+                factor, variable, max_degree=max_degree, max_terms=max_terms,
+            )
+            if parsed is None:
+                return None
+            product_coefficients = {}
+            for first_degree, first_coefficient in result.items():
+                for second_degree, second_coefficient in parsed.items():
+                    degree = first_degree + second_degree
+                    if degree > max_degree:
+                        return None
+                    product_coefficients[degree] = _add(
+                        product_coefficients.get(degree, ZERO),
+                        _mul(first_coefficient, second_coefficient),
+                    )
+            result = {
+                degree: value for degree, value in product_coefficients.items()
+                if value != ZERO
+            }
+            if len(result) > max_terms:
+                return None
+        return result
+    if (
+        isinstance(expression, Power)
+        and isinstance(expression.exponent, ExactNumber)
+        and expression.exponent.denominator == 1
+        and 0 <= expression.exponent.numerator <= max_degree
+    ):
+        parsed = _symbolic_polynomial_coefficients(
+            expression.base, variable,
+            max_degree=max_degree, max_terms=max_terms,
+        )
+        if parsed is None:
+            return None
+        result = {0: ONE}
+        for _ in range(expression.exponent.numerator):
+            next_result = {}
+            for first_degree, first_coefficient in result.items():
+                for second_degree, second_coefficient in parsed.items():
+                    degree = first_degree + second_degree
+                    if degree > max_degree:
+                        return None
+                    next_result[degree] = _add(
+                        next_result.get(degree, ZERO),
+                        _mul(first_coefficient, second_coefficient),
+                    )
+            result = {
+                degree: value for degree, value in next_result.items()
+                if value != ZERO
+            }
+            if len(result) > max_terms:
+                return None
+        return result
+    return None
+
+
+def _condition_solution_set(solution_set, conditions):
+    conditions = _coerce_assumption_set(conditions)
+    if isinstance(solution_set, EmptySolutionSet) or not conditions:
+        return solution_set
+    if isinstance(solution_set, UnionSolutionSet):
+        parts = tuple(
+            _condition_solution_set(part, conditions) for part in solution_set.sets
+        )
+        parts = tuple(part for part in parts if not isinstance(part, EmptySolutionSet))
+        return EMPTY if not parts else parts[0] if len(parts) == 1 else UnionSolutionSet(parts)
+    if isinstance(solution_set, ConditionalSolutionSet):
+        combined = conditions.merge(solution_set.assumptions)
+        return ConditionalSolutionSet(solution_set.solution_set, combined.conditions)
+    return ConditionalSolutionSet(solution_set, conditions.conditions)
+
+
+def _symbolic_linear_solution_set(coefficient, constant, domain):
+    coefficient_value = _numeric_value(coefficient)
+    constant_value = _numeric_value(constant)
+    if coefficient_value is not None:
+        if coefficient_value != 0:
+            return FiniteSolutionSet((
+                _mul(_neg(constant), _pow(coefficient, NEG_ONE)),
+            ))
+        if constant_value is not None:
+            return UniversalSolutionSet(domain) if constant_value == 0 else EMPTY
+    root = _mul(_neg(constant), _pow(coefficient, NEG_ONE))
+    return UnionSolutionSet((
+        ConditionalSolutionSet(
+            FiniteSolutionSet((root,)),
+            (RelationCondition(coefficient, "!=", ZERO),),
+        ),
+        ConditionalSolutionSet(
+            UniversalSolutionSet(domain),
+            (RelationCondition(coefficient, "=", ZERO),
+             RelationCondition(constant, "=", ZERO)),
+        ),
+    ))
+
+
+def _symbolic_quadratic_nonzero_leading(a, b, c, domain):
+    discriminant = _add(
+        _pow(b, ExactNumber(2)),
+        _neg(_mul(ExactNumber(4), a, c)),
+    )
+    center = _mul(_neg(b), _pow(_mul(ExactNumber(2), a), NEG_ONE))
+    radical_term = _mul(
+        _function("sqrt", discriminant),
+        _pow(_mul(ExactNumber(2), a), NEG_ONE),
+    )
+    distinct = FiniteSolutionSet((
+        _add(center, radical_term),
+        _add(center, _neg(radical_term)),
+    ))
+    repeated = FiniteSolutionSet((center,), (2,))
+    discriminant_value = _numeric_value(discriminant)
+    if discriminant_value is not None:
+        discriminant_value = complex(discriminant_value)
+        if domain == "real":
+            if abs(discriminant_value.imag) > 1e-12 or discriminant_value.real < 0:
+                return EMPTY
+            return repeated if abs(discriminant_value.real) <= 1e-12 else distinct
+        return repeated if abs(discriminant_value) <= 1e-12 else distinct
+    if domain == "real":
+        return UnionSolutionSet((
+            ConditionalSolutionSet(
+                distinct, (RelationCondition(discriminant, ">", ZERO),),
+            ),
+            ConditionalSolutionSet(
+                repeated, (RelationCondition(discriminant, "=", ZERO),),
+            ),
+        ))
+    return UnionSolutionSet((
+        ConditionalSolutionSet(
+            distinct, (RelationCondition(discriminant, "!=", ZERO),),
+        ),
+        ConditionalSolutionSet(
+            repeated, (RelationCondition(discriminant, "=", ZERO),),
+        ),
+    ))
+
+
+def _solver_symbolic_quadratic(state, context):
+    polynomial = _symbolic_polynomial_coefficients(
+        _solver_residual(state), context.variable, max_degree=2,
+    )
+    if polynomial is None or max(polynomial, default=0) != 2:
+        return None
+    a = polynomial[2]
+    b = polynomial.get(1, ZERO)
+    c = polynomial.get(0, ZERO)
+    if not (_variables(a) | _variables(b) | _variables(c)):
+        return None  # Exact numeric coefficients belong to solve_polynomial.
+    leading_value = _numeric_value(a)
+    if leading_value is not None:
+        if leading_value == 0:
+            solution_set = _symbolic_linear_solution_set(b, c, context.domain)
+        else:
+            solution_set = _symbolic_quadratic_nonzero_leading(
+                a, b, c, context.domain,
+            )
+    else:
+        quadratic = _condition_solution_set(
+            _symbolic_quadratic_nonzero_leading(a, b, c, context.domain),
+            (RelationCondition(a, "!=", ZERO),),
+        )
+        degenerate = _condition_solution_set(
+            _symbolic_linear_solution_set(b, c, context.domain),
+            (RelationCondition(a, "=", ZERO),),
+        )
+        solution_set = _combine_substitution_solutions((quadratic, degenerate))
+    return _SolverRuleOutcome(
+        solution_set,
+        explanation=(
+            "Apply the exact symbolic quadratic formula and retain the "
+            "leading-coefficient, discriminant, and degenerate linear branches."
+        ),
+    )
+
+
+def _solver_zero_product(state, context):
+    residual = _solver_residual(state)
+    if not isinstance(residual, Multiply):
+        return None
+    variable_factors = [
+        factor for factor in residual.factors
+        if context.variable in _variables(factor)
+    ]
+    parameter_factors = [
+        factor for factor in residual.factors
+        if context.variable not in _variables(factor)
+        and not isinstance(factor, ExactNumber)
+    ]
+    if not variable_factors or len(variable_factors) + len(parameter_factors) < 2:
+        return None
+    parts = []
+    conditions = AssumptionSet()
+    for factor in variable_factors:
+        solution_set, factor_conditions, complete, _ = _symbolic_dispatch(
+            factor, ZERO, context.variable, context.domain, context.interval,
+            lambda *args: None, context.assumptions,
+            max_transformations=16,
+        )
+        if solution_set is None or not complete:
+            return None
+        parts.append(solution_set)
+        conditions = conditions.merge(factor_conditions)
+    parts.extend(
+        ConditionalSolutionSet(
+            UniversalSolutionSet(context.domain),
+            (RelationCondition(factor, "=", ZERO),),
+        )
+        for factor in parameter_factors
+    )
+    return _SolverRuleOutcome(
+        _combine_substitution_solutions(parts), conditions=conditions,
+        explanation=(
+            "Apply the zero-product property to every factor and retain "
+            "parameter-only zero branches."
+        ),
+    )
+
+
+def _solver_symbolic_linear(state, context):
+    affine = _affine_symbolic(_solver_residual(state), context.variable)
+    if affine is None or affine[0] == ZERO:
+        return None
+    coefficient, constant = affine
+    root = _mul(_neg(constant), _pow(coefficient, NEG_ONE))
+    coefficient_value = _numeric_value(coefficient)
+    if coefficient_value is not None and coefficient_value != 0:
+        result = FiniteSolutionSet((root,)) if _in_interval(root, context.interval) else EMPTY
+        return _SolverRuleOutcome(
+            result, explanation="Divide by the known nonzero symbolic coefficient.",
+        )
+    branches = UnionSolutionSet((
+        ConditionalSolutionSet(
+            FiniteSolutionSet((root,)),
+            (RelationCondition(coefficient, "!=", ZERO),),
+        ),
+        ConditionalSolutionSet(
+            UniversalSolutionSet(context.domain),
+            (RelationCondition(coefficient, "=", ZERO),
+             RelationCondition(constant, "=", ZERO)),
+        ),
+    ))
+    return _SolverRuleOutcome(
+        branches,
+        explanation=(
+            "Divide by a symbolic coefficient only on its nonzero branch; "
+            "retain the identity branch."
+        ),
+    )
+
+
+def _solver_combine_logarithms(state, context):
+    left_logs, right_logs = _log_terms(state.left), _log_terms(state.right)
+    if not left_logs or not right_logs or left_logs[0] != right_logs[0]:
+        return None
+    left_argument = _mul(*left_logs[1])
+    right_argument = _mul(*right_logs[1])
+    if _poly_fraction(_add(left_argument, _neg(right_argument)), context.variable) is None:
+        return None
+    return _SolverRuleOutcome(EquationState(left_argument, right_argument))
+
+
+def _solver_combine_logarithms_guard(state, outcome, context):
+    left_logs, right_logs = _log_terms(state.left), _log_terms(state.right)
+    return AssumptionSet(tuple(
+        _render_condition(argument, "> 0", context.variable)
+        for argument in left_logs[1] + right_logs[1]
+    ))
+
+
+def _trigonometric_nodes(expression):
+    nodes = []
+
+    def visit(value):
+        if (
+            isinstance(value, SymbolicFunction)
+            and value.name in {"sin", "cos"}
+            and value not in nodes
+        ):
+            nodes.append(value)
+        for child in _rewrite_children(value):
+            visit(child)
+
+    visit(expression)
+    return tuple(sorted(nodes, key=lambda value: (str(value.arguments[-1]), value.name)))
+
+
+def _replace_even_trigonometric_powers(expression, source, target):
+    if (
+        isinstance(expression, Power) and expression.base == source
+        and isinstance(expression.exponent, ExactNumber)
+        and expression.exponent.denominator == 1
+        and expression.exponent.numerator > 0
+        and expression.exponent.numerator % 2 == 0
+    ):
+        identity = _add(ONE, _neg(_pow(target, ExactNumber(2))))
+        return _pow(identity, ExactNumber(expression.exponent.numerator // 2))
+    if isinstance(expression, Add):
+        return _add(*(
+            _replace_even_trigonometric_powers(term, source, target)
+            for term in expression.terms
+        ))
+    if isinstance(expression, Multiply):
+        return _mul(*(
+            _replace_even_trigonometric_powers(factor, source, target)
+            for factor in expression.factors
+        ))
+    if isinstance(expression, Power):
+        return _pow(
+            _replace_even_trigonometric_powers(expression.base, source, target),
+            _replace_even_trigonometric_powers(expression.exponent, source, target),
+        )
+    if isinstance(expression, SymbolicFunction):
+        return _function(expression.name, *(
+            _replace_even_trigonometric_powers(argument, source, target)
+            for argument in expression.arguments
+        ))
+    return expression
+
+
+def _factor_common_symbolic_term(expression):
+    if not isinstance(expression, Add) or len(expression.terms) < 2:
+        return expression
+
+    def factors(term):
+        return term.factors if isinstance(term, Multiply) else (term,)
+
+    candidates = [
+        factor for factor in factors(expression.terms[0])
+        if not isinstance(factor, ExactNumber)
+    ]
+    common = next((
+        candidate for candidate in candidates
+        if all(candidate in factors(term) for term in expression.terms[1:])
+    ), None)
+    if common is None:
+        return expression
+    remainders = []
+    for term in expression.terms:
+        values = list(factors(term))
+        values.remove(common)
+        remainders.append(_mul(*values))
+    return _mul(common, _add(*remainders))
+
+
+def _multiple_angle_replacement(node, reference, ratio):
+    argument = reference.arguments[-1]
+    sine = _function("sin", argument)
+    cosine = _function("cos", argument)
+    if ratio == 2 and node.name == "sin":
+        return _mul(ExactNumber(2), sine, cosine)
+    if ratio == 2 and node.name == "cos":
+        return (
+            _add(ONE, _neg(_mul(ExactNumber(2), _pow(sine, ExactNumber(2)))))
+            if reference.name == "sin"
+            else _add(_mul(ExactNumber(2), _pow(cosine, ExactNumber(2))), NEG_ONE)
+        )
+    if ratio == 3 and node.name == "sin":
+        return _add(
+            _mul(ExactNumber(3), sine),
+            _neg(_mul(ExactNumber(4), _pow(sine, ExactNumber(3)))),
+        )
+    if ratio == 3 and node.name == "cos":
+        return _add(
+            _mul(ExactNumber(4), _pow(cosine, ExactNumber(3))),
+            _neg(_mul(ExactNumber(3), cosine)),
+        )
+    return None
+
+
+def _solver_trigonometric_reduction(state, context):
+    residual = _solver_residual(state)
+    nodes = _trigonometric_nodes(residual)
+
+    # Prefer reducing a higher angle to a function already present.  This
+    # strictly lowers the largest affine angle multiplier, preventing cycles.
+    for node in nodes:
+        for reference in nodes:
+            if node == reference:
+                continue
+            ratio = _integer_affine_ratio(
+                node.arguments[-1], reference.arguments[-1], context.variable,
+            )
+            if ratio not in {2, 3} or ratio == 3 and node.name != reference.name:
+                continue
+            replacement = _multiple_angle_replacement(node, reference, ratio)
+            if replacement is None:
+                continue
+            reduced = _replace_subexpressions(residual, {node: replacement})
+            reduced = _factor_common_symbolic_term(reduced)
+            if reduced != residual and _rewrite_node_count(reduced) <= 512:
+                return _SolverRuleOutcome(
+                    EquationState(reduced, ZERO),
+                    explanation=(
+                        f"Reduce the {ratio}-angle {node.name} expression to "
+                        "the existing base angle and factor any common term."
+                    ),
+                )
+
+    # If one of sin(u), cos(u) occurs only through even powers, replace it by
+    # 1 minus the square of the other.  Accept only candidates that become a
+    # univariate rational polynomial in the retained trig function.
+    by_argument = {}
+    for node in nodes:
+        by_argument.setdefault(node.arguments[-1], {})[node.name] = node
+    auxiliary = _fresh_substitution_symbol(residual)
+    for pair in by_argument.values():
+        if set(pair) != {"sin", "cos"}:
+            continue
+        for source_name, target_name in (("sin", "cos"), ("cos", "sin")):
+            candidate = _replace_even_trigonometric_powers(
+                residual, pair[source_name], pair[target_name],
+            )
+            if candidate == residual:
+                continue
+            replaced = _replace_subexpressions(
+                candidate, {pair[target_name]: auxiliary},
+            )
+            try:
+                polynomial = _poly_fraction(replaced, auxiliary.name, max_degree=16)
+            except UnsupportedExpressionError:
+                polynomial = None
+            if polynomial is None or polynomial[1] != {0: Rational(1)}:
+                continue
+            candidate = _factor_common_symbolic_term(candidate)
+            return _SolverRuleOutcome(
+                EquationState(candidate, ZERO),
+                explanation=(
+                    f"Use {source_name}(u)^2 + {target_name}(u)^2 = 1 "
+                    f"to reduce the equation to a polynomial in {target_name}(u)."
+                ),
+            )
+    return None
+
+
+def _solver_invert_exponential(state, context):
+    function_side = _same_function_side(state.left, state.right)
+    if not function_side:
+        return None
+    function, constant = function_side
+    if function.name != "exp" or _variables(constant):
+        return None
+    argument = function.arguments[-1]
+    affine = _affine_symbolic(argument, context.variable)
+    if affine is None or affine[0] == ZERO:
+        return None
+    numeric = _numeric_value(constant)
+    if numeric is not None and (isinstance(numeric, complex) or numeric <= 0):
+        return _SolverRuleOutcome(EMPTY)
+    return _SolverRuleOutcome(EquationState(argument, _function("ln", constant)))
+
+
+def _solver_invert_exponential_guard(state, outcome, context):
+    if outcome.terminal:
+        return True
+    function_side = _same_function_side(state.left, state.right)
+    if function_side and function_side[0].name == "exp":
+        return RelationCondition(function_side[1], ">", ZERO)
+    return True
+
+
+def _solver_split_absolute(state, context):
+    function_side = _same_function_side(state.left, state.right)
+    if not function_side:
+        return None
+    function, constant = function_side
+    if function.name != "abs" or not isinstance(constant, ExactNumber):
+        return None
+    if constant.value < 0:
+        return _SolverRuleOutcome(EMPTY)
+    roots = []
+    for target in (constant, ExactNumber(-constant.value)):
+        root = _solve_affine_equal(function.arguments[-1], target, context.variable)
+        if root is not None and root not in roots:
+            roots.append(root)
+    return _SolverRuleOutcome(FiniteSolutionSet(tuple(roots))) if roots else None
+
+
+def _solver_isolate_radical(state, context):
+    function_side = _same_function_side(state.left, state.right)
+    if not function_side:
+        return None
+    function, constant = function_side
+    if function.name != "sqrt":
+        return None
+    if (
+        context.domain == "real" and isinstance(constant, ExactNumber)
+        and constant.value < 0
+    ):
+        return _SolverRuleOutcome(EMPTY)
+    try:
+        squared_target = _expand_square(constant)
+    except UnsupportedExpressionError:
+        return None
+    if _rewrite_node_count(squared_target) > 512:
+        return None
+    return _SolverRuleOutcome(EquationState(
+        function.arguments[-1], squared_target,
+    ))
+
+
+def _solver_isolate_radical_guard(state, outcome, context):
+    if outcome.terminal or context.domain != "real":
+        return True
+    _, constant = _same_function_side(state.left, state.right)
+    return RelationCondition(constant, ">=", ZERO)
+
+
+def _square_factor(expression):
+    if isinstance(expression, SymbolicFunction) and expression.name == "sqrt":
+        return expression.arguments[-1]
+    if isinstance(expression, Multiply):
+        return _mul(*(_expand_square(factor) for factor in expression.factors))
+    return _pow(expression, ExactNumber(2))
+
+
+def _expand_square(expression):
+    """Expand a bounded square while reducing principal ``sqrt(u)^2``."""
+    if not isinstance(expression, Add):
+        return _square_factor(expression)
+    terms = expression.terms
+    expanded = [_square_factor(term) for term in terms]
+    for first in range(len(terms)):
+        for second in range(first + 1, len(terms)):
+            expanded.append(_mul(ExactNumber(2), terms[first], terms[second]))
+            if len(expanded) > 64:
+                raise UnsupportedExpressionError(
+                    "Radical square expansion exceeds the 64-term limit"
+                )
+    return _add(*expanded)
+
+
+def _expand_distributive(expression, *, max_terms=64):
+    """Expand only additive products needed to expose radical terms."""
+    if isinstance(expression, Add):
+        return _add(*(
+            _expand_distributive(term, max_terms=max_terms)
+            for term in expression.terms
+        ))
+    if not isinstance(expression, Multiply):
+        return expression
+    terms = [ONE]
+    for factor in expression.factors:
+        factor = _expand_distributive(factor, max_terms=max_terms)
+        choices = factor.terms if isinstance(factor, Add) else (factor,)
+        if len(terms) * len(choices) > max_terms:
+            raise UnsupportedExpressionError(
+                f"Radical expansion exceeds the {max_terms}-term limit"
+            )
+        terms = [_mul(term, choice) for term in terms for choice in choices]
+    return _add(*terms)
+
+
+def _additive_radical_term(term, variable):
+    if isinstance(term, SymbolicFunction) and term.name == "sqrt":
+        return (term, ONE) if variable in _variables(term) else None
+    if not isinstance(term, Multiply):
+        return None
+    radicals = [
+        factor for factor in term.factors
+        if isinstance(factor, SymbolicFunction) and factor.name == "sqrt"
+    ]
+    if len(radicals) != 1:
+        return None
+    radical = radicals[0]
+    if variable not in _variables(radical):
+        return None
+    coefficient_factors = tuple(
+        factor for factor in term.factors if factor is not radical
+    )
+    coefficient = _mul(*coefficient_factors)
+    coefficient_value = _numeric_value(coefficient)
+    if (
+        variable in _variables(coefficient)
+        or coefficient_value is None or coefficient_value == 0
+        or any(
+            isinstance(factor, SymbolicFunction) and factor.name == "sqrt"
+            for factor in coefficient_factors
+        )
+    ):
+        return None
+    return radical, coefficient
+
+
+def _solver_isolate_additive_radical(state, context):
+    try:
+        residual = _expand_distributive(_solver_residual(state))
+    except UnsupportedExpressionError:
+        return None
+    terms = residual.terms if isinstance(residual, Add) else (residual,)
+    for index, term in enumerate(terms):
+        parsed = _additive_radical_term(term, context.variable)
+        if parsed is None:
+            continue
+        radical, coefficient = parsed
+        rest = _add(*(value for position, value in enumerate(terms) if position != index))
+        target = _mul(_neg(rest), _pow(coefficient, NEG_ONE))
+        candidate = EquationState(radical, target)
+        if candidate == state or _rewrite_node_count(target) > 512:
+            continue
+        return _SolverRuleOutcome(
+            candidate,
+            explanation=(
+                "Isolate one additive principal square root before guarded "
+                "squaring; repeat until an algebraic equation remains."
+            ),
+        )
+    return None
+
+
+def _solver_invert_logarithm(state, context):
+    function_side = _same_function_side(state.left, state.right)
+    if not function_side:
+        return None
+    function, constant = function_side
+    if function.name not in {"ln", "log"} or len(function.arguments) not in {1, 2}:
+        return None
+    argument = function.arguments[-1]
+    affine = _affine(argument, context.variable)
+    if not affine or not affine[0] or _variables(constant):
+        return None
+    inverse = (
+        _function("exp", constant)
+        if function.name == "ln" or len(function.arguments) == 1
+        else _pow(function.arguments[0], constant)
+    )
+    return _SolverRuleOutcome(EquationState(argument, inverse))
+
+
+def _solver_invert_logarithm_guard(state, outcome, context):
+    function, _ = _same_function_side(state.left, state.right)
+    return _render_condition(function.arguments[-1], "> 0", context.variable)
+
+
+def _solver_invert_trigonometric(state, context):
+    function_side = _same_function_side(state.left, state.right)
+    if not function_side:
+        return None
+    function, constant = function_side
+    if function.name not in {"sin", "cos", "tan"} or _variables(constant):
+        return None
+    argument = function.arguments[-1]
+    affine, phase = _affine(argument, context.variable), _trig_phase(function.name, constant)
+    numeric = _numeric_value(constant)
+    if (
+        function.name in {"sin", "cos"} and numeric is not None
+        and (isinstance(numeric, complex) or not -1 <= numeric <= 1)
+    ):
+        return _SolverRuleOutcome(EMPTY)
+    if phase is None:
+        phase = _function(
+            {"sin": "asin", "cos": "acos", "tan": "atan"}[function.name],
+            constant,
+        )
+    if not affine or not affine[0] or phase is None:
+        return None
+    a, b = affine
+    if function.name == "sin":
+        if constant == ZERO:
+            families = _parameter_family(context.variable, a, b, ZERO, PI)
+        elif constant in {NEG_ONE, ONE}:
+            families = _parameter_family(
+                context.variable, a, b, phase, _mul(ExactNumber(2), PI),
+            )
+        else:
+            families = UnionSolutionSet((
+                _parameter_family(
+                    context.variable, a, b, phase, _mul(ExactNumber(2), PI),
+                ),
+                _parameter_family(
+                    context.variable, a, b, _add(PI, _neg(phase)),
+                    _mul(ExactNumber(2), PI),
+                ),
+            ))
+    elif function.name == "cos":
+        if constant in {NEG_ONE, ONE}:
+            families = _parameter_family(
+                context.variable, a, b, phase, _mul(ExactNumber(2), PI),
+            )
+        else:
+            families = UnionSolutionSet((
+                _parameter_family(
+                    context.variable, a, b, phase, _mul(ExactNumber(2), PI),
+                ),
+                _parameter_family(
+                    context.variable, a, b, phase, _mul(ExactNumber(2), PI),
+                    sign=-1,
+                ),
+            ))
+    else:
+        families = _parameter_family(context.variable, a, b, phase, PI)
+    explanation = (
+        "Return the complete integer-parameterized periodic family."
+        if context.interval is None
+        else "Enumerate the exact family over the requested interval."
+    )
+    return _SolverRuleOutcome(
+        _filter_parametric(families, context.interval), explanation=explanation,
+    )
+
+
+def _solver_invert_power(state, context):
+    power_side = (
+        (state.left, state.right)
+        if isinstance(state.left, Power) and not _variables(state.right)
+        else (state.right, state.left)
+        if isinstance(state.right, Power) and not _variables(state.left)
+        else None
+    )
+    if not power_side:
+        return None
+    power, constant = power_side
+    affine = _affine(power.exponent, context.variable)
+    if not affine or not affine[0] or _variables(power.base) or _variables(constant):
+        return None
+    base_value, constant_value = _numeric_value(power.base), _numeric_value(constant)
+    if (
+        base_value is None or constant_value is None
+        or isinstance(base_value, complex) or isinstance(constant_value, complex)
+        or base_value <= 0
+    ):
+        return None
+    if base_value == 1:
+        return _SolverRuleOutcome(
+            UniversalSolutionSet(context.domain) if constant_value == 1 else EMPTY,
+        )
+    if constant_value <= 0:
+        return _SolverRuleOutcome(EMPTY)
+    if (
+        isinstance(constant, Power) and constant.base == power.base
+        and not _variables(constant.exponent)
+    ):
+        target = constant.exponent
+    elif power.base == constant:
+        target = ONE
+    else:
+        target = _exact_log_ratio(power.base, constant) or _mul(
+            _function("ln", constant), _pow(_function("ln", power.base), NEG_ONE),
+        )
+    return _SolverRuleOutcome(EquationState(power.exponent, target))
+
+
+def _solver_invert_any_exponential(state, context):
+    """Handle both ``exp(u)`` and constant-base ``a^u`` with one rule."""
+    outcome = _solver_invert_exponential(state, context)
+    return outcome if outcome is not None else _solver_invert_power(state, context)
+
+
+_SOLVER_RULES = (
+    _SolverRule(
+        "clear_denominators", _solver_clear_denominators,
+        _solver_clear_denominators_guard,
+        "Clear denominators while retaining their exclusions.",
+    ),
+    _SolverRule(
+        "trigonometric_reduction", _solver_trigonometric_reduction,
+        explanation="Apply bounded Pythagorean or low multiple-angle identities.",
+        domains=("real",),
+    ),
+    _SolverRule(
+        "algebraic_substitution", _solver_algebraic_substitution,
+        explanation="Solve a polynomial in a repeated algebraic subexpression.",
+    ),
+    _SolverRule(
+        "solve_polynomial", _solver_polynomial,
+        explanation="Solve the exact polynomial numerator.",
+    ),
+    _SolverRule(
+        "solve_zero_product", _solver_zero_product,
+        explanation="Apply the zero-product property to exact factors.",
+    ),
+    _SolverRule(
+        "solve_symbolic_quadratic", _solver_symbolic_quadratic,
+        explanation="Apply the exact parameter-aware quadratic formula.",
+    ),
+    _SolverRule("solve_symbolic_linear", _solver_symbolic_linear),
+    _SolverRule(
+        "combine_logarithms", _solver_combine_logarithms,
+        _solver_combine_logarithms_guard,
+        "Combine logarithms with the same base and retain every "
+        "argument-domain restriction.",
+        domains=("real",),
+    ),
+    _SolverRule(
+        "invert_exponential", _solver_invert_any_exponential,
+        _solver_invert_exponential_guard,
+        "Apply logarithms to isolate the exponent and retain the required real-domain conditions.",
+        domains=("real",),
+    ),
+    _SolverRule(
+        "split_absolute", _solver_split_absolute,
+        explanation="Split an absolute-value equation into its positive and negative branches.",
+        domains=("real",),
+    ),
+    _SolverRule(
+        "isolate_radical", _solver_isolate_radical,
+        _solver_isolate_radical_guard,
+        "Square the isolated principal radical; candidates will be checked "
+        "in the original equation.",
+        domains=("real",),
+    ),
+    _SolverRule(
+        "isolate_additive_radical", _solver_isolate_additive_radical,
+        explanation="Isolate one additive square-root term before guarded squaring.",
+        domains=("real",),
+    ),
+    _SolverRule(
+        "invert_logarithm", _solver_invert_logarithm,
+        _solver_invert_logarithm_guard,
+        "Apply the matching exponential function and preserve the logarithm domain.",
+        domains=("real",),
+    ),
+    _SolverRule(
+        "invert_trigonometric", _solver_invert_trigonometric,
+        explanation="Return the complete integer-parameterized periodic family.",
+        domains=("real",),
+    ),
+)
+
+
+def _solver_rule_conditions(rule, state, outcome, context):
+    if rule.guard is None:
+        return outcome.conditions
+    matched, required = _rewrite_guard_conditions(rule.guard(state, outcome, context))
+    return required.merge(outcome.conditions) if matched else None
+
+
+def _symbolic_dispatch(left, right, variable, domain, interval, trace,
+                       assumptions=AssumptionSet(), max_transformations=32):
+    """Run the ordered guarded solver-rule registry to a terminal result."""
+    state = EquationState(left, right)
+    normalized = EquationState(_solver_residual(state), ZERO)
+    trace("normalize", state, normalized, "Move all terms to the left side.")
+    accumulated = AssumptionSet()
+    active = _coerce_assumption_set(assumptions)
+    seen = {state}
+    for _ in range(max_transformations):
+        context = _SolverRuleContext(variable, domain, interval, active)
+        applied = False
+        for rule in _SOLVER_RULES:
+            if domain not in rule.domains:
+                continue
+            outcome = rule.transform(state, context)
+            if outcome is None:
+                continue
+            required = _solver_rule_conditions(rule, state, outcome, context)
+            if required is None:
+                continue
+            if any(active.refutes(condition) for condition in required):
+                return EMPTY, accumulated, True, "symbolic"
+            accumulated = accumulated.merge(required)
+            active = active.merge(required)
+            explanation = outcome.explanation or rule.explanation
+            trace(rule.identifier, state, outcome.after, explanation, required)
+            if outcome.terminal:
+                return outcome.after, accumulated, outcome.complete, outcome.method
+            state = outcome.after
+            if state in seen:
+                return None, accumulated, False, "symbolic"
+            seen.add(state)
+            applied = True
+            break
+        if not applied:
+            return None, accumulated, False, "symbolic"
+    return None, accumulated, False, "symbolic"
 
 
 def _poly_string(polynomial, variable):
@@ -2774,76 +4882,233 @@ def _poly_eval_numeric(polynomial, value):
 
 
 def _numeric_isolate(left, right, variable, interval, tolerance, max_iterations, assignments=None):
+    """Adaptively isolate real roots over a caller-supplied finite interval.
+
+    Crossing roots require a finite sign-change bracket.  Even-multiplicity
+    roots require a sampled local minimum of ``abs(f)`` followed by bounded
+    minimization.  These independent evidence intervals are retained through
+    deduplication so nearby roots are not merged solely by distance.
+    """
     lower, upper = interval
     evaluations = 0
     assignments = dict(assignments or {})
+    cache = {}
+    exhausted = False
+    span = upper - lower
+    max_depth = min(24, max(8, int(math.log2(max_iterations + 1)) + 6))
+    max_evaluations = min(32769, max(257, 65 + max_iterations * 8))
+    x_tolerance = max(
+        tolerance * max(1.0, abs(lower), abs(upper)),
+        np.finfo(float).eps * max(1.0, abs(lower), abs(upper)) * 16,
+    )
+    min_width = max(x_tolerance, span * (2.0 ** -max_depth))
 
     def evaluate(x):
-        nonlocal evaluations
+        nonlocal evaluations, exhausted
+        x = float(x)
+        if x in cache:
+            return cache[x]
+        if evaluations >= max_evaluations:
+            exhausted = True
+            return math.nan
         evaluations += 1
         try:
             values = dict(assignments)
             values[variable] = x
             value = complex(_evaluate(left, values) - _evaluate(right, values))
             if abs(value.imag) > 1e-8 or not math.isfinite(value.real):
-                return math.nan
-            return value.real
-        except (ArithmeticError, ValueError, OverflowError):
-            return math.nan
-
-    sample_count = min(4097, max(257, max_iterations * 4 + 1))
-    points = np.linspace(lower, upper, sample_count)
-    values = np.asarray([evaluate(float(point)) for point in points])
-    candidates = []
-    for index, (x, value) in enumerate(zip(points, values)):
-        if math.isfinite(value) and abs(value) <= tolerance:
-            candidates.append(float(x))
-        if index == 0 or not math.isfinite(value) or not math.isfinite(values[index - 1]) or value * values[index - 1] >= 0:
-            continue
-        a, b, fa, fb = float(points[index - 1]), float(x), float(values[index - 1]), float(value)
-        for _ in range(max_iterations):
-            midpoint = (a + b) / 2
-            fm = evaluate(midpoint)
-            if not math.isfinite(fm):
-                break
-            if abs(fm) <= tolerance:
-                candidates.append(midpoint); break
-            if b - a <= tolerance * max(1.0, abs(midpoint)):
-                break
-            if fa * fm <= 0:
-                b, fb = midpoint, fm
+                result = math.nan
             else:
-                a, fa = midpoint, fm
-    # Safeguarded Newton refinement catches sampled tangent roots.
-    absolute = np.abs(values)
-    for index in range(1, sample_count - 1):
-        if not math.isfinite(values[index]) or absolute[index] > absolute[index - 1] or absolute[index] > absolute[index + 1]:
+                result = value.real
+        except (ArithmeticError, ValueError, OverflowError):
+            result = math.nan
+        cache[x] = result
+        return result
+
+    # A small deterministic seed mesh discovers broad features. Subdivision is
+    # then concentrated around curvature, valleys, oscillation, and finite/
+    # non-finite boundaries instead of scaling the entire mesh with iteration
+    # count.
+    seed_points = tuple(float(value) for value in np.linspace(lower, upper, 33))
+    sampled = set(seed_points)
+    seed_values = {point: evaluate(point) for point in seed_points}
+    pending = [
+        (seed_points[index], seed_points[index + 1],
+         seed_values[seed_points[index]], seed_values[seed_points[index + 1]], 0)
+        for index in range(len(seed_points) - 1)
+    ]
+    while pending and not exhausted:
+        a, b, fa, fb, depth = pending.pop()
+        if depth >= max_depth or b - a <= min_width:
             continue
-        x = float(points[index])
-        for _ in range(min(max_iterations, 50)):
+        midpoint = (a + b) / 2
+        fm = evaluate(midpoint)
+        sampled.add(midpoint)
+        finite = tuple(math.isfinite(value) for value in (fa, fm, fb))
+        refine = False
+        if not all(finite):
+            # Refine only a transition boundary. A region that is wholly
+            # undefined cannot contain an admissible real root.
+            refine = any(finite) and not all(finite)
+        else:
+            absolute = tuple(abs(value) for value in (fa, fm, fb))
+            scale = max(1.0, *absolute)
+            curvature = abs(fm - (fa + fb) / 2) / scale
+            valley = absolute[1] < 0.35 * min(absolute[0], absolute[2])
+            left_slope = (fm - fa) / (midpoint - a)
+            right_slope = (fb - fm) / (b - midpoint)
+            turning = left_slope * right_slope <= 0 and absolute[1] < 0.8 * max(absolute[0], absolute[2])
+            two_crossings = fa * fm <= 0 and fm * fb <= 0
+            steep = max(absolute) > 1e8 * max(min(absolute), np.finfo(float).tiny)
+            refine = curvature > 0.05 or valley or turning or two_crossings or steep
+        if refine:
+            pending.append((midpoint, b, fm, fb, depth + 1))
+            pending.append((a, midpoint, fa, fm, depth + 1))
+
+    points = sorted(sampled)
+    candidates = []
+
+    def accept(value, residual, bracket, kind, scale):
+        if not math.isfinite(residual):
+            return
+        limit = max(tolerance * 10, 1e-12) * max(1.0, scale)
+        if residual <= limit:
+            candidates.append((float(value), float(residual), bracket, kind))
+
+    def refine_bracket(a, b, fa, fb):
+        best_x, best_value = (a, fa) if abs(fa) <= abs(fb) else (b, fb)
+        scale = max(1.0, abs(fa), abs(fb))
+        for _ in range(max_iterations):
+            if b - a <= x_tolerance:
+                break
+            midpoint = (a + b) / 2
+            # Use a bracketed secant proposal when it is safely interior;
+            # otherwise retain bisection's convergence guarantee.
+            if fb != fa:
+                proposal = b - fb * (b - a) / (fb - fa)
+                margin = 0.1 * (b - a)
+                x = proposal if a + margin < proposal < b - margin else midpoint
+            else:
+                x = midpoint
             fx = evaluate(x)
-            h = math.sqrt(np.finfo(float).eps) * max(1.0, abs(x))
-            derivative = (evaluate(x + h) - evaluate(x - h)) / (2 * h)
-            if not math.isfinite(fx) or not math.isfinite(derivative) or abs(derivative) < 1e-14:
+            if not math.isfinite(fx):
+                x = midpoint
+                fx = evaluate(x)
+                if not math.isfinite(fx):
+                    break
+            if abs(fx) < abs(best_value):
+                best_x, best_value = x, fx
+            if fx == 0:
+                best_x, best_value = x, fx
                 break
-            candidate = x - fx / derivative
-            if candidate < lower or candidate > upper:
+            if fa * fx < 0:
+                b, fb = x, fx
+            elif fx * fb < 0:
+                a, fa = x, fx
+            else:  # pragma: no cover - protected by a strict sign bracket
                 break
-            if abs(candidate - x) <= tolerance * max(1.0, abs(candidate)):
-                x = candidate; break
-            x = candidate
-        fx = evaluate(x)
-        if math.isfinite(fx) and abs(fx) <= max(tolerance * 10, 1e-8):
-            candidates.append(x)
-    candidates.sort()
+        accept(best_x, abs(best_value), (a, b), "crossing", scale)
+
+    # Every strict sign-change interval supplies independent crossing evidence.
+    for a, b in zip(points, points[1:]):
+        fa, fb = evaluate(a), evaluate(b)
+        if math.isfinite(fa) and math.isfinite(fb) and fa * fb < 0:
+            refine_bracket(a, b, fa, fb)
+
+    # Exact sampled zeroes also cover roots located at interval boundaries.
+    for index, point in enumerate(points):
+        value = evaluate(point)
+        if math.isfinite(value) and value == 0:
+            a = points[max(0, index - 1)]
+            b = points[min(len(points) - 1, index + 1)]
+            candidates.append((point, 0.0, (a, b), "sampled"))
+
+    # Floating evaluation rarely returns an exact zero for transcendental
+    # roots at a boundary (for example sin(20*pi)). Accept a small endpoint
+    # only when a one-sided secant predicts the root at that same boundary;
+    # this rejects merely small tails such as exp(x) far to the left.
+    for endpoint_index, neighbor_index in ((0, 1), (-1, -2)):
+        endpoint, neighbor = points[endpoint_index], points[neighbor_index]
+        endpoint_value, neighbor_value = evaluate(endpoint), evaluate(neighbor)
+        if not all(math.isfinite(value) for value in (endpoint_value, neighbor_value)):
+            continue
+        slope = (neighbor_value - endpoint_value) / (neighbor - endpoint)
+        scale = max(1.0, abs(endpoint_value), abs(neighbor_value))
+        if slope and abs(endpoint_value) <= max(tolerance * 10, 1e-12) * scale:
+            projected = endpoint - endpoint_value / slope
+            if abs(projected - endpoint) <= x_tolerance * 4:
+                candidates.append((
+                    endpoint, abs(endpoint_value),
+                    (min(endpoint, neighbor), max(endpoint, neighbor)), "boundary",
+                ))
+
+    def refine_minimum(a, b, center):
+        # Golden-section minimization of |f| is safeguarded inside the sampled
+        # valley. It finds tangent roots without assuming a usable derivative.
+        ratio = (math.sqrt(5.0) - 1.0) / 2.0
+        x1, x2 = b - ratio * (b - a), a + ratio * (b - a)
+        f1, f2 = abs(evaluate(x1)), abs(evaluate(x2))
+        center_value = abs(evaluate(center))
+        best_x, best_value = center, center_value
+        scale = max(1.0, abs(evaluate(a)), center_value, abs(evaluate(b)))
+        for _ in range(min(max_iterations, 80)):
+            if b - a <= x_tolerance or exhausted:
+                break
+            if math.isfinite(f1) and f1 < best_value:
+                best_x, best_value = x1, f1
+            if math.isfinite(f2) and f2 < best_value:
+                best_x, best_value = x2, f2
+            if not math.isfinite(f1) and not math.isfinite(f2):
+                break
+            if not math.isfinite(f2) or math.isfinite(f1) and f1 <= f2:
+                b, x2, f2 = x2, x1, f1
+                x1 = b - ratio * (b - a)
+                f1 = abs(evaluate(x1))
+            else:
+                a, x1, f1 = x1, x2, f2
+                x2 = a + ratio * (b - a)
+                f2 = abs(evaluate(x2))
+        accept(best_x, best_value, (a, b), "tangent", scale)
+
+    # Local minima of |f| are the evidence required for an even-multiplicity
+    # root. Strictness prevents flat nonzero plateaus from spawning candidates.
+    for index in range(1, len(points) - 1):
+        a, center, b = points[index - 1:index + 2]
+        values = tuple(evaluate(point) for point in (a, center, b))
+        if not all(math.isfinite(value) for value in values):
+            continue
+        absolute = tuple(abs(value) for value in values)
+        if (
+            absolute[1] <= absolute[0] and absolute[1] <= absolute[2]
+            and (absolute[1] < absolute[0] or absolute[1] < absolute[2])
+        ):
+            refine_minimum(a, b, center)
+
+    # Merge only candidates whose evidence intervals overlap and whose refined
+    # locations agree. Disjoint brackets remain distinct even at small scales.
+    candidates.sort(key=lambda item: (item[0], item[2][0], item[2][1], item[3]))
     unique = []
-    for value in candidates:
-        if not unique or abs(value - unique[-1]) > max(tolerance * 10, 1e-9) * max(1.0, abs(value)):
-            unique.append(value)
-        elif abs(evaluate(value)) < abs(evaluate(unique[-1])):
-            unique[-1] = value
-    residuals = tuple(abs(evaluate(value)) for value in unique)
-    return FiniteSolutionSet(tuple(unique)) if unique else EMPTY, residuals, evaluations
+    for candidate in candidates:
+        value, residual, bracket, _ = candidate
+        duplicate = None
+        for index, existing in enumerate(unique):
+            existing_value, _, existing_bracket, _ = existing
+            overlaps = max(bracket[0], existing_bracket[0]) <= min(bracket[1], existing_bracket[1])
+            close = abs(value - existing_value) <= max(
+                tolerance * 16 * max(1.0, abs(value), abs(existing_value)),
+                np.finfo(float).eps * 64 * max(1.0, abs(value), abs(existing_value)),
+            )
+            if overlaps and close:
+                duplicate = index
+                break
+        if duplicate is None:
+            unique.append(candidate)
+        elif residual < unique[duplicate][1]:
+            unique[duplicate] = candidate
+    unique.sort(key=lambda item: item[0])
+    roots = tuple(item[0] for item in unique)
+    residuals = tuple(item[1] for item in unique)
+    return FiniteSolutionSet(roots) if roots else EMPTY, residuals, evaluations
 
 
 def _solve_equation_impl(equation, variable=None, *, domain="real", interval=None,
@@ -2906,7 +5171,10 @@ def _solve_equation_impl(equation, variable=None, *, domain="real", interval=Non
     solution_set = conditions = None
     complete = False
     if method != "numeric":
-        solution_set, conditions, complete, used_method = _symbolic_dispatch(working_left, working_right, variable, domain, interval, trace)
+        solution_set, conditions, complete, used_method = _symbolic_dispatch(
+            working_left, working_right, variable, domain, interval, trace,
+            original_conditions,
+        )
         if solution_set is not None:
             solution_set = _apply_interval(solution_set, interval)
             conditions = _merge_conditions(original_conditions, conditions)
@@ -2929,8 +5197,8 @@ def _solve_equation_impl(equation, variable=None, *, domain="real", interval=Non
     solution_set, residuals = _verify_finite(
         solution_set, left, right, variable, domain, tolerance, original_conditions,
     )
-    trace("numeric_isolation", f"{left} = {right}", str(solution_set), "Isolate and refine real roots over the requested finite interval.")
-    return EquationSolution(variable, solution_set, "solved", "numeric" if method == "numeric" else "hybrid", False, False, conditions=original_conditions, residuals=residuals, steps=tuple(recorded), message="Approximate roots found over the requested interval; completeness is not guaranteed for arbitrary functions.", evaluations=evaluations)
+    trace("numeric_isolation", f"{left} = {right}", str(solution_set), "Adaptively isolate and safeguard real roots over the requested finite interval.")
+    return EquationSolution(variable, solution_set, "solved", "numeric" if method == "numeric" else "hybrid", False, False, conditions=original_conditions, residuals=residuals, steps=tuple(recorded), message="Approximate roots found by adaptive isolation over the requested interval; completeness is not guaranteed for arbitrary functions.", evaluations=evaluations)
 
 
 def solve_equation(equation, variable=None, *, domain="real", interval=None,
@@ -2958,6 +5226,218 @@ def solve_equation_assuming(equation, assumptions, variable=None, *, domain="rea
         equation, variable, domain=domain, interval=interval, method=method,
         numeric_fallback=numeric_fallback, tolerance=tolerance,
         max_iterations=max_iterations, steps=steps, assumptions=assumptions,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Exact real polynomial and rational inequalities
+
+
+def _split_symbolic_inequality(inequality):
+    if not isinstance(inequality, str):
+        raise TypeError("inequality must be a string")
+    matches = list(re.finditer(r"<=|>=|!=|<|>", inequality))
+    if len(matches) != 1:
+        raise EquationParseError(
+            "An inequality must contain exactly one of <, <=, >, >=, or !="
+        )
+    match = matches[0]
+    left_text, right_text = inequality[:match.start()], inequality[match.end():]
+    if not left_text.strip() or not right_text.strip():
+        raise EquationParseError("Both sides of an inequality must be non-empty")
+    return parse_symbolic(left_text), match.group(), parse_symbolic(right_text)
+
+
+def _real_polynomial_roots(polynomial, variable):
+    if not polynomial or max(polynomial, default=0) == 0:
+        return ()
+    solution_set, complete = _solve_polynomial_exact(
+        polynomial, variable, "real", None,
+    )
+    if not complete or not isinstance(solution_set, (FiniteSolutionSet, EmptySolutionSet)):
+        raise UnsupportedExpressionError("Could not isolate every real critical point")
+    if isinstance(solution_set, EmptySolutionSet):
+        return ()
+    return tuple(zip(solution_set.values, solution_set.multiplicities))
+
+
+def _inequality_relation_holds(sign, operator):
+    return {
+        "<": sign < 0,
+        "<=": sign <= 0,
+        ">": sign > 0,
+        ">=": sign >= 0,
+        "!=": sign != 0,
+    }[operator]
+
+
+def _inequality_critical_points(numerator, denominator, source_denominator,
+                                variable):
+    points = {}
+
+    def add(values, *, flip=False, zero=False, hole=False):
+        for value, multiplicity in values:
+            item = points.setdefault(value, {
+                "value": value, "flip": 0, "zero": False, "hole": False,
+            })
+            if flip:
+                item["flip"] += multiplicity
+            item["zero"] = item["zero"] or zero
+            item["hole"] = item["hole"] or hole
+
+    add(_real_polynomial_roots(numerator, variable), flip=True, zero=True)
+    add(_real_polynomial_roots(denominator, variable), flip=True, hole=True)
+    add(_real_polynomial_roots(source_denominator, variable), hole=True)
+    ordered = list(points.values())
+    ordered.sort(key=lambda item: (
+        float(_numeric_value(item["value"])), str(item["value"]),
+    ))
+    return ordered
+
+
+def _inequality_solution_from_cells(points, region_signs, operator):
+    cells = []
+    for index in range(len(points) + 1):
+        cells.append(_inequality_relation_holds(region_signs[index], operator))
+        if index < len(points):
+            point = points[index]
+            cells.append(
+                not point["hole"] and point["zero"]
+                and operator in {"<=", ">="}
+            )
+    parts, index = [], 0
+    while index < len(cells):
+        if not cells[index]:
+            index += 1
+            continue
+        start = index
+        while index + 1 < len(cells) and cells[index + 1]:
+            index += 1
+        end = index
+        if start == end and start % 2 == 1:
+            parts.append(FiniteSolutionSet((points[start // 2]["value"],)))
+        else:
+            if start == 0:
+                lower, lower_closed = None, False
+            elif start % 2:
+                lower, lower_closed = points[start // 2]["value"], True
+            else:
+                lower, lower_closed = points[start // 2 - 1]["value"], False
+            if end == len(cells) - 1:
+                upper, upper_closed = None, False
+            elif end % 2:
+                upper, upper_closed = points[end // 2]["value"], True
+            else:
+                upper, upper_closed = points[end // 2]["value"], False
+            parts.append(IntervalSolutionSet(
+                lower, upper, lower_closed, upper_closed,
+            ))
+        index += 1
+    return EMPTY if not parts else parts[0] if len(parts) == 1 else UnionSolutionSet(tuple(parts))
+
+
+def solve_inequality(inequality, variable=None, *, domain="real",
+                     assumptions=None, steps=False) -> EquationSolution:
+    """Solve an exact univariate polynomial or rational inequality.
+
+    The first release is intentionally real-only and requires exact rational
+    coefficients after applying equality substitutions from ``assumptions``.
+    Critical points and removable holes are retained exactly.
+    """
+    if domain != "real":
+        raise ValueError("inequality solving currently supports only the real domain")
+    if not isinstance(steps, (bool, np.bool_)):
+        raise TypeError("steps must be boolean")
+    left, operator, right = _split_symbolic_inequality(inequality)
+    discovered = sorted(_variables(left) | _variables(right))
+    if variable is None:
+        if len(discovered) != 1:
+            raise AmbiguousVariableError(
+                f"Specify variable= explicitly; found {discovered or 'no variables'}"
+            )
+        variable = discovered[0]
+    elif hasattr(variable, "name"):
+        variable = variable.name
+    if not isinstance(variable, str) or not variable:
+        raise TypeError("variable must be a non-empty string or named variable")
+    user_assumptions = _normalize_user_assumptions(assumptions)
+    substitutions = {
+        name: value for name, value in user_assumptions.substitutions.items()
+        if name != variable
+    }
+    original_residual = _add(left, _neg(right))
+    residual = _substitute(original_residual, substitutions)
+    domain_conditions = _merge_conditions(
+        _domain_conditions(left, domain, variable),
+        _domain_conditions(right, domain, variable),
+        user_assumptions,
+    )
+    if domain_conditions.contradictory:
+        return EquationSolution(
+            variable, EMPTY, "solved", "symbolic", True, True,
+            conditions=domain_conditions,
+            message="The inequality assumptions are contradictory.",
+        )
+    try:
+        parsed = _poly_fraction(residual, variable, max_degree=100)
+    except UnsupportedExpressionError:
+        parsed = None
+    if parsed is None:
+        return EquationSolution(
+            variable, EMPTY, "unresolved", "symbolic", False, False,
+            conditions=domain_conditions,
+            message=(
+                "Exact inequalities currently require a univariate polynomial "
+                "or rational expression with rational coefficients."
+            ),
+        )
+    numerator, source_denominator = map(_poly_clean, parsed)
+    if not source_denominator:
+        raise ZeroDivisionError("inequality has an identically zero denominator")
+    common = _poly_gcd(numerator, source_denominator)
+    denominator = source_denominator
+    if common and max(common, default=0) > 0:
+        numerator, numerator_remainder = _poly_divmod(numerator, common)
+        denominator, denominator_remainder = _poly_divmod(source_denominator, common)
+        if numerator_remainder or denominator_remainder:  # pragma: no cover
+            raise ArithmeticError("polynomial GCD did not divide exactly")
+    points = _inequality_critical_points(
+        numerator, denominator, source_denominator, variable,
+    )
+    if numerator:
+        numerator_leading = numerator[max(numerator)]
+        denominator_leading = denominator[max(denominator)]
+        right_sign = 1 if numerator_leading * denominator_leading > 0 else -1
+    else:
+        right_sign = 0
+    region_signs = [0] * (len(points) + 1)
+    region_signs[-1] = right_sign
+    for index in range(len(points) - 1, -1, -1):
+        region_signs[index] = (
+            -region_signs[index + 1]
+            if points[index]["flip"] % 2 else region_signs[index + 1]
+        )
+    solution_set = _inequality_solution_from_cells(
+        points, region_signs, operator,
+    )
+    solution_set = _apply_assumptions(solution_set, domain_conditions)
+    recorded = ()
+    if steps:
+        normalized = f"{_polynomial_expression(numerator, variable)} / {_polynomial_expression(denominator, variable)} {operator} 0"
+        recorded = (
+            SolutionStep(
+                "normalize_inequality", inequality, normalized,
+                "Move all terms to the left, normalize the exact rational form, and retain denominator exclusions.",
+            ),
+            SolutionStep(
+                "rational_sign_chart", normalized, solution_set,
+                "Order every exact zero and pole, propagate signs by multiplicity, and assemble the satisfying intervals.",
+            ),
+        )
+    return EquationSolution(
+        variable, solution_set, "solved", "symbolic", True, True,
+        conditions=domain_conditions, steps=recorded,
+        message="Exact real polynomial/rational inequality sign chart.",
     )
 
 
@@ -3103,33 +5583,412 @@ def _solve_triangular_system(sides, variables, domain, tolerance, max_branches=2
             involved = _variables(residual) & set(remaining)
             if not involved:
                 value = _numeric_value(residual)
+                # Once every system variable in an equation is assigned, a
+                # non-evaluable constant denotes an undefined candidate (for
+                # example division by zero), not an unresolved free branch.
                 if value is None or abs(complex(value)) > tolerance:
-                    return
+                    return True
             else:
                 active.append((left, right, involved))
         if not remaining:
-            branches.append(dict(assignments)); return
-        choice = next(((left, right, next(iter(involved))) for left, right, involved in active if len(involved) == 1), None)
+            resolved = dict(assignments)
+            for _ in range(len(resolved)):
+                updated = {
+                    name: _substitute(value, resolved)
+                    if isinstance(value, SymbolicExpression) else value
+                    for name, value in resolved.items()
+                }
+                if updated == resolved:
+                    break
+                resolved = updated
+            branches.append(resolved)
+            return True
+        # Prefer an actually univariate equation.  If none exists, eliminate a
+        # variable that occurs affinely.  A symbolic coefficient is safe when
+        # the constant part is a known nonzero constant: the equation itself
+        # then proves that the coefficient cannot vanish (for example xy=2).
+        choice = next((
+            ("univariate", left, right, next(name for name in remaining if name in involved), None)
+            for left, right, involved in active if len(involved) == 1
+        ), None)
         if choice is None:
-            return
-        left, right, variable = choice
-        result = solve_equation((left, right), variable=variable, domain=domain, method="symbolic", tolerance=tolerance)
-        if not result.complete or not isinstance(result.solution_set, FiniteSolutionSet):
-            return
+            for left, right, involved in active:
+                residual = _add(left, _neg(right))
+                for variable in remaining:
+                    if variable not in involved:
+                        continue
+                    affine = _affine_symbolic(residual, variable)
+                    if affine is None or affine[0] == ZERO:
+                        continue
+                    coefficient_value = _numeric_value(affine[0])
+                    constant_value = (
+                        _numeric_value(affine[1]) if not _variables(affine[1]) else None
+                    )
+                    if coefficient_value not in {None, 0} or constant_value not in {None, 0}:
+                        choice = ("affine", left, right, variable, affine)
+                        break
+                if choice is not None:
+                    break
+        if choice is None:
+            return False
+        kind, left, right, variable, affine = choice
+        if kind == "univariate":
+            result = solve_equation(
+                (left, right), variable=variable, domain=domain,
+                method="symbolic", tolerance=tolerance,
+            )
+            if not result.complete:
+                return False
+            if isinstance(result.solution_set, EmptySolutionSet):
+                return True
+            if not isinstance(result.solution_set, FiniteSolutionSet):
+                return False
+            values = result.solution_set.values
+        else:
+            coefficient, constant = affine
+            values = (_mul(_neg(constant), _pow(coefficient, NEG_ONE)),)
         next_remaining = [name for name in remaining if name != variable]
-        for value in result.solution_set.values:
-            recurse(simplified, next_remaining, dict(assignments, **{variable: value}))
+        complete = True
+        for value in values:
+            numeric = _numeric_value(value)
+            if (
+                domain == "real" and numeric is not None
+                and isinstance(numeric, complex) and abs(numeric.imag) > tolerance
+            ):
+                continue
+            complete = recurse(
+                simplified, next_remaining,
+                dict(assignments, **{variable: value}),
+            ) and complete
+        return complete
 
-    recurse(sides, list(variables), {})
-    if not branches:
+    if not recurse(sides, list(variables), {}):
         return None
     return tuple({variable: branch[variable] for variable in variables} for branch in branches)
+
+
+def _mv_poly_clean(polynomial):
+    return {powers: coefficient for powers, coefficient in polynomial.items() if coefficient}
+
+
+def _mv_poly_add(first, second, factor=Rational(1), *, max_terms=256):
+    result = dict(first)
+    for powers, coefficient in second.items():
+        result[powers] = result.get(powers, Rational(0)) + factor * coefficient
+    result = _mv_poly_clean(result)
+    if len(result) > max_terms:
+        raise UnsupportedExpressionError(
+            f"Multivariate polynomial exceeds the {max_terms}-term limit"
+        )
+    return result
+
+
+def _mv_poly_mul(first, second, *, max_degree=8, max_terms=256):
+    result = {}
+    for first_powers, first_coefficient in first.items():
+        for second_powers, second_coefficient in second.items():
+            powers = tuple(a + b for a, b in zip(first_powers, second_powers))
+            if sum(powers) > max_degree:
+                raise UnsupportedExpressionError(
+                    f"Multivariate polynomial degree exceeds the {max_degree} limit"
+                )
+            result[powers] = (
+                result.get(powers, Rational(0))
+                + first_coefficient * second_coefficient
+            )
+    result = _mv_poly_clean(result)
+    if len(result) > max_terms:
+        raise UnsupportedExpressionError(
+            f"Multivariate polynomial exceeds the {max_terms}-term limit"
+        )
+    return result
+
+
+def _mv_poly_pow(polynomial, exponent, *, max_degree=8, max_terms=256):
+    dimensions = len(next(iter(polynomial), (0, 0)))
+    result = {(0,) * dimensions: Rational(1)}
+    factor = polynomial
+    while exponent:
+        if exponent & 1:
+            result = _mv_poly_mul(
+                result, factor, max_degree=max_degree, max_terms=max_terms,
+            )
+        exponent //= 2
+        if exponent:
+            factor = _mv_poly_mul(
+                factor, factor, max_degree=max_degree, max_terms=max_terms,
+            )
+    return result
+
+
+def _multivariate_polynomial(expression, variables, *, max_degree=8, max_terms=256):
+    """Return a bounded exact multivariate polynomial or ``None``."""
+    dimensions = len(variables)
+    zero_powers = (0,) * dimensions
+    if isinstance(expression, ExactNumber):
+        return {zero_powers: expression.value} if expression.value else {}
+    if isinstance(expression, Symbol):
+        if expression.name not in variables:
+            return None
+        powers = [0] * dimensions
+        powers[variables.index(expression.name)] = 1
+        return {tuple(powers): Rational(1)}
+    if isinstance(expression, Add):
+        result = {}
+        for term in expression.terms:
+            parsed = _multivariate_polynomial(
+                term, variables, max_degree=max_degree, max_terms=max_terms,
+            )
+            if parsed is None:
+                return None
+            result = _mv_poly_add(result, parsed, max_terms=max_terms)
+        return result
+    if isinstance(expression, Multiply):
+        result = {zero_powers: Rational(1)}
+        for factor in expression.factors:
+            parsed = _multivariate_polynomial(
+                factor, variables, max_degree=max_degree, max_terms=max_terms,
+            )
+            if parsed is None:
+                return None
+            result = _mv_poly_mul(
+                result, parsed, max_degree=max_degree, max_terms=max_terms,
+            )
+        return result
+    if (
+        isinstance(expression, Power)
+        and isinstance(expression.exponent, ExactNumber)
+        and expression.exponent.denominator == 1
+        and expression.exponent.numerator >= 0
+    ):
+        parsed = _multivariate_polynomial(
+            expression.base, variables,
+            max_degree=max_degree, max_terms=max_terms,
+        )
+        if parsed is None:
+            return None
+        return _mv_poly_pow(
+            parsed, expression.exponent.numerator,
+            max_degree=max_degree, max_terms=max_terms,
+        )
+    return None
+
+
+def _resultant_coefficients(polynomial, eliminated_index, retained_index):
+    coefficients = {}
+    for powers, coefficient in polynomial.items():
+        eliminated_degree, retained_degree = (
+            powers[eliminated_index], powers[retained_index]
+        )
+        current = coefficients.setdefault(eliminated_degree, {})
+        current[retained_degree] = current.get(retained_degree, Rational(0)) + coefficient
+    return {degree: _poly_clean(value) for degree, value in coefficients.items()}
+
+
+def _polynomial_determinant(matrix, *, max_degree=64):
+    """Division-free determinant for the small Sylvester matrices we allow."""
+    size = len(matrix)
+    cache = {}
+
+    def determinant(row, columns):
+        key = row, columns
+        if key in cache:
+            return cache[key]
+        if row == size:
+            return {0: Rational(1)}
+        result = {}
+        for position, column in enumerate(columns):
+            entry = matrix[row][column]
+            if not entry:
+                continue
+            remainder = columns[:position] + columns[position + 1:]
+            term = _poly_mul(
+                entry, determinant(row + 1, remainder),
+                max_degree=max_degree,
+            )
+            result = _poly_add(
+                result, term,
+                factor=Rational(-1 if position % 2 else 1),
+            )
+        cache[key] = result
+        return result
+
+    return determinant(0, tuple(range(size)))
+
+
+def _bivariate_resultant(first, second, eliminated_index, retained_index,
+                         *, max_matrix=8):
+    first_coefficients = _resultant_coefficients(
+        first, eliminated_index, retained_index,
+    )
+    second_coefficients = _resultant_coefficients(
+        second, eliminated_index, retained_index,
+    )
+    first_degree = max(first_coefficients, default=0)
+    second_degree = max(second_coefficients, default=0)
+    if first_degree == 0 or second_degree == 0:
+        return None
+    size = first_degree + second_degree
+    if size > max_matrix:
+        raise UnsupportedExpressionError(
+            f"Polynomial resultant exceeds the {max_matrix}-row matrix limit"
+        )
+    first_descending = [
+        first_coefficients.get(degree, {})
+        for degree in range(first_degree, -1, -1)
+    ]
+    second_descending = [
+        second_coefficients.get(degree, {})
+        for degree in range(second_degree, -1, -1)
+    ]
+    matrix = []
+    for shift in range(second_degree):
+        matrix.append(
+            [{} for _ in range(shift)] + first_descending
+            + [{} for _ in range(size - shift - len(first_descending))]
+        )
+    for shift in range(first_degree):
+        matrix.append(
+            [{} for _ in range(shift)] + second_descending
+            + [{} for _ in range(size - shift - len(second_descending))]
+        )
+    return _polynomial_determinant(matrix)
+
+
+def _system_candidate_valid(sides, assignment, variables, domain, tolerance):
+    numeric_assignment = {}
+    for variable in variables:
+        numeric = _numeric_value(assignment[variable])
+        if numeric is None:
+            return None
+        numeric = complex(numeric)
+        if domain == "real" and abs(numeric.imag) > tolerance:
+            return False
+        numeric_assignment[variable] = (
+            numeric.real if abs(numeric.imag) <= tolerance else numeric
+        )
+    for left, right in sides:
+        exact_residual = _substitute(_add(left, _neg(right)), assignment)
+        if exact_residual == ZERO:
+            continue
+        try:
+            first = complex(_evaluate(left, numeric_assignment))
+            second = complex(_evaluate(right, numeric_assignment))
+        except (ArithmeticError, ValueError, OverflowError, ZeroDivisionError):
+            return False
+        if not all(math.isfinite(value) for value in (
+            first.real, first.imag, second.real, second.imag,
+        )):
+            return False
+        residual = abs(first - second) / max(1.0, abs(first), abs(second))
+        if residual > max(tolerance * 100, 1e-8):
+            return False
+    return True
+
+
+def _solve_bivariate_resultant_system(sides, variables, domain, tolerance,
+                                      max_branches=256):
+    """Solve a bounded zero-dimensional two-variable polynomial system."""
+    if len(variables) != 2:
+        return None
+    try:
+        polynomials = [
+            _multivariate_polynomial(_add(left, _neg(right)), list(variables))
+            for left, right in sides
+        ]
+    except UnsupportedExpressionError:
+        return None
+    usable = [index for index, polynomial in enumerate(polynomials) if polynomial]
+    if len(usable) < 2 or any(polynomials[index] is None for index in usable):
+        return None
+    for eliminated_index, retained_index in ((0, 1), (1, 0)):
+        eliminated = variables[eliminated_index]
+        retained = variables[retained_index]
+        for first_position, first_index in enumerate(usable):
+            for second_index in usable[first_position + 1:]:
+                try:
+                    resultant = _bivariate_resultant(
+                        polynomials[first_index], polynomials[second_index],
+                        eliminated_index, retained_index,
+                    )
+                except UnsupportedExpressionError:
+                    continue
+                if resultant is None or not resultant:
+                    continue
+                if max(resultant, default=0) == 0:
+                    return () if resultant.get(0, Rational(0)) else None
+                retained_set, complete = _solve_polynomial_exact(
+                    resultant, retained, domain, None,
+                )
+                if not complete or not isinstance(retained_set, (FiniteSolutionSet, EmptySolutionSet)):
+                    continue
+                if isinstance(retained_set, EmptySolutionSet):
+                    return ()
+                if len(retained_set.values) > max_branches:
+                    continue
+                candidates, unresolved_branch = [], False
+                for retained_value in retained_set.values:
+                    assignment = {retained: retained_value}
+                    eliminated_values = None
+                    for left, right in sides:
+                        substituted = (
+                            _substitute(left, assignment),
+                            _substitute(right, assignment),
+                        )
+                        if eliminated not in (
+                            _variables(substituted[0]) | _variables(substituted[1])
+                        ):
+                            continue
+                        result = solve_equation(
+                            substituted, variable=eliminated, domain=domain,
+                            method="symbolic", tolerance=tolerance,
+                        )
+                        if result.complete and isinstance(
+                            result.solution_set, EmptySolutionSet
+                        ):
+                            eliminated_values = ()
+                            break
+                        if result.complete and isinstance(
+                            result.solution_set, FiniteSolutionSet
+                        ):
+                            eliminated_values = result.solution_set.values
+                            break
+                    if eliminated_values is None:
+                        unresolved_branch = True
+                        break
+                    for eliminated_value in eliminated_values:
+                        candidate = dict(assignment, **{eliminated: eliminated_value})
+                        valid = _system_candidate_valid(
+                            sides, candidate, variables, domain, tolerance,
+                        )
+                        if valid is None:
+                            unresolved_branch = True
+                            break
+                        if valid:
+                            candidates.append({name: candidate[name] for name in variables})
+                    if unresolved_branch:
+                        break
+                if unresolved_branch:
+                    continue
+                unique = {}
+                for candidate in candidates:
+                    key = tuple(str(candidate[name]) for name in variables)
+                    unique[key] = candidate
+                ordered = tuple(unique[key] for key in sorted(unique))
+                return ordered
+    return None
 
 
 def solve_equation_system(equations, variables=None, *, domain="real",
                           numeric_fallback=False, initial=None, tolerance=1e-10,
                           max_iterations=1000, steps=False) -> EquationSystemSolution:
-    """Solve an exact linear system, or explicitly fall back to local Newton."""
+    """Solve an exact linear or bounded nonlinear system.
+
+    Nonlinear symbolic solving uses complete triangular/affine substitution
+    first, followed by a bounded bivariate polynomial resultant.  Unsupported
+    or positive-dimensional systems remain explicitly unresolved; numerical
+    fallback is still local and opt-in.
+    """
     if isinstance(equations, (str, bytes)):
         raise TypeError("equations must be a nonempty sequence of equations")
     if not isinstance(numeric_fallback, (bool, np.bool_)) or not isinstance(steps, (bool, np.bool_)):
@@ -3195,11 +6054,53 @@ def solve_equation_system(equations, variables=None, *, domain="real",
         if steps:
             recorded += (SolutionStep(
                 "triangular_substitution", str(tuple(f"{left} = {right}" for left, right in sides)), str(triangular),
-                "Solve one variable at a time and substitute each exact branch.",
+                "Solve one variable at a time, including safe affine elimination, and substitute each exact branch.",
             ),)
-        return EquationSystemSolution(tuple(variables), triangular, "solved", "symbolic", True, True, steps=recorded, message="Exact triangular polynomial substitution.")
+        if not triangular:
+            return EquationSystemSolution(
+                tuple(variables), (), "inconsistent", "symbolic", True, True,
+                steps=recorded,
+                message="Exact nonlinear substitution proves that the system is inconsistent.",
+            )
+        return EquationSystemSolution(
+            tuple(variables), triangular, "solved", "symbolic", True, True,
+            steps=recorded,
+            message="Exact triangular and affine nonlinear substitution.",
+        )
+    resultant = _solve_bivariate_resultant_system(
+        sides, variables, domain, float(tolerance),
+    )
+    if resultant is not None:
+        if steps:
+            recorded += (SolutionStep(
+                "polynomial_resultant",
+                str(tuple(f"{left} = {right}" for left, right in sides)),
+                str(resultant),
+                "Eliminate one variable with an exact bounded Sylvester resultant, solve the retained polynomial, and verify every candidate in the original system.",
+            ),)
+        if not resultant:
+            return EquationSystemSolution(
+                tuple(variables), (), "inconsistent", "symbolic", True, True,
+                steps=recorded,
+                message="The exact polynomial resultant proves that the system is inconsistent.",
+            )
+        return EquationSystemSolution(
+            tuple(variables), resultant, "solved", "symbolic", True, True,
+            steps=recorded,
+            message="Exact zero-dimensional bivariate polynomial resultant.",
+        )
     if not numeric_fallback:
-        return EquationSystemSolution(tuple(variables), (), "unresolved", "symbolic", False, False, message="The native symbolic system solver currently supports linear systems; enable numeric_fallback with initial values for a local nonlinear solution.")
+        return EquationSystemSolution(
+            tuple(variables), (), "unresolved", "symbolic", False, False,
+            steps=recorded,
+            message=(
+                "No supported complete exact system transformation was found. "
+                "The native solver supports rational linear systems, finite "
+                "triangular/affine substitutions, and bounded zero-dimensional "
+                "bivariate polynomial resultants; enable numeric_fallback with "
+                "initial values for a local nonlinear solution."
+            ),
+        )
     if initial is None:
         raise ValueError("Nonlinear numerical fallback requires initial values")
     if isinstance(initial, Mapping):
@@ -3235,8 +6136,11 @@ def solve_equation_system(equations, variables=None, *, domain="real",
 __all__ = [
     "SymbolicExpression", "ExactNumber", "Symbol", "SymbolicConstant", "Add",
     "Multiply", "Power", "SymbolicFunction", "RootOf", "parse_symbolic",
-    "to_symbolic", "to_legacy_expression", "simplify_symbolic",
-    "structurally_equal", "differentiate_symbolic",
+    "to_symbolic", "to_legacy_expression", "simplify_symbolic", "is_canonical_symbolic",
+    "structurally_equal", "differentiate_symbolic", "RewriteContext",
+    "RewriteRule", "RewriteApplication", "RewriteResult",
+    "available_rewrite_rules", "rewrite_symbolic",
+    "normalize_polynomial_symbolic", "normalize_rational_symbolic",
     "Condition", "TruthCondition", "RelationCondition", "DefinedCondition",
     "BetweenCondition", "OpaqueCondition", "CompoundCondition", "AssumptionSet",
     "parse_condition", "condition_from_dict", "simplify_condition", "negate_condition",
@@ -3244,5 +6148,6 @@ __all__ = [
     "FiniteSolutionSet", "IntervalSolutionSet", "ParametricSolutionSet",
     "UnionSolutionSet", "ConditionalSolutionSet", "EquationState", "SolutionStep",
     "EquationSolution", "EquationSystemSolution", "symbolic_from_dict",
-    "solve_equation", "solve_equation_assuming", "solve_equation_system",
+    "solve_equation", "solve_equation_assuming", "solve_inequality",
+    "solve_equation_system",
 ]

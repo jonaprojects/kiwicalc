@@ -39,8 +39,11 @@ __all__ = [
     'random_linear_system', 'random_poly_system',
     'SymbolicExpression', 'ExactNumber', 'Symbol', 'SymbolicConstant', 'Add',
     'Multiply', 'Power', 'SymbolicFunction', 'RootOf', 'parse_symbolic',
-    'to_symbolic', 'to_legacy_expression', 'simplify_symbolic',
-    'structurally_equal', 'differentiate_symbolic',
+    'to_symbolic', 'to_legacy_expression', 'simplify_symbolic', 'is_canonical_symbolic',
+    'structurally_equal', 'differentiate_symbolic', 'RewriteContext',
+    'RewriteRule', 'RewriteApplication', 'RewriteResult',
+    'available_rewrite_rules', 'rewrite_symbolic',
+    'normalize_polynomial_symbolic', 'normalize_rational_symbolic',
     'Condition', 'TruthCondition', 'RelationCondition', 'DefinedCondition',
     'BetweenCondition', 'OpaqueCondition', 'CompoundCondition', 'AssumptionSet',
     'parse_condition', 'condition_from_dict', 'simplify_condition', 'negate_condition',
@@ -48,7 +51,8 @@ __all__ = [
     'FiniteSolutionSet', 'IntervalSolutionSet', 'ParametricSolutionSet',
     'UnionSolutionSet', 'ConditionalSolutionSet', 'EquationState', 'SolutionStep',
     'EquationSolution', 'EquationSystemSolution', 'symbolic_from_dict',
-    'solve_equation', 'solve_equation_assuming', 'solve_equation_system',
+    'solve_equation', 'solve_equation_assuming', 'solve_inequality',
+    'solve_equation_system',
     # Functions
     'Function', 'FunctionCollection', 'FunctionChain',
     # Geometry

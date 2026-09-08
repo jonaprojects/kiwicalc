@@ -179,13 +179,17 @@ def object_to_dict(obj):
     from kiwicalc.linalg.spaces import Surface
     from kiwicalc.equations.symbolic import (
         AssumptionSet, Condition, EquationSolution, EquationSystemSolution,
-        SymbolicExpression,
+        RewriteApplication, RewriteResult, SymbolicExpression,
     )
 
     if isinstance(obj, EquationSolution):
         return {"kind": "equation_solution", "data": obj.to_dict()}
     if isinstance(obj, EquationSystemSolution):
         return {"kind": "equation_system_solution", "data": obj.to_dict()}
+    if isinstance(obj, RewriteResult):
+        return {"kind": "rewrite_result", "data": obj.to_dict()}
+    if isinstance(obj, RewriteApplication):
+        return {"kind": "rewrite_application", "data": obj.to_dict()}
     if isinstance(obj, AssumptionSet):
         return {"kind": "assumption_set", "data": obj.to_dict()}
     if isinstance(obj, Condition):
@@ -226,7 +230,7 @@ def object_from_dict(data):
     from kiwicalc.linalg.spaces import Surface
     from kiwicalc.equations.symbolic import (
         AssumptionSet, EquationSolution, EquationSystemSolution,
-        condition_from_dict, symbolic_from_dict,
+        RewriteApplication, RewriteResult, condition_from_dict, symbolic_from_dict,
     )
 
     kind = data.get("kind")
@@ -238,6 +242,8 @@ def object_from_dict(data):
     if kind == "symbolic_expression": return symbolic_from_dict(data["data"])
     if kind == "equation_solution": return EquationSolution.from_dict(data["data"])
     if kind == "equation_system_solution": return EquationSystemSolution.from_dict(data["data"])
+    if kind == "rewrite_result": return RewriteResult.from_dict(data["data"])
+    if kind == "rewrite_application": return RewriteApplication.from_dict(data["data"])
     if kind == "assumption_set": return AssumptionSet.from_dict(data["data"])
     if kind == "condition": return condition_from_dict(data["data"])
     if kind == "circle": return Circle(data["radius"], data["center"])
