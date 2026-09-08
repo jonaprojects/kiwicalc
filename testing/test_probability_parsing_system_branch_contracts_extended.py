@@ -142,7 +142,9 @@ def test_linear_system_constructor_mutation_and_print(capsys):
     two_equations.print_solutions()
     output = capsys.readouterr().out
     assert "x = 2" in output and "y = 1" in output
-    assert two_equations.to_matrix_and_vector() is None
+    assert two_equations.to_matrix_and_vector() == (
+        [[-1.0, -1.0], [-1.0, 1.0]], [-3.0, -1.0]
+    )
     assert two_equations.simplify() is None
 
 
@@ -154,21 +156,8 @@ def test_system_solvers_infer_variables_and_initial_values():
 
 def test_random_linear_system_all_operation_branches(monkeypatch):
     system_module = importlib.import_module("kiwicalc.equations.system")
-    operation_calls = iter((0, 1, 0, 1))
-
-    def fake_randint(start, stop):
-        if (start, stop) == (2, 5):
-            return 2
-        if (start, stop) == (0, 1):
-            return next(operation_calls)
-        if (start, stop) == (1, 3):
-            return 2
-        return 1
-
-    monkeypatch.setattr(system_module.random, "uniform", lambda start, stop: 2)
-    monkeypatch.setattr(system_module.random, "randint", fake_randint)
-    monkeypatch.setattr(system_module.random, "choice", lambda values: values[0])
+    system_module.random.seed(123)
     equations, solutions = kw.random_linear_system(("x", "y"), get_solutions=True)
     assert len(equations) == 2
-    assert solutions == [2, 2]
     assert all("=" in equation for equation in equations)
+    assert kw.solve_linear_system(equations, ("x", "y")) == pytest.approx(dict(zip(("x", "y"), solutions)))

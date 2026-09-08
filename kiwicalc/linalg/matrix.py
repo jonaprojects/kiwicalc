@@ -1592,7 +1592,12 @@ def generate_polynomial_matrix(equations: 'Union[Iterable[Union[str,Poly,Mono]],
     if not equations:
         raise ValueError('At least one equation is required')
     if isinstance(equations[0], str):
-        return Matrix(matrix=[poly_from_str(equation_to_one_side(equation)) for equation in equations])
+        from kiwicalc.parsing.parse_equation import _split_equation
+        polynomials = []
+        for equation in equations:
+            first_side, second_side = _split_equation(equation)
+            polynomials.append(poly_from_str(first_side) - poly_from_str(second_side))
+        return Matrix(matrix=polynomials)
     return Matrix(matrix=equations)
 
 def broyden(functions, initial_values, h: float=0.0001, epsilon: float=1e-05, nmax: int=10000):

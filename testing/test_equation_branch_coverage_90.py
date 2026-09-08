@@ -9,9 +9,8 @@ single = importlib.import_module("kiwicalc.equations.single")
 
 
 def test_equation_solver_dispatch_and_degenerate_branches(monkeypatch, capsys):
-    with pytest.raises(TypeError):
-        kw.solve_quadratic_params("x^2=1", 0, 0)
-    assert "implemented" in capsys.readouterr().out
+    assert kw.solve_quadratic_params("x^2=1", 0, 0) == pytest.approx((1, -1))
+    assert capsys.readouterr().out == ""
     roots = kw.solve_quadratic_params(kw.Var("a"), kw.Var("b"), kw.Var("c"))
     assert len(roots) == 2
     assert kw.solve_cubic(1, 0, 0, 0) == [0]
@@ -19,17 +18,11 @@ def test_equation_solver_dispatch_and_degenerate_branches(monkeypatch, capsys):
     assert single.solve_cubic_real(1, 0, 0, 0) == []
 
 
-@pytest.mark.parametrize(
-    "cubic_roots,expected",
-    [([0], [0]), ([1, 0, 0], [0]), ([1, 4, 9], None)],
-)
-def test_quartic_internal_root_selection(monkeypatch, cubic_roots, expected):
-    monkeypatch.setattr(single, "solve_cubic", lambda *args: cubic_roots)
-    result = single.solve_quartic(2, 0, 0, 0, 0)
-    if expected is not None:
-        assert result == expected
-    else:
-        assert len(result) == 4
+@pytest.mark.parametrize("coefficients", [(1, -4, 6, -4, 1), (2, 0, 0, 0, 0)])
+def test_quartic_repeated_root_handling(coefficients):
+    result = single.solve_quartic(*coefficients)
+    assert len(result) == 1
+    assert sum(coefficient * result[0] ** power for power, coefficient in enumerate(reversed(coefficients))) == pytest.approx(0)
 
 
 def test_polynomial_degree_five_and_explicit_inequality_variables():

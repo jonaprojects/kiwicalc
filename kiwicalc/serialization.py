@@ -177,7 +177,16 @@ def object_to_dict(obj):
     from kiwicalc.geometry.points import Circle, Point2D, Point3D
     from kiwicalc.geometry.surfaces import Surface3D
     from kiwicalc.linalg.spaces import Surface
+    from kiwicalc.equations.symbolic import (
+        EquationSolution, EquationSystemSolution, SymbolicExpression,
+    )
 
+    if isinstance(obj, EquationSolution):
+        return {"kind": "equation_solution", "data": obj.to_dict()}
+    if isinstance(obj, EquationSystemSolution):
+        return {"kind": "equation_system_solution", "data": obj.to_dict()}
+    if isinstance(obj, SymbolicExpression):
+        return {"kind": "symbolic_expression", "data": obj.to_dict()}
     if isinstance(obj, Surface):
         return {"kind": "plane", "coefficients": [obj.a, obj.b, obj.c, obj.d], "resolution": obj.resolution}
     if isinstance(obj, (Curve2D, Curve3D)):
@@ -210,6 +219,9 @@ def object_from_dict(data):
     from kiwicalc.functions.function import Function
     from kiwicalc.geometry.points import Circle, Point2D, Point3D
     from kiwicalc.linalg.spaces import Surface
+    from kiwicalc.equations.symbolic import (
+        EquationSolution, EquationSystemSolution, symbolic_from_dict,
+    )
 
     kind = data.get("kind")
     if kind == "curve": return curve_from_dict(data["data"])
@@ -217,6 +229,9 @@ def object_from_dict(data):
     if kind == "plane": return Surface(data["coefficients"], resolution=data.get("resolution", 80))
     if kind == "function": return Function(data["expression"])
     if kind == "expression": return create(data["expression"])
+    if kind == "symbolic_expression": return symbolic_from_dict(data["data"])
+    if kind == "equation_solution": return EquationSolution.from_dict(data["data"])
+    if kind == "equation_system_solution": return EquationSystemSolution.from_dict(data["data"])
     if kind == "circle": return Circle(data["radius"], data["center"])
     if kind == "point":
         return Point2D(*data["coordinates"]) if len(data["coordinates"]) == 2 else Point3D(*data["coordinates"])

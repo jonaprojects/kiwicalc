@@ -2,11 +2,8 @@ from __future__ import annotations
 import math
 import random
 import cmath
-import operator
 import json
 import warnings
-from itertools import permutations
-from functools import reduce
 from abc import ABC, abstractmethod
 from math import sqrt
 from typing import Union, Tuple, List, Optional, Any, Callable, Dict, Set, Iterable
@@ -24,9 +21,10 @@ from kiwicalc.core.utils import (
 from kiwicalc.parsing.parse_equation import (
     ParseEquation, extract_dict_from_equation, linear_expression_to_dict,
     subtract_dicts, get_equation_variables, simplify_expression,
-    coefficients_to_expressions
+    coefficients_to_expressions, _split_equation,
 )
-from kiwicalc.parsing.parse_expression import split_expression, extract_variables_from_expression, poly_from_str, ParseExpression
+from kiwicalc.parsing.parse_expression import split_expression, extract_variables_from_expression, poly_from_str, _poly_from_str, ParseExpression
+from kiwicalc.parsing.errors import AmbiguousVariableError
 from kiwicalc.expressions.poly import Poly
 from kiwicalc.expressions.mono import Mono
 from kiwicalc.expressions.roots import Sqrt
@@ -35,6 +33,55 @@ from kiwicalc.numeric.roots import (
     newton_raphson, halleys_method, secant_method,
     extract_possible_solutions, __find_solutions
 )
+
+
+def _validated_numeric_coefficients(coefficients, *, allow_empty=False):
+    if isinstance(coefficients, (str, bytes)):
+        raise TypeError('Polynomial coefficients must be a numeric sequence')
+    try:
+        values = list(coefficients)
+    except TypeError as error:
+        raise TypeError('Polynomial coefficients must be a numeric sequence') from error
+    if not values and not allow_empty:
+        raise ValueError('At least one polynomial coefficient is required')
+    for value in values:
+        if isinstance(value, (bool, np.bool_)) or not np.isscalar(value):
+            raise TypeError('Polynomial coefficients must be numeric scalars')
+        try:
+            finite = np.isfinite(value)
+        except TypeError as error:
+            raise TypeError('Polynomial coefficients must be numeric scalars') from error
+        if not finite:
+            raise ValueError('Polynomial coefficients must be finite numbers')
+    return values
+
+
+def _validate_iteration_controls(epsilon, nmax):
+    if isinstance(epsilon, (bool, np.bool_)) or not np.isscalar(epsilon) or not np.isreal(epsilon) or not np.isfinite(epsilon) or epsilon <= 0:
+        raise ValueError('epsilon must be a positive finite real number')
+    if isinstance(nmax, (bool, np.bool_)) or not isinstance(nmax, (int, np.integer)) or nmax < 1:
+        raise ValueError('nmax must be a positive integer')
+
+
+def _relative_polynomial_residual(coefficients, root):
+    degree = len(coefficients) - 1
+    numerator = abs(np.polyval(coefficients, root))
+    denominator = sum(
+        abs(coefficient) * max(1.0, abs(root)) ** (degree - index)
+        for index, coefficient in enumerate(coefficients)
+    )
+    return numerator / max(1.0, denominator)
+
+
+def _snap_numerical_root(root, coefficients):
+    root = complex(root)
+    tolerance = 128 * np.finfo(float).eps * max(1.0, abs(root))
+    real = 0.0 if abs(root.real) <= tolerance else root.real
+    imag = 0.0 if abs(root.imag) <= tolerance else root.imag
+    nearest_integer = round(real)
+    if abs(real - nearest_integer) <= tolerance and _relative_polynomial_residual(coefficients, nearest_integer + 1j * imag) <= 1e-14:
+        real = float(nearest_integer)
+    return complex(real, imag)
 
 def solve_quadratic_from_str(expression, real=False, strict_syntax=False):
     if isinstance(expression, str):
@@ -52,31 +99,60 @@ def solve_quadratic(a: Union[str, float], b: float=None, c: float=None) -> tuple
     """ Solves a quadratic equation using computations of complex numbers ( utilizing the cmath library)"""
     if isinstance(a, str):
         return solve_quadratic_from_str(a)
+    if b is None or c is None:
+        raise TypeError('b and c are required when a is numeric')
+    a, b, c = _validated_numeric_coefficients((a, b, c))
     if a == 0:
         if b == 0:
             return None if c == 0 else tuple()
         return (-c / b,)
-    discriminant = b ** 2 - 4 * a * c
-    return ((-b + cmath.sqrt(discriminant)) / (2 * a), (-b - cmath.sqrt(discriminant)) / (2 * a))
+    scale = max(abs(a), abs(b), abs(c))
+    scaled_a, scaled_b, scaled_c = a / scale, b / scale, c / scale
+    discriminant = scaled_b ** 2 - 4 * scaled_a * scaled_c
+    root_discriminant = cmath.sqrt(discriminant)
+    plus_numerator = -scaled_b + root_discriminant
+    minus_numerator = -scaled_b - root_discriminant
+
+    # Computing both roots directly loses the smaller root when |b| is much
+    # larger than |a*c|.  Compute the root with the safer numerator first and
+    # recover the other from Vieta's product, while retaining the historical
+    # (+sqrt, -sqrt) return order.
+    if abs(plus_numerator) >= abs(minus_numerator):
+        plus_root = plus_numerator / (2 * scaled_a)
+        minus_root = scaled_c / (scaled_a * plus_root) if plus_root != 0 else minus_numerator / (2 * scaled_a)
+    else:
+        minus_root = minus_numerator / (2 * scaled_a)
+        plus_root = scaled_c / (scaled_a * minus_root) if minus_root != 0 else plus_numerator / (2 * scaled_a)
+    coefficients = (a, b, c)
+    return (
+        _snap_numerical_root(plus_root, coefficients),
+        _snap_numerical_root(minus_root, coefficients),
+    )
 
 def solve_quadratic_real(a: Union[str, float], b: float, c: float) -> Optional[Union[Tuple[float, float], float]]:
     """returns onlu the real solutions of the quadratic equation"""
     if isinstance(a, str):
         return solve_quadratic_from_str(a, real=True)
+    a, b, c = _validated_numeric_coefficients((a, b, c))
+    if not all(np.isreal(value) for value in (a, b, c)):
+        raise TypeError('solve_quadratic_real requires real coefficients')
     if a == 0:
         if b == 0:
             return None
         return -c / b
-    discriminant = b ** 2 - 4 * a * c
+    scale = max(abs(a), abs(b), abs(c))
+    scaled_a, scaled_b, scaled_c = a / scale, b / scale, c / scale
+    discriminant = scaled_b ** 2 - 4 * scaled_a * scaled_c
     if discriminant < 0:
         return None
     if discriminant == 0:
-        return (-b + sqrt(discriminant)) / (2 * a)
-    return ((-b + sqrt(discriminant)) / (2 * a), (-b - sqrt(discriminant)) / (2 * a))
+        return -scaled_b / (2 * scaled_a)
+    roots = solve_quadratic(a, b, c)
+    return tuple(root.real for root in roots)
 
 def solve_quadratic_params(a: 'Union[IExpression, int, float,str]', b: 'Union[IExpression, int, float]', c: 'Union[IExpression,int,float]'):
     if isinstance(a, str):
-        print('need to be implemented')
+        return solve_quadratic_from_str(a)
     if all((isinstance(coefficient, (int, float)) for coefficient in (a, b, c))):
         return solve_quadratic(a, b, c)
     if isinstance(a, IExpression):
@@ -92,64 +168,89 @@ def solve_quadratic_params(a: 'Union[IExpression, int, float,str]', b: 'Union[IE
         if c_eval is not None:
             c = c_eval
     if all((isinstance(coefficient, (int, float)) for coefficient in (a, b, c))):
-        return ((-b + sqrt(b ** 2 - 4 * a * c)) / (2 * a), (-b - sqrt(b ** 2 - 4 * a * c)) / (2 * a))
+        return solve_quadratic(a, b, c)
     else:
         discriminant_root = Sqrt(b ** 2 - 4 * a * c)
         return ((-b + discriminant_root) / (2 * a), (-b + -discriminant_root) / (2 * a))
+
+def _normalised_fixed_degree_roots(coefficients):
+    """Return deterministic, unique numerical roots for degrees three/four."""
+    coefficients = np.asarray(_validated_numeric_coefficients(coefficients), dtype=complex)
+    coefficients = coefficients / max(abs(coefficients))
+
+    roots = [complex(root) for root in np.roots(coefficients)]
+    if not roots:
+        return []
+
+    # Companion-matrix methods split repeated roots into a very small cloud.
+    # Merge only at the error scale expected for this degree, then use the
+    # cluster centroid (which is especially accurate by Vieta's formulas).
+    degree = len(coefficients) - 1
+    derivative = np.polyder(coefficients)
+    merge_factor = 32 * np.finfo(float).eps ** (1 / max(degree, 1))
+    clusters = []
+    for root in sorted(roots, key=lambda value: (value.real, value.imag)):
+        for cluster in clusters:
+            centre = sum(cluster) / len(cluster)
+            if abs(root - centre) <= merge_factor * (1 + abs(root) + abs(centre)):
+                cluster.append(root)
+                break
+        else:
+            clusters.append([root])
+
+    def relative_residual(value):
+        return _relative_polynomial_residual(coefficients, value)
+
+    # A proximity match is only a candidate for multiplicity. Distinct nearby
+    # roots must not be collapsed; the candidate centroid must itself satisfy
+    # the polynomial to near machine precision.
+    checked_clusters = []
+    for cluster in clusters:
+        centre = sum(cluster) / len(cluster)
+        if len(cluster) > 1 and relative_residual(centre) > 1e-10:
+            checked_clusters.extend([[root] for root in cluster])
+        else:
+            checked_clusters.append(cluster)
+
+    normalised = []
+    for cluster in checked_clusters:
+        root = sum(cluster) / len(cluster)
+        if len(cluster) == 1:
+            for _ in range(3):
+                value = np.polyval(coefficients, root)
+                slope = np.polyval(derivative, root)
+                slope_scale = abs(np.polyval(abs(derivative), abs(root)))
+                if abs(slope) <= 64 * np.finfo(float).eps * max(1.0, slope_scale):
+                    break
+                candidate = root - value / slope
+                if not np.isfinite(candidate) or relative_residual(candidate) > relative_residual(root):
+                    break
+                root = complex(candidate)
+        zero_tolerance = 128 * np.finfo(float).eps * max(1.0, abs(root))
+        real = 0.0 if abs(root.real) <= zero_tolerance else root.real
+        imag = 0.0 if abs(root.imag) <= zero_tolerance else root.imag
+        normalised.append(complex(real, imag))
+    if any(relative_residual(root) > 1e-8 for root in normalised):
+        warnings.warn('Some polynomial roots have a large normalized residual', RuntimeWarning)
+    return sorted(normalised, key=lambda value: (value.real, value.imag))
+
 
 def solve_cubic(a: float, b: float, c: float, d: float):
     """ Given the real coefficients of a cubic equation, this method will return the solutions"""
     if a == 0:
         return solve_quadratic(b, c, d)
-    delta0 = b * b - 3 * a * c
-    delta1 = 2 * pow(b, 3) - 9 * a * b * c + 27 * a * a * d
-    deepest_root = cmath.sqrt(pow(delta1, 2) - 4 * pow(delta0, 3))
-    C = (0.5 * (delta1 + deepest_root)) ** (1.0 / 3)
-    if C == 0:
-        C = (0.5 * (delta1 - deepest_root)) ** (1.0 / 3)
-    if C == 0:
-        return [0]
-    roots = []
-    root_of_unity = complex(-0.5, sqrt(3) / 2)
-    for k in range(3):
-        root = -((b + C + delta0 / C) / (3 * a))
-        roots.append(root)
-        C *= root_of_unity
-    return list({complex(round_decimal(root.real), round_decimal(root.imag)) for root in roots})
+    return _normalised_fixed_degree_roots((a, b, c, d))
 
 def solve_cubic_real(a: float, b: float, c: float, d: float):
     roots = solve_cubic(a, b, c, d)
     if not roots:
         return []
-    return [root.real for root in roots if abs(root.imag) < 1e-05]
+    return [complex(root).real for root in roots if abs(complex(root).imag) < 1e-05]
 
 def solve_quartic(a: float, b: float, c: float, d: float, e: float):
     if a == 0:
         return solve_cubic(b, c, d, e)
-    if a != 1:
-        b /= a
-        c /= a
-        d /= a
-        e /= a
-        a = 1
-    f = c - 3 * b ** 2 / 8
-    g = d + b ** 3 / 8 - b * c / 2
-    h = e - 3 * b ** 4 / 256 + b ** 2 * c / 16 - b * d / 4
-    three_roots = solve_cubic(1, f / 2, (f ** 2 - 4 * h) / 16, -g ** 2 / 64)
-    if len(three_roots) == 1 and three_roots[0] == 0:
-        return [0]
-    else:
-        y1, y2, y3 = three_roots
-    non_zero_roots = [sol for sol in (y1, y2, y3) if sol != 0]
-    if len(non_zero_roots) == 3:
-        non_zero_roots = non_zero_roots[:-1]
-    elif len(non_zero_roots) < 2:
-        return [0]
-    p, q = (cmath.sqrt(non_zero_roots[0]), cmath.sqrt(non_zero_roots[1]))
-    r = -g / (8 * p * q)
-    s = b / (4 * a)
-    sol1, sol2, sol3, sol4 = (p + q + r - s, p - q - r - s, -p + q - r - s, -p - q + r - s)
-    return list({sol1, sol2, sol3, sol4})
+    return _normalised_fixed_degree_roots((a, b, c, d, e))
 
 def solve_polynomial(coefficients, epsilon: float=1e-06, nmax: int=10000):
     """
@@ -170,7 +271,8 @@ def solve_polynomial(coefficients, epsilon: float=1e-06, nmax: int=10000):
     """
     if isinstance(coefficients, str):
         return solve_polynomial(ParseEquation.parse_polynomial(coefficients))
-    coefficients = list(coefficients)
+    _validate_iteration_controls(epsilon, nmax)
+    coefficients = _validated_numeric_coefficients(coefficients, allow_empty=True)
     while coefficients and coefficients[0] == 0:
         coefficients.pop(0)
     if not coefficients:
@@ -202,49 +304,48 @@ def solve_poly_by_factoring(coefficients):
     most_significant = coefficients[0]
     free_number = coefficients[-1]
     possible_solutions = extract_possible_solutions(most_significant, free_number)
-    print(possible_solutions)
     solutions = __find_solutions(coefficients, possible_solutions)
     return solutions
 
 def solve_linear(equation: str, variables=None, get_dict=False, get_json=False):
     if variables is None:
         variables = extract_dict_from_equation(equation)
-    first_side, second_side = equation.split('=')
+    first_side, second_side = _split_equation(equation)
     first_dict = simplify_expression(expression=first_side, variables=variables)
     second_dict = simplify_expression(expression=second_side, variables=variables)
     result_dict = {key: value for key, value in subtract_dicts(dict1=first_dict, dict2=second_dict).items() if key}
-    if len(result_dict) < 2:
-        return None
-    elif len(result_dict) == 2:
-        if list(result_dict.values())[0] == 0:
-            if list(result_dict.values())[1] == 0:
-                return np.inf
-            return None
-        solution = -result_dict['number'] / list(result_dict.values())[0]
+    variable_items = [(key, value) for key, value in result_dict.items() if key != 'number' and value != 0]
+    number = result_dict.get('number', 0)
+    if not variable_items:
+        return np.inf if number == 0 else None
+    elif len(variable_items) == 1:
+        variable, coefficient = variable_items[0]
+        solution = -number / coefficient
         if get_dict:
-            return {list(variables.keys())[0]: solution}
+            return {variable: solution}
         elif get_json:
-            return json.dumps({'variable': list(variables.keys())[0], 'result': solution})
+            return json.dumps({'variable': variable, 'result': solution})
         return solution
-    elif len(result_dict) > 2:
+    elif len(variable_items) > 1:
         raise ValueError('Invalid equation caused an unexpected error')
 
 def solve_linear_inequality(equation: str, variables=None):
     sign = next((candidate for candidate in ('<=', '>=', '<', '>') if candidate in equation), None)
     if sign is None:
         raise ValueError('Invalid equation')
-    expressions = equation.split(sign)
-    if len(expressions) != 2:
-        raise ValueError(f'Invalid equation')
+    first_side, second_side = _split_equation(equation, sign)
     if variables is None:
         variables = extract_dict_from_equation(equation, delimiter=sign)
-    first_side, second_side = expressions
     first_dict = simplify_expression(first_side, variables)
     second_dict = simplify_expression(second_side, variables)
     result_dict = subtract_dicts(first_dict, second_dict)
-    first_key = list(result_dict.keys())[0]
-    first_value = list(result_dict.values())[0]
+    variable_items = [(key, value) for key, value in result_dict.items() if key != 'number' and value != 0]
+    if len(variable_items) != 1:
+        raise ValueError('A linear inequality must contain exactly one variable with a non-zero coefficient')
+    first_key, first_value = variable_items[0]
     number_value = result_dict['number']
+    if first_value < 0:
+        sign = {'<': '>', '>': '<', '<=': '>=', '>=': '<='}[sign]
     return f'{first_key}{sign}{round_decimal(-number_value / first_value)}'
 
 def random_linear(coefs_range=(-15, 15), digits_after: int=0, variable='x', get_solution: bool=False, get_coefficients: bool=False):
@@ -257,9 +358,8 @@ def random_linear(coefs_range=(-15, 15), digits_after: int=0, variable='x', get_
     :param get_coefficients: whether to return also the coefficients, (a, b)
     :return:
     """
-    a = round_decimal(round(random.uniform(coefs_range[0], coefs_range[1]), digits_after))
-    while a == 0:
-        a = round_decimal(round(random.uniform(coefs_range[0], coefs_range[1]), digits_after))
+    _validate_generator_options(coefs_range, digits_after, variable, 'coefs_range')
+    a = _random_nonzero(coefs_range, digits_after, 'coefs_range')
     b = round_decimal(round(random.uniform(coefs_range[0], coefs_range[1]), digits_after))
     a_str = format_coefficient(round_decimal(a))
     b_str = format_free_number(b)
@@ -274,30 +374,22 @@ def random_linear(coefs_range=(-15, 15), digits_after: int=0, variable='x', get_
 def random_polynomial(degree: int=None, solutions_range=(-5, 5), digits_after=0, variable='x', python_syntax=False, get_solutions=False):
     if degree is None:
         degree = random.randint(2, 9)
-    a = round_decimal(round(random.uniform(solutions_range[0], solutions_range[1]), digits_after))
-    while a == 0:
-        a = round_decimal(round(random.uniform(solutions_range[0], solutions_range[1]), digits_after))
-    accumulator = [f'{format_coefficient(a)}x**{degree}'] if python_syntax else [f'{format_coefficient(a)}x^{degree}']
+    if isinstance(degree, bool) or not isinstance(degree, int) or degree < 1:
+        raise ValueError('degree must be a positive integer')
+    _validate_generator_options(solutions_range, digits_after, variable, 'solutions_range')
+    a = _random_nonzero(solutions_range, digits_after, 'solutions_range')
     solutions = {round_decimal(round(random.uniform(solutions_range[0], solutions_range[1]), digits_after)) for _ in range(degree)}
-    permutations_length = 1
-    for i in range(degree):
-        current_permutations = set((tuple(sorted(per)) for per in permutations(solutions, permutations_length)))
-        current_sum = 0
-        for permutation in current_permutations:
-            current_sum += reduce(operator.mul, permutation)
-        if current_sum != 0:
-            current_power = degree - permutations_length
-            coefficient = format_coefficient(round_decimal(current_sum * a)) if current_power != 0 else f'{round_decimal(current_sum * a)}'
-            if coefficient != '' and coefficient[0] not in ('+', '-'):
-                coefficient = f'+{coefficient}'
-            if current_power == 0:
-                accumulator.append(f'{coefficient}')
-            elif current_power == 1:
-                accumulator.append(f'{coefficient}{variable}')
-            else:
-                accumulator.append(f'{coefficient}{variable}^{current_power}')
-        permutations_length += 1
-    equation = ''.join(accumulator)
+    # Preserve the legacy meaning: sampled values are factors (x + value),
+    # duplicate factors are discarded and the missing degree becomes x^k.
+    coefficients = np.asarray([a], dtype=float)
+    for solution in solutions:
+        coefficients = np.convolve(coefficients, [1.0, float(solution)])
+    if len(solutions) < degree:
+        coefficients = np.concatenate((coefficients, np.zeros(degree - len(solutions))))
+    coefficients = [round_decimal(value) for value in coefficients]
+    equation = ParseExpression.coefficients_to_str(
+        coefficients, variable=variable, syntax='pythonic' if python_syntax else ''
+    )
     if get_solutions:
         roots = [-solution for solution in solutions]
         # The legacy generator deduplicates sampled factors but retains the
@@ -309,34 +401,55 @@ def random_polynomial(degree: int=None, solutions_range=(-5, 5), digits_after=0,
     return equation
 
 def random_polynomial2(degree: int, values=(-15, 15), digits_after=0, variable='x', python_syntax=False):
-    a = round_decimal(round(random.uniform(values[0], values[1]), digits_after))
-    while a == 0:
-        a = round_decimal(round(random.uniform(values[0], values[1]), digits_after))
-    accumulator = []
-    while a == 0:
-        a = round_decimal(round(random.uniform(values[0], values[1]), digits_after))
-    accumulator.append(f'{format_coefficient(a)}{variable}^{degree}')
-    for index in range(1, degree - 1):
-        m = round_decimal(round(random.uniform(values[0], values[1]), digits_after))
-        coef_str = format_coefficient(m)
-        if coef_str:
-            if coef_str[0] not in ('+', '-'):
-                coef_str = f'+{coef_str}'
-        power = degree - 1
-        power_str = f'^{power}' if power != 1 else f''
-        if python_syntax:
-            pass
-        else:
-            accumulator.append(f'{coef_str}{variable}{power_str}')
-    m = round_decimal(round(random.uniform(values[0], values[1]), digits_after))
-    accumulator.append(f'+{round_decimal(m)}' if m > 0 else f'{m}') if m != 0 else ''
-    return ''.join(accumulator)
+    if isinstance(degree, bool) or not isinstance(degree, int) or degree < 1:
+        raise ValueError('degree must be a positive integer')
+    _validate_generator_options(values, digits_after, variable, 'values')
+    coefficients = [_random_nonzero(values, digits_after, 'values')]
+    coefficients.extend(
+        round_decimal(round(random.uniform(values[0], values[1]), digits_after))
+        for _ in range(degree)
+    )
+    return ParseExpression.coefficients_to_str(
+        coefficients, variable=variable, syntax='pythonic' if python_syntax else ''
+    )
+
+
+def _random_nonzero(value_range, digits_after, parameter_name):
+    if round(value_range[0], digits_after) == 0 and round(value_range[1], digits_after) == 0:
+        raise ValueError(f'{parameter_name} cannot produce a non-zero value at the requested precision')
+    for _ in range(1000):
+        value = round_decimal(round(random.uniform(value_range[0], value_range[1]), digits_after))
+        if value != 0:
+            return value
+    raise ValueError(f'{parameter_name} cannot produce a non-zero value at the requested precision')
+
+
+def _validate_generator_options(value_range, digits_after, variable, parameter_name):
+    if isinstance(value_range, (str, bytes)):
+        raise TypeError(f'{parameter_name} must be a pair of finite real numbers')
+    try:
+        values = tuple(value_range)
+    except TypeError as error:
+        raise TypeError(f'{parameter_name} must be a pair of finite real numbers') from error
+    if len(values) != 2 or any(
+        isinstance(value, (bool, np.bool_)) or not np.isscalar(value)
+        or not np.isreal(value) or not np.isfinite(value)
+        for value in values
+    ):
+        raise ValueError(f'{parameter_name} must be a pair of finite real numbers')
+    if values[0] > values[1]:
+        raise ValueError(f'{parameter_name} must be ordered')
+    if isinstance(digits_after, (bool, np.bool_)) or not isinstance(digits_after, (int, np.integer)) or digits_after < 0:
+        raise ValueError('digits_after must be a non-negative integer')
+    if not isinstance(variable, str) or not variable or not variable.isidentifier():
+        raise ValueError('variable must be a valid non-empty identifier')
 
 class Equation(ABC):
 
     def __init__(self, equation: str, variables: Iterable=None, calc_now: bool=False):
         """The base function of creating a new Equation"""
-        self._equation = clean_from_spaces(equation)
+        first_side, second_side = _split_equation(equation)
+        self._equation = clean_from_spaces(f'{first_side}={second_side}')
         if variables is None:
             self._variables = get_equation_variables(equation)
             self._variables_dict = self._extract_variables()
@@ -402,7 +515,7 @@ class Equation(ABC):
         """
         equal_index = self.equation.find('=')
         first_side, second_side = (self.equation[:equal_index], self.equation[equal_index + 1:])
-        return LinearEquation(f'{second_side}={first_side}')
+        return type(self)(f'{second_side}={first_side}', variables=self._variables)
 
     @abstractmethod
     def __repr__(self):
@@ -434,6 +547,7 @@ class LinearEquation(Equation):
         num = result_dict['number']
         del result_dict['number']
         self._equation = f'{format_linear_dict(result_dict, round_coefficients=round_coefficients)} = {round_decimal(-num)}'
+        self._solution = None
 
     def __format_expressions(self, expressions):
         accumulator = ''
@@ -470,7 +584,7 @@ class LinearEquation(Equation):
                 accumulator += '\x1b[1mFinal Step:  The expression above is always true, and hence there are infinite solutions to the equation.\x1b[0m\n'
                 self._solution = 'Infinite'
             else:
-                accumulator += '\x1b[1mFinal Step: The expression above is always false, and hence there are infinite solutions to the equation.\x1b[0m\n'
+                accumulator += '\x1b[1mFinal Step: The expression above is always false, and hence there are no solutions to the equation.\x1b[0m\n'
                 self._solution = None
             return accumulator
         first_variable = list(self.variables_dict.keys())[0]
@@ -547,12 +661,14 @@ class LinearEquation(Equation):
             title = f'{self.first_side}={self.second_side}'
         plot_functions([first_function, second_function], start=start, stop=stop, step=step, ymin=ymin, ymax=ymax, show_axis=show_axis, show=False, title=title, with_legend=with_legend)
         x = self.solution
-        if x is not None and (not isinstance(x, str)):
+        if x is not None and (not isinstance(x, str)) and np.isfinite(x):
             y = first_function(x)
             plt.scatter([x], [y], color='red')
             if show:
                 plt.show()
             return (x, y)
+        if show:
+            plt.show()
         return x
 
     def _extract_variables(self):
@@ -704,16 +820,68 @@ class LinearEquation(Equation):
         return f'Equation({self.equation})'
 
     def __copy__(self):
-        return LinearEquation(self._equation)
+        return LinearEquation(self._equation, variables=self._variables)
+
+def _fixed_degree_equation_dict(equation, variables, degree, strict_syntax):
+    equation_variables = list(variables) if variables else get_equation_variables(equation)
+    if not equation_variables:
+        first, second = _split_equation(equation)
+        first_dict = simplify_expression(first, ())
+        second_dict = simplify_expression(second, ())
+        return {'free': first_dict['number'] - second_dict['number']}
+    if len(equation_variables) != 1:
+        # Fixed-degree solvers remain one-variable only, but constructing and
+        # inspecting the legacy object with several variables is supported.
+        first, second = _split_equation(equation)
+        first_dict = ParseExpression.parse_polynomial(first, variables=equation_variables)
+        second_dict = ParseExpression.parse_polynomial(second, variables=equation_variables)
+        result = {}
+        for variable in equation_variables:
+            left = first_dict.get(variable, [])
+            right = second_dict.get(variable, [])
+            size = max(len(left), len(right), degree)
+            left = [0] * (size - len(left)) + list(left)
+            right = [0] * (size - len(right)) + list(right)
+            result[variable] = [a - b for a, b in zip(left, right)]
+        result['free'] = first_dict['free'] - second_dict['free']
+        return result
+    variable = equation_variables[0]
+    if variables:
+        first, second = _split_equation(equation)
+        try:
+            first_dict = ParseExpression.parse_polynomial(first, variables=equation_variables)
+            second_dict = ParseExpression.parse_polynomial(second, variables=equation_variables)
+        except AmbiguousVariableError as error:
+            raise ValueError('Explicit variables must match the variable in the equation') from error
+        left = first_dict[variable]
+        right = second_dict[variable]
+        size = max(len(left), len(right))
+        left = [0] * (size - len(left)) + list(left)
+        right = [0] * (size - len(right)) + list(right)
+        coefficients = [a - b for a, b in zip(left, right)]
+        while coefficients and coefficients[0] == 0:
+            coefficients.pop(0)
+        coefficients.append(first_dict['free'] - second_dict['free'])
+    else:
+        coefficients = ParseEquation.parse_polynomial(equation)
+    if len(coefficients) > degree + 1:
+        raise ValueError(f'Equation degree exceeds {degree}')
+    if strict_syntax and len(coefficients) != degree + 1:
+        raise ValueError(f'Strict syntax requires a degree-{degree} equation')
+    coefficients = [0] * (degree + 1 - len(coefficients)) + coefficients
+    return {variable: coefficients[:-1], 'free': coefficients[-1]}
+
 
 class QuadraticEquation(Equation):
 
     def __init__(self, equation: str, variables: Optional[Iterable[str]]=None, strict_syntax=False):
         self.__strict_syntax = strict_syntax
         super().__init__(equation, variables)
+        if variables is not None:
+            self._variables_dict = self._extract_variables()
 
     def _extract_variables(self):
-        return ParseExpression.parse_quadratic(self.first_side, self._variables, strict_syntax=self.__strict_syntax)
+        return _fixed_degree_equation_dict(self._equation, self._variables, 2, self.__strict_syntax)
 
     def simplified_str(self) -> str:
         if self.num_of_variables != 1:
@@ -736,7 +904,9 @@ class QuadraticEquation(Equation):
                 return solve_quadratic_real(a, b, c)
             elif mode == 'parametric':
                 return solve_quadratic_params(a, b, c)
-        warnings.warn(f'Cannot solve quadratic equations with more than 1 variable, but found {num_of_variables}')
+            warnings.warn(f"Unrecognized quadratic solution mode: {mode!r}")
+            return None
+        warnings.warn(f'Cannot solve a quadratic equation with {num_of_variables} variables')
         return None
 
     def coefficients(self):
@@ -753,16 +923,12 @@ class QuadraticEquation(Equation):
 
     @staticmethod
     def random(values=(-15, 15), digits_after: int=0, variable: str='x', strict_syntax=True, get_solutions=False):
+        _validate_generator_options(values, digits_after, variable, 'values')
         if strict_syntax:
-            a = random.randint(-5, 5)
-            while a == 0:
-                a = random.randint(-5, 5)
-            m = round(random.uniform(values[0] / a, values[1] / a), digits_after)
-            while m == 0:
-                m = round(random.uniform(values[0] / a, values[1] / a), digits_after)
-            n = round(random.uniform(values[0] / a, values[1] / a), digits_after)
-            while n == 0:
-                n = round(random.uniform(values[0] / a, values[1] / a), digits_after)
+            a = random.choice(tuple(range(-5, 0)) + tuple(range(1, 6)))
+            scaled_range = tuple(sorted((values[0] / a, values[1] / a)))
+            m = _random_nonzero(scaled_range, digits_after, 'values')
+            n = _random_nonzero(scaled_range, digits_after, 'values')
             b, c = (round_decimal(round((m + n) * a, digits_after)), round_decimal(round(m * n * a, digits_after)))
             a_str = format_coefficient(a)
             b_str = (f'+{b}' if b > 0 else f'{b}') if b != 0 else ''
@@ -822,24 +988,32 @@ class QuadraticEquation(Equation):
         return f'QuadraticEquation({self._equation}, variables={self._variables})'
 
     def __copy__(self):
-        return QuadraticEquation(equation=self._equation, strict_syntax=self.__strict_syntax)
+        return QuadraticEquation(equation=self._equation, variables=self._variables, strict_syntax=self.__strict_syntax)
 
 class CubicEquation(Equation):
 
     def __init__(self, equation: str, variables: Iterable[Optional[str]]=None, strict_syntax: bool=False):
         self.__strict_syntax = strict_syntax
         super().__init__(equation, variables)
+        if variables is not None:
+            self._variables_dict = self._extract_variables()
 
     def _extract_variables(self):
-        return ParseExpression.parse_cubic(self.first_side, self._variables, strict_syntax=self.__strict_syntax)
+        return _fixed_degree_equation_dict(self._equation, self._variables, 3, self.__strict_syntax)
 
     def solve(self):
-        a, b, c = (self._variables_dict['x'][0], self._variables_dict['x'][1], self._variables_dict['x'][2])
+        if len(self._variables) != 1:
+            warnings.warn(f'Cannot solve cubic equations with {len(self._variables)} variables')
+            return None
+        variable = self._variables[0]
+        a, b, c = self._variables_dict[variable]
         d = self._variables_dict['free']
         return solve_cubic(a, b, c, d)
 
     def coefficients(self):
-        return self._variables_dict['x'] + [self._variables_dict['free']]
+        if not self._variables:
+            return [self._variables_dict['free']]
+        return self._variables_dict[self._variables[0]] + [self._variables_dict['free']]
 
     @staticmethod
     def random(solutions_range: Tuple[float, float]=(-15, 15), digits_after: int=0, variable='x', get_solutions=False):
@@ -866,24 +1040,32 @@ class CubicEquation(Equation):
         return f'CubicEquation({self._equation}, variables={self._variables})'
 
     def __copy__(self):
-        return CubicEquation(equation=self._equation, strict_syntax=self.__strict_syntax)
+        return CubicEquation(equation=self._equation, variables=self._variables, strict_syntax=self.__strict_syntax)
 
 class QuarticEquation(Equation):
 
     def __init__(self, equation: str, variables: Iterable[Optional[str]]=None, strict_syntax=False):
         self.__strict_syntax = strict_syntax
         super().__init__(equation, variables)
+        if variables is not None:
+            self._variables_dict = self._extract_variables()
 
     def _extract_variables(self):
-        return ParseExpression.parse_quartic(self.first_side, self._variables, strict_syntax=self.__strict_syntax)
+        return _fixed_degree_equation_dict(self._equation, self._variables, 4, self.__strict_syntax)
 
     def solve(self):
-        a, b, c = (self._variables_dict['x'][0], self._variables_dict['x'][1], self._variables_dict['x'][2])
-        d, e = (self._variables_dict['x'][3], self._variables_dict['free'])
+        if len(self._variables) != 1:
+            warnings.warn(f'Cannot solve quartic equations with {len(self._variables)} variables')
+            return None
+        variable = self._variables[0]
+        a, b, c = self._variables_dict[variable][:3]
+        d, e = self._variables_dict[variable][3], self._variables_dict['free']
         return solve_quartic(a, b, c, d, e)
 
     def coefficients(self):
-        return self._variables_dict['x'] + [self._variables_dict['free']]
+        if not self._variables:
+            return [self._variables_dict['free']]
+        return self._variables_dict[self._variables[0]] + [self._variables_dict['free']]
 
     @staticmethod
     def random(solutions_range: Tuple[float, float]=(-15, 15), digits_after: int=0, variable='x', get_solutions=False):
@@ -910,7 +1092,7 @@ class QuarticEquation(Equation):
         return f'QuarticEquation({self._equation}, variables={self._variables})'
 
     def __copy__(self):
-        return QuarticEquation(equation=self._equation, strict_syntax=self.__strict_syntax)
+        return QuarticEquation(equation=self._equation, variables=self._variables, strict_syntax=self.__strict_syntax)
 
 class PolyEquation(Equation):
 
@@ -919,8 +1101,11 @@ class PolyEquation(Equation):
         if first_side is None:
             raise TypeError('First argument in PolyEquation.__init__() cannot be None. Try using a string, and read the documentation !')
         if second_side is None and isinstance(first_side, str):
-            left_side, right_side = first_side.split('=')
-            self.__first_expression, self.__second_expression = (Poly(left_side), Poly(right_side))
+            left_side, right_side = _split_equation(first_side)
+            self.__first_expression, self.__second_expression = (
+                _poly_from_str(left_side, variables=variables),
+                _poly_from_str(right_side, variables=variables),
+            )
             equation = first_side
         else:
             try:
@@ -960,8 +1145,8 @@ class PolyEquation(Equation):
     def plot_solutions(self, start: float=-10, stop: float=10, step: float=0.01, ymin: float=-10, ymax=10, title: str=None, show_axis=True, show=True):
         from kiwicalc.functions.function import Function
         from kiwicalc.plotting.plots import plot_functions
-        first_func = Function(self.first_side)
-        second_func = Function(self.second_side)
+        first_func = Function(f'f(x)={self.first_side}') if is_number(self.first_side) else Function(self.first_side)
+        second_func = Function(f'f(x)={self.second_side}') if is_number(self.second_side) else Function(self.second_side)
         plot_functions([first_func, second_func], start=start, stop=stop, step=step, ymin=ymin, ymax=ymax, title=title, show_axis=show_axis, show=show)
 
     @staticmethod
@@ -1056,4 +1241,4 @@ class PolyEquation(Equation):
         return f'PolyEquation({self._equation})'
 
     def __copy__(self):
-        return PolyEquation(self._equation)
+        return PolyEquation(self._equation, variables=self._variables)

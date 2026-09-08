@@ -190,7 +190,17 @@ system = kw.LinearSystem((
     "2x - y = 1",
 ))
 print(system.get_solutions())
+
+# Additive exact/structured API; legacy solver returns remain unchanged.
+exact = kw.solve_equation("sqrt(x + 1) = x - 1", steps=True)
+print(exact.solution_set)  # {3}
+
+periodic = kw.solve_equation("sin(x) = 0")
+print(periodic.solution_set)  # x = n*pi, n in Z
 ```
+
+Accepted equation syntax, solver return contracts, numerical tolerances, and
+system failure modes are documented in the [equations guide](docs/equations.md).
 
 ### Linear algebra and geometry
 

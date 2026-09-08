@@ -14,6 +14,23 @@ from kiwicalc.parsing.parse_expression import (
     split_expression, ParseExpression, extract_variables_from_expression,
     poly_from_str
 )
+from kiwicalc.parsing.errors import EquationParseError
+
+
+def _split_equation(equation: str, delimiter: str='=') -> Tuple[str, str]:
+    """Validate and split a two-sided equation without silently truncating it."""
+    if not isinstance(equation, str):
+        raise TypeError('equation must be a string')
+    if not isinstance(delimiter, str) or not delimiter:
+        raise EquationParseError('delimiter must be a non-empty string')
+    if equation.count(delimiter) != 1:
+        raise EquationParseError(
+            f"An equation must have two sides separated by exactly one '{delimiter}'"
+        )
+    first_side, second_side = (side.strip() for side in equation.split(delimiter))
+    if not first_side or not second_side:
+        raise EquationParseError('Both sides of an equation must be non-empty')
+    return first_side, second_side
 
 def extract_dict_from_equation(equation: str, delimiter='='):
     """
@@ -24,22 +41,12 @@ def extract_dict_from_equation(equation: str, delimiter='='):
     :return: returns a dictionary of the __variables and the number. for example, for the equation 3x-y+8 = 6+y+x the
     dictionary returned would be {'x':0,'y':0,'number':0}
     """
-    variables = dict()
-    first_side, second_side = equation.split(delimiter)
-    accumulator = ''
-    for expression in split_expression(first_side) + split_expression(second_side):
-        start_index = -1
-        for index, character in enumerate(expression):
-            if character.isalpha():
-                start_index = index
-                break
-        if start_index != -1:
-            accumulator = ''
-            for character in expression[start_index:]:
-                accumulator += character
-        variables[accumulator.strip()] = 0
-    variables['number'] = 0
-    return {key: value for key, value in variables.items() if key != ''}
+    first_side, second_side = _split_equation(equation, delimiter)
+    variables = sorted(
+        extract_variables_from_expression(first_side)
+        | extract_variables_from_expression(second_side)
+    )
+    return {**{variable: 0 for variable in variables}, 'number': 0}
 
 def add_or_sub_coefficients(first_coefficients, second_coefficients, mode='add', copy_first=True):
     first_coefficients = list(first_coefficients) if copy_first else first_coefficients
@@ -71,18 +78,15 @@ def subtract_dicts(dict1: dict, dict2: dict) -> dict:
     :param dict2: the second dictionary
     :return:
     """
-    new_dict = {}
-    for key in dict2.keys():
-        if key not in dict1.keys():
-            dict1[key] = 0
+    if not isinstance(dict1, dict) or not isinstance(dict2, dict):
+        raise TypeError('subtract_dicts expects two dictionaries')
+    ordered_keys = list(dict1) + [key for key in dict2 if key not in dict1]
+    for key in ordered_keys:
+        if key not in dict1:
             warnings.warn(f"variable {key} wasn't found in the first data structure")
-    for key in dict1.keys():
-        if key not in dict2.keys():
-            dict2[key] = 0
-            warnings.warn(f" variable {key} wasn't found in the second data structure")
-    for key in dict1.keys():
-        new_dict[key] = dict1[key] - dict2[key]
-    return new_dict
+        if key not in dict2:
+            warnings.warn(f"variable {key} wasn't found in the second data structure")
+    return {key: dict1.get(key, 0) - dict2.get(key, 0) for key in ordered_keys}
 
 def linear_expression_to_dict(expression: str, variables: Iterable) -> dict:
     """alternative way to """
@@ -94,44 +98,44 @@ def linear_expression_to_dict(expression: str, variables: Iterable) -> dict:
 
 def equation_to_one_side(equation: str) -> str:
     """ Move all of the items of the equation to one side"""
-    equal_sign = equation.find('=')
-    if equal_sign == -1:
-        raise ValueError("Invalid equation - an equation must have two sides, separated by '=' ")
-    first_side, second_side = (equation[:equal_sign], equation[equal_sign + 1:])
-    second_side = ''.join(('+' if character == '-' else '-' if character == '+' else character for character in second_side))
-    second_side = f'-{second_side}' if second_side[0] not in ('+', '-') else second_side
-    if second_side[0] in ('+', '-'):
-        return first_side + second_side
-    return first_side + second_side
+    first_side, second_side = _split_equation(equation)
+    first_side = clean_from_spaces(first_side)
+    second_side = clean_from_spaces(second_side)
+    negated_terms = []
+    for term in split_expression(second_side):
+        if term.startswith('+'):
+            negated_terms.append('-' + term[1:])
+        elif term.startswith('-'):
+            negated_terms.append('+' + term[1:])
+        else:
+            negated_terms.append('-' + term)
+    return first_side + ''.join(negated_terms)
 
 def get_equation_variables(equation: str) -> List[Optional[str]]:
-    return list({character for character in equation if character.isalpha()})
+    _split_equation(equation)
+    return sorted(extract_variables_from_expression(equation))
 
 def simplify_expression(expression: str, variables: Iterable[str], format_abs=False, format_factorial=False) -> dict:
     if format_abs:
         expression = handle_abs(expression)
     if format_factorial:
         expression = handle_factorial(expression)
-    expr = expression.replace('-', '+-').replace(' ', '')
-    expressions = [num for num in expr.split('+') if num != '' and num is not None]
     if isinstance(variables, dict):
         new_dict = variables.copy()
     else:
         new_dict = {variable_name: 0 for variable_name in variables}
     if 'number' not in new_dict:
         new_dict['number'] = 0
-    for item in expressions:
-        if item[-1].isalpha() or contains_from_list(allowed_characters, item):
-            if item[-1] in new_dict.keys():
-                if len(item) == 1:
-                    item = f'1{item}'
-                elif len(item) == 2 and item[0] == '-':
-                    item = f'-1{item[-1]}'
-                new_dict[item[-1]] += float(item[:-1])
-            elif not is_number(item):
-                raise ValueError(f'Unrecognized expression {item}')
-        else:
-            new_dict['number'] += float(item)
+    variable_names = [key for key in new_dict if key != 'number']
+    try:
+        parsed = ParseExpression.parse_linear(expression, variable_names)
+    except ValueError as error:
+        if 'Expected a linear expression' in str(error):
+            raise
+        raise ValueError(f'Unrecognized expression {expression}') from error
+    for variable in variable_names:
+        new_dict[variable] += parsed[variable]
+    new_dict['number'] += parsed['free']
     return new_dict
 
 def coefficients_to_expressions(coefficients, variable: str='x'):
@@ -149,11 +153,11 @@ class ParseEquation:
 
     @staticmethod
     def parse_polynomial(equation: str):
+        first_side, second_side = _split_equation(equation)
         variables = get_equation_variables(equation)
         if len(variables) != 1:
-            raise ValueError('can only parse quadratic equations with 1 variable')
+            raise ValueError('Can only parse polynomial equations with 1 variable')
         variable = variables[0]
-        first_side, second_side = equation.split('=')
         first_dict = ParseExpression.parse_polynomial(first_side, variables=variables)
         second_dict = ParseExpression.parse_polynomial(second_side, variables=variables)
         add_or_sub_coefficients(first_dict[variable], second_dict[variable], copy_first=False, mode='sub')

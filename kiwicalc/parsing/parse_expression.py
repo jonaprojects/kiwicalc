@@ -5,6 +5,7 @@ import re
 import string
 import warnings
 import numpy as np
+from dataclasses import dataclass
 from itertools import combinations
 from typing import Union, Tuple, List, Optional, Any, Callable, Iterator, Set, Dict, Iterable
 
@@ -15,28 +16,298 @@ from kiwicalc.core.utils import (
     format_free_number, is_number, contains_from_list, round_decimal,
     handle_abs
 )
+from kiwicalc.parsing.errors import (
+    EquationParseError, UnsupportedExpressionError, AmbiguousVariableError,
+)
+
+
+@dataclass(frozen=True)
+class _PolynomialToken:
+    kind: str
+    value: str
+    position: int
+
+
+def _tokenize_polynomial(expression: str, variables=None):
+    """Tokenize the supported polynomial grammar without evaluating text."""
+    if not isinstance(expression, str):
+        raise TypeError('expression must be a string')
+    explicit_variables = variables is not None
+    variables = (
+        list(variables) if explicit_variables
+        else sorted(extract_variables_from_expression(expression))
+    )
+    if len(set(variables)) != len(variables) or any(not isinstance(value, str) or not value for value in variables):
+        raise AmbiguousVariableError('variables must contain distinct, non-empty strings')
+    ordered_variables = sorted(variables, key=lambda value: (-len(value), value))
+    tokens = []
+    index = 0
+    while index < len(expression):
+        character = expression[index]
+        if character.isspace():
+            index += 1
+            continue
+        number_match = re.match(r'(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?', expression[index:])
+        if number_match:
+            value = number_match.group(0)
+            tokens.append(_PolynomialToken('NUMBER', value, index))
+            index += len(value)
+            continue
+        if expression.startswith('**', index):
+            tokens.append(_PolynomialToken('POWER', '**', index))
+            index += 2
+            continue
+        if character == '^':
+            tokens.append(_PolynomialToken('POWER', character, index))
+            index += 1
+            continue
+        if character in '+-*':
+            tokens.append(_PolynomialToken('OP', character, index))
+            index += 1
+            continue
+        if character == '(':
+            tokens.append(_PolynomialToken('LPAREN', character, index))
+            index += 1
+            continue
+        if character == ')':
+            tokens.append(_PolynomialToken('RPAREN', character, index))
+            index += 1
+            continue
+        if character.isalpha() or character == '_':
+            if tokens and tokens[-1].kind == 'POWER':
+                raise UnsupportedExpressionError(
+                    f"Encountered an invalid power beginning at position {index}"
+                )
+            if explicit_variables:
+                variable = next(
+                    (candidate for candidate in ordered_variables if expression.startswith(candidate, index)),
+                    None,
+                )
+                if variable is None:
+                    if not ordered_variables:
+                        raise EquationParseError(
+                            "Couldn't parse the expression: expected a valid free number"
+                        )
+                    if any(candidate in expression[index:] for candidate in ordered_variables):
+                        raise EquationParseError(
+                            f"Encountered an invalid coefficient at position {index}"
+                        )
+                    raise AmbiguousVariableError(
+                        f"Unknown variable beginning at position {index}: {expression[index:]!r}"
+                    )
+            else:
+                # Legacy KiwiCalc syntax treats adjacent letters as multiplied
+                # single-character variables (``xy`` means ``x*y``).
+                variable = character
+            tokens.append(_PolynomialToken('VARIABLE', variable, index))
+            index += len(variable)
+            continue
+        raise EquationParseError(f"Unexpected character {character!r} at position {index}")
+    tokens.append(_PolynomialToken('EOF', '', len(expression)))
+    return tokens, variables
+
+
+class _PolynomialParser:
+    _MAX_EXPONENT = 1000
+    _MAX_TERMS = 10000
+
+    def __init__(self, tokens, variables):
+        self.tokens = tokens
+        self.variables = list(variables)
+        self.variable_indexes = {variable: index for index, variable in enumerate(self.variables)}
+        self.position = 0
+
+    @property
+    def current(self):
+        return self.tokens[self.position]
+
+    def advance(self):
+        token = self.current
+        self.position += 1
+        return token
+
+    def parse(self):
+        result = self.parse_sum()
+        if self.current.kind != 'EOF':
+            raise EquationParseError(
+                f"Unexpected token {self.current.value!r} at position {self.current.position}"
+            )
+        return self._clean(result)
+
+    def parse_sum(self):
+        result = self.parse_product()
+        while self.current.kind == 'OP' and self.current.value in ('+', '-'):
+            operation = self.advance().value
+            other = self.parse_product()
+            result = self._add(result, other, 1 if operation == '+' else -1)
+        return result
+
+    def parse_product(self):
+        result = self.parse_unary()
+        previous_kind = self.tokens[self.position - 1].kind
+        while True:
+            if self.current.kind == 'OP' and self.current.value == '*':
+                self.advance()
+                other = self.parse_unary()
+            elif self.current.kind in ('VARIABLE', 'LPAREN', 'NUMBER'):
+                if previous_kind == 'NUMBER' and self.current.kind == 'NUMBER':
+                    raise EquationParseError(
+                        f"Missing operator before number at position {self.current.position}"
+                    )
+                other = self.parse_unary()
+            else:
+                break
+            result = self._multiply(result, other)
+            previous_kind = self.tokens[self.position - 1].kind
+        return result
+
+    def parse_unary(self):
+        if self.current.kind == 'OP' and self.current.value in ('+', '-'):
+            operation = self.advance().value
+            result = self.parse_unary()
+            return result if operation == '+' else {powers: -value for powers, value in result.items()}
+        return self.parse_power()
+
+    def parse_power(self):
+        result = self.parse_primary()
+        if self.current.kind == 'POWER':
+            self.advance()
+            if self.current.kind != 'NUMBER':
+                raise UnsupportedExpressionError('Polynomial exponents must be non-negative integers')
+            exponent_token = self.advance()
+            exponent_value = float(exponent_token.value)
+            if not exponent_value.is_integer() or exponent_value < 0:
+                raise UnsupportedExpressionError(
+                    f"Polynomial powers must be non-negative integers, found {exponent_token.value!r}"
+                )
+            exponent = int(exponent_value)
+            if exponent > self._MAX_EXPONENT:
+                raise UnsupportedExpressionError(
+                    f'Polynomial exponent {exponent} exceeds the supported limit {self._MAX_EXPONENT}'
+                )
+            result = self._power(result, exponent)
+        return result
+
+    def parse_primary(self):
+        token = self.current
+        zero_powers = (0,) * len(self.variables)
+        if token.kind == 'NUMBER':
+            self.advance()
+            return {zero_powers: float(token.value)}
+        if token.kind == 'VARIABLE':
+            self.advance()
+            powers = [0] * len(self.variables)
+            powers[self.variable_indexes[token.value]] = 1
+            return {tuple(powers): 1.0}
+        if token.kind == 'LPAREN':
+            self.advance()
+            result = self.parse_sum()
+            if self.current.kind != 'RPAREN':
+                raise EquationParseError(f"Unclosed '(' at position {token.position}")
+            self.advance()
+            return result
+        raise EquationParseError(f"Expected a number, variable, or '(' at position {token.position}")
+
+    def _add(self, first, second, factor=1):
+        result = dict(first)
+        for powers, coefficient in second.items():
+            result[powers] = result.get(powers, 0.0) + factor * coefficient
+        return self._clean(result)
+
+    def _multiply(self, first, second):
+        if len(first) * len(second) > self._MAX_TERMS:
+            raise UnsupportedExpressionError('Polynomial expansion exceeds the supported term limit')
+        result = {}
+        for first_powers, first_coefficient in first.items():
+            for second_powers, second_coefficient in second.items():
+                powers = tuple(a + b for a, b in zip(first_powers, second_powers))
+                result[powers] = result.get(powers, 0.0) + first_coefficient * second_coefficient
+        return self._clean(result)
+
+    def _power(self, polynomial, exponent):
+        result = {(0,) * len(self.variables): 1.0}
+        factor = polynomial
+        while exponent:
+            if exponent & 1:
+                result = self._multiply(result, factor)
+            exponent //= 2
+            if exponent:
+                factor = self._multiply(factor, factor)
+        return result
+
+    @staticmethod
+    def _clean(polynomial):
+        return {powers: value for powers, value in polynomial.items() if value != 0}
+
+
+def _parse_polynomial_terms(expression, variables=None):
+    tokens, resolved_variables = _tokenize_polynomial(expression, variables)
+    parser = _PolynomialParser(tokens, resolved_variables)
+    return parser.parse(), resolved_variables
+
+
+def _terms_to_legacy_dict(terms, variables):
+    result = {variable: [] for variable in variables}
+    result['free'] = 0.0
+    for powers, coefficient in terms.items():
+        active = [index for index, power in enumerate(powers) if power]
+        if not active:
+            result['free'] += coefficient
+            continue
+        if len(active) != 1:
+            monomial = '*'.join(
+                f'{variables[index]}^{powers[index]}' for index in active
+            )
+            raise UnsupportedExpressionError(
+                f"The legacy coefficient dictionary cannot represent mixed monomial {monomial!r}"
+            )
+        variable_index = active[0]
+        variable = variables[variable_index]
+        power = powers[variable_index]
+        coefficients = result[variable]
+        if len(coefficients) < power:
+            coefficients[:0] = [0.0] * (power - len(coefficients))
+        coefficients[len(coefficients) - power] += coefficient
+    return result
 
 def split_expression(expression: str):
     """splits the expression by delimiters, but doesn't touch what's inside parenthesis """
+    if not isinstance(expression, str):
+        raise TypeError('expression must be a string')
     delimiters = []
+    depths = {'(': 0, '{': 0, '[': 0}
+    closing = {')': '(', '}': '{', ']': '['}
     for index, char in enumerate(expression):
-        if char in ('+', '-') and index > 0:
-            parenthesis_index, curly_index = (expression[:index].rfind('('), expression[:index].rfind('{'))
-            closing_paranthesis_index = expression[parenthesis_index:].find(')') + parenthesis_index
-            closing_curly = expression[curly_index:].find('}') + curly_index
-            square_index = expression[:index].rfind('[')
-            close_square = expression[curly_index:].find(']') + square_index
-            if not parenthesis_index < index < closing_paranthesis_index and (not curly_index < index < closing_curly) and (not square_index < index < close_square):
+        if char in depths:
+            depths[char] += 1
+            continue
+        if char in closing:
+            opener = closing[char]
+            depths[opener] -= 1
+            if depths[opener] < 0:
+                raise ValueError(f"Unmatched closing delimiter '{char}'")
+            continue
+        if char in ('+', '-') and index > 0 and not any(depths.values()):
+            previous = expression[index - 1]
+            if previous not in ('e', 'E', '^', '*'):
                 delimiters.append(index)
-    expressions = []
-    if len(delimiters) > 0:
-        expressions.append(expression[:delimiters[0]])
-        for i in range(1, len(delimiters)):
-            expressions.append(expression[delimiters[i - 1]:delimiters[i]])
-        expressions.append(expression[delimiters[len(delimiters) - 1]:])
-    else:
-        expressions.append(expression)
-    return [expression for expression in expressions if expression != '']
+    if any(depths.values()):
+        raise ValueError('Unclosed grouping delimiter in expression')
+    boundaries = [0] + delimiters + [len(expression)]
+    return [expression[start:stop] for start, stop in zip(boundaries, boundaries[1:]) if expression[start:stop]]
+
+
+def _matching_closing_index(expression: str, opening_index: int) -> int:
+    """Find the parenthesis that closes the group at ``opening_index``."""
+    depth = 0
+    for index in range(opening_index, len(expression)):
+        if expression[index] == '(':
+            depth += 1
+        elif expression[index] == ')':
+            depth -= 1
+            if depth == 0:
+                return index
+    return -1
 
 def fetch_variable(variables: dict):
     """ Brings the first variable in a dictionary of variables_dict and their values """
@@ -67,7 +338,13 @@ def __data_from_single(single_expression: str, variable_name: str):
     return (coefficient, {variable_name: power})
 
 def extract_variables_from_expression(expression: str):
-    return {character for character in expression if character.isalpha()}
+    if not isinstance(expression, str):
+        expression = str(expression)
+    # Scientific-notation markers are part of the number, not variables.
+    without_scientific_numbers = re.sub(
+        r'(?<![A-Za-z_])(?:\d+(?:\.\d*)?|\.\d+)[eE][+-]?\d+', '', expression
+    )
+    return {character for character in without_scientific_numbers if character.isalpha()}
 
 def mono_from_str(mono_expression: str, get_tuple=False):
     """
@@ -106,6 +383,29 @@ def mono_from_str(mono_expression: str, get_tuple=False):
             return (final_coefficient, variables_and_powers)
         return Mono(coefficient=final_coefficient, variables_dict=variables_and_powers)
 
+def _poly_from_str(poly_expression: str, get_list=False, variables=None) -> 'Union[Poly,List]':
+    """Build a ``Poly`` using the recursive parser and optional explicit variables."""
+    from kiwicalc.expressions.mono import Mono
+    from kiwicalc.expressions.poly import Poly
+    terms, resolved_variables = _parse_polynomial_terms(poly_expression, variables)
+    expressions = [
+        Mono(
+            coefficient=coefficient,
+            variables_dict={
+                variable: powers[index]
+                for index, variable in enumerate(resolved_variables)
+                if powers[index]
+            },
+        )
+        for powers, coefficient in terms.items()
+    ]
+    if not expressions:
+        expressions = [Mono(0)]
+    if get_list:
+        return expressions
+    return Poly(expressions)
+
+
 def poly_from_str(poly_expression: str, get_list=False) -> 'Union[Poly,List]':
     """
     Analyzes a string, such as "3x^2 + 2xy - 7" and generates a polynomial expression
@@ -115,14 +415,7 @@ def poly_from_str(poly_expression: str, get_list=False) -> 'Union[Poly,List]':
     :return: a polynomial corresponding to the string, or a list of monomials.
     :rtype: Poly or list
     """
-    from kiwicalc.expressions.mono import Mono
-    from kiwicalc.expressions.poly import Poly
-    poly_expression = clean_from_spaces(poly_expression)
-    expressions = (mono_expression for mono_expression in poly_expression.replace('-', '+-').split('+') if mono_expression != '')
-    expressions = [mono_from_str(expression) for expression in expressions]
-    if get_list:
-        return expressions
-    return Poly(expressions)
+    return _poly_from_str(poly_expression, get_list=get_list)
 
 def monic_poly_from_coefficients(coefficients, var_name='x') -> 'Poly':
     from kiwicalc.expressions.mono import Mono
@@ -221,7 +514,12 @@ def TrigoExprs_from_str(trigo_expression: str, get_list=False):
     """
     from kiwicalc.expressions.trigonometry import TrigoExprs
     trigo_expressions: list = split_expression(trigo_expression)
-    new_expressions: list = [TrigoExpr_from_str(expression) for expression in trigo_expressions]
+    new_expressions: list = [
+        mono_from_str(expression)
+        if is_number(clean_from_spaces(expression).lstrip('+'))
+        else TrigoExpr_from_str(expression)
+        for expression in trigo_expressions
+    ]
     if get_list:
         return new_expressions
     return TrigoExprs(new_expressions)
@@ -244,7 +542,7 @@ def log_from_str(expression: str, get_tuple=False, dtype: str='poly'):
         start_parenthesis = expression.find('(')
         if start_parenthesis == -1:
             raise ValueError(f"Invalid string '{expression}' without opening parenthesis for the expression.")
-        ending_parenthesis = expression.find(')')
+        ending_parenthesis = _matching_closing_index(expression, start_parenthesis)
         if ending_parenthesis == -1:
             raise ValueError(f"Invalid string: '{ending_parenthesis} without ending parenthesis for the expression'")
         if 'log' in expression:
@@ -366,34 +664,16 @@ class ParseExpression:
 
     @staticmethod
     def parse_polynomial(expression: str, variables=None, strict_syntax=True, numpy_array=False, get_variables=False):
-        if variables is None:
-            variables = list({character for character in expression if character.isalpha()})
-        expression = clean_from_spaces(expression)
-        mono_expressions = split_expression(expression)
-        if numpy_array:
-            variables_dict = {variable: np.array([], dtype='float64') for variable in variables}
-        else:
-            variables_dict = {variable: [] for variable in variables}
-        variables_dict['free'] = 0
-        for mono in mono_expressions:
-            coefficient, variable, power = ParseExpression._parse_monomial(mono, variables)
-            if power == 0:
-                variables_dict['free'] += coefficient
-            else:
-                coefficient_list = variables_dict[variable]
-                if power > len(coefficient_list):
-                    zeros_to_add = int(power) - len(coefficient_list) - 1
-                    if numpy_array:
-                        coefficient_list = np.pad(coefficient_list, (zeros_to_add, 0), 'constant', constant_values=(0,))
-                        variables_dict[variable] = np.insert(coefficient_list, 0, coefficient)
-                    else:
-                        for _ in range(zeros_to_add):
-                            coefficient_list.insert(0, 0)
-                        coefficient_list.insert(0, coefficient)
-                else:
-                    coefficient_list[len(coefficient_list) - int(power)] += coefficient
+        if not isinstance(expression, str):
+            raise TypeError('expression must be a string')
+        if not clean_from_spaces(expression):
+            raise ValueError('A polynomial expression cannot be empty')
+        terms, variables = _parse_polynomial_terms(expression, variables)
+        variables_dict = _terms_to_legacy_dict(terms, variables)
         if numpy_array and len(variables) == 1:
-            result = np.append(variables_dict[variables[0]], variables_dict['free'])
+            result = np.asarray(
+                list(variables_dict[variables[0]]) + [variables_dict['free']], dtype='float64'
+            )
             if not get_variables:
                 return result
             return (result, variables)
@@ -434,31 +714,37 @@ class ParseExpression:
     @staticmethod
     def _parse_monomial(expression: str, variables):
         """ Extracting the coefficient an power from a monomial, this method is used while parsing polynomials"""
-        variable_index = -1
-        for suspect_variable in variables:
-            suspect_variable_index = expression.find(suspect_variable)
-            if suspect_variable_index != -1:
-                variable_index = suspect_variable_index
-                break
-        if variable_index == -1:
-            try:
-                return (float(expression), 'free', 0)
-            except ValueError:
-                raise ValueError("Couldn't parse the expression! Found no variables, but the free number isn't valid.")
+        expression = clean_from_spaces(expression).replace('**', '^')
+        try:
+            return (float(expression), 'free', 0)
+        except ValueError:
+            pass
+        variable_pattern = '|'.join(re.escape(variable) for variable in sorted(variables, key=len, reverse=True))
+        if not variable_pattern:
+            raise ValueError("Couldn't parse the expression: expected a valid free number")
+        number = r'(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?'
+        match = re.fullmatch(
+            rf'(?P<coefficient>[+-]?(?:{number})?)(?P<multiply>\*)?'
+            rf'(?P<variable>{variable_pattern})(?:\^(?P<power>[+-]?(?:\d+(?:\.\d*)?|\.\d+)))?',
+            expression,
+        )
+        if match is None or (match.group('multiply') and not match.group('coefficient').lstrip('+-')):
+            if '^' in expression:
+                raise ValueError(f"Encountered an invalid power while parsing the monomial '{expression}'")
+            if any(variable in expression for variable in variables):
+                raise ValueError(f"Encountered an invalid coefficient while parsing the monomial '{expression}'")
+            raise ValueError(f"Couldn't parse the polynomial monomial '{expression}'")
+        coefficient_text = match.group('coefficient')
+        coefficient = -1.0 if coefficient_text == '-' else 1.0 if coefficient_text in ('', '+') else float(coefficient_text)
+        power_text = match.group('power')
+        if power_text is None:
+            power = 1
         else:
-            variable = expression[variable_index]
-            try:
-                coefficient = extract_coefficient(expression[:variable_index])
-            except ValueError:
-                raise ValueError(f"Encountered an invalid coefficient '{expression[:variable_index]}' whileparsing the monomial '{expression}'")
-            power_index = expression.find('^')
-            if power_index == -1:
-                return (coefficient, variable, 1)
-            try:
-                power = float(expression[power_index + 1:])
-                return (coefficient, variable, power)
-            except ValueError:
-                raise ValueError(f"encountered an invalid power '{expression[power_index + 1:]} while parsing themonomial '{expression}'")
+            power_value = float(power_text)
+            if not power_value.is_integer() or power_value < 0:
+                raise ValueError(f"Polynomial powers must be non-negative integers, found '{power_text}'")
+            power = int(power_value)
+        return coefficient, match.group('variable'), power
 
     @staticmethod
     def to_coefficients(expression: str, variable=None, strict_syntax=True, get_variable=False):
