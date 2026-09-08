@@ -41,11 +41,14 @@ __all__ = [
     'Multiply', 'Power', 'SymbolicFunction', 'RootOf', 'parse_symbolic',
     'to_symbolic', 'to_legacy_expression', 'simplify_symbolic',
     'structurally_equal', 'differentiate_symbolic',
+    'Condition', 'TruthCondition', 'RelationCondition', 'DefinedCondition',
+    'BetweenCondition', 'OpaqueCondition', 'CompoundCondition', 'AssumptionSet',
+    'parse_condition', 'condition_from_dict', 'simplify_condition', 'negate_condition',
     'SolutionSet', 'EmptySolutionSet', 'UniversalSolutionSet',
     'FiniteSolutionSet', 'IntervalSolutionSet', 'ParametricSolutionSet',
     'UnionSolutionSet', 'ConditionalSolutionSet', 'EquationState', 'SolutionStep',
     'EquationSolution', 'EquationSystemSolution', 'symbolic_from_dict',
-    'solve_equation', 'solve_equation_system',
+    'solve_equation', 'solve_equation_assuming', 'solve_equation_system',
     # Functions
     'Function', 'FunctionCollection', 'FunctionChain',
     # Geometry

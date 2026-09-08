@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Added an immutable structural assumptions engine for native equation solving,
+  including relational, interval, definedness, truth, and compound predicates;
+  contradiction detection; substitution; three-valued evaluation; basic bound
+  implication; and deterministic serialization.
+- Added `solve_equation_assuming()` for explicit parameter/domain knowledge while
+  preserving the frozen `solve_equation()` signature and legacy rendered
+  `EquationSolution.conditions` values.
+- Native solver restrictions, conditional branches, interval guards, and
+  derivation-step conditions now retain machine-readable predicates and use
+  them to reject invalid candidates or resolve known branches.
+
 ### Equations and parsing
 
 - Added the native `solve_equation()` structured API with exact rational

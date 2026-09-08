@@ -226,6 +226,44 @@ and strict JSON encoding. Real irreducible polynomial roots use exact Sturm
 isolation intervals; numerical values obtained from `RootOf.evaluate()` are
 approximations of those certified algebraic roots.
 
+### Assumptions and conditions
+
+Conditions are represented structurally rather than inferred from display
+strings. The public predicate model includes `RelationCondition`,
+`BetweenCondition`, `DefinedCondition`, `CompoundCondition`, and
+`TruthCondition`; `AssumptionSet` is an immutable conjunction of predicates.
+It supports substitution, three-valued evaluation (`True`, `False`, or `None`
+when parameters remain unknown), basic bound implication, contradiction
+detection, deterministic serialization, and legacy string rendering.
+
+The frozen `solve_equation()` signature is unchanged. Use the additive
+`solve_equation_assuming()` entry point when caller knowledge should participate
+in branch selection and candidate validation:
+
+```python
+positive = kw.solve_equation_assuming("x^2 = 1", "x > 0")
+positive.solutions                 # (ExactNumber(1),)
+positive.conditions                # ("x > 0",) -- compatibility view
+positive.assumptions.evaluate({"x": 2})  # True -- structural view
+
+parameterized = kw.solve_equation_assuming(
+    "a*x + b = 0", ("a != 0",), variable="x"
+)
+# The nonzero-coefficient branch is selected directly.
+
+fixed_parameter = kw.solve_equation_assuming(
+    "a*x = 4", {"a": 2}, variable="x"
+)
+fixed_parameter.solutions          # (ExactNumber(2),)
+```
+
+Atomic strings accepted by `parse_condition()` use `=`, `!=`, `<`, `<=`, `>`,
+or `>=`; chained intervals such as `0 <= x <= 1` and explicit definedness
+predicates are also supported. Compose boolean predicates explicitly with
+`CompoundCondition` so precedence is unambiguous. Older serialized results
+containing only condition strings remain readable and are upgraded to
+structural predicates when possible.
+
 Equation-to-equation derivation stages store immutable `EquationState` objects,
 not presentation-only strings. `step.equivalent_at(values)` can replay a stage
 at an admissible assignment; terminal solution-set and system-summary stages

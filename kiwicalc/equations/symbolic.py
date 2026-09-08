@@ -196,6 +196,659 @@ ZERO, ONE, NEG_ONE = ExactNumber(0), ExactNumber(1), ExactNumber(-1)
 PI, E, I = SymbolicConstant("pi"), SymbolicConstant("e"), SymbolicConstant("i")
 
 
+# ---------------------------------------------------------------------------
+# Structural assumptions and domain conditions
+
+
+class Condition:
+    """Immutable predicate used to qualify symbolic transformations.
+
+    ``evaluate`` deliberately returns ``None`` when the supplied assignments do
+    not determine the predicate.  This three-valued behaviour prevents a
+    parameter condition from being mistaken for either true or false.
+    """
+
+    def evaluate(self, values: Optional[Mapping[str, Any]] = None, *, tolerance=1e-12):
+        raise NotImplementedError
+
+    def substitute(self, values: Mapping[str, Any]):
+        raise NotImplementedError
+
+    @property
+    def variables(self):
+        return frozenset()
+
+    def to_dict(self):
+        return _condition_to_dict(self)
+
+
+def _condition_tolerance(value):
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, float, np.number)) or not math.isfinite(float(value)) or value < 0:
+        raise ValueError("condition tolerance must be nonnegative and finite")
+    return float(value)
+
+
+def _condition_values(values):
+    if values is None:
+        return {}
+    if not isinstance(values, Mapping):
+        raise TypeError("condition values must be a mapping")
+    return values
+
+
+@dataclass(frozen=True)
+class TruthCondition(Condition):
+    value: bool
+
+    def __post_init__(self):
+        if not isinstance(self.value, bool):
+            raise TypeError("TruthCondition value must be a boolean")
+
+    def evaluate(self, values=None, *, tolerance=1e-12):
+        _condition_tolerance(tolerance)
+        _condition_values(values)
+        return self.value
+
+    def substitute(self, values):
+        _condition_values(values)
+        return self
+
+    def __str__(self):
+        return "True" if self.value else "False"
+
+
+@dataclass(frozen=True)
+class RelationCondition(Condition):
+    left: SymbolicExpression
+    relation: str
+    right: SymbolicExpression = ZERO
+    display: Optional[str] = field(default=None, compare=False)
+
+    def __post_init__(self):
+        if not isinstance(self.left, SymbolicExpression) or not isinstance(self.right, SymbolicExpression):
+            raise TypeError("RelationCondition operands must be symbolic expressions")
+        if self.relation not in {"=", "!=", ">", ">=", "<", "<="}:
+            raise ValueError("Unsupported relation operator")
+        if self.display is not None and (not isinstance(self.display, str) or not self.display):
+            raise ValueError("RelationCondition display must be nonempty text")
+
+    @property
+    def variables(self):
+        return frozenset(_variables(self.left) | _variables(self.right))
+
+    def evaluate(self, values=None, *, tolerance=1e-12):
+        tolerance = _condition_tolerance(tolerance)
+        values = _condition_values(values)
+        if not self.variables.issubset(values):
+            return None
+        try:
+            left = complex(_evaluate(self.left, values))
+            right = complex(_evaluate(self.right, values))
+        except (ArithmeticError, KeyError, TypeError, ValueError, OverflowError):
+            return False
+        if not all(math.isfinite(item) for item in (left.real, left.imag, right.real, right.imag)):
+            return False
+        difference = left - right
+        scale = max(1.0, abs(left), abs(right))
+        threshold = float(tolerance) * scale
+        if self.relation == "=":
+            return abs(difference) <= threshold
+        if self.relation == "!=":
+            return abs(difference) > threshold
+        if abs(left.imag) > threshold or abs(right.imag) > threshold:
+            return False
+        if self.relation == ">":
+            return left.real > right.real + threshold
+        if self.relation == ">=":
+            return left.real >= right.real - threshold
+        if self.relation == "<":
+            return left.real < right.real - threshold
+        return left.real <= right.real + threshold
+
+    def substitute(self, values):
+        values = _condition_values(values)
+        return simplify_condition(RelationCondition(
+            _substitute(self.left, values), self.relation, _substitute(self.right, values)
+        ))
+
+    def __str__(self):
+        return self.display or f"{self.left} {self.relation} {self.right}"
+
+
+@dataclass(frozen=True)
+class DefinedCondition(Condition):
+    expression: SymbolicExpression
+    domain: str = "real"
+
+    def __post_init__(self):
+        if not isinstance(self.expression, SymbolicExpression):
+            raise TypeError("DefinedCondition expression must be symbolic")
+        if self.domain not in {"real", "complex"}:
+            raise ValueError("DefinedCondition domain must be 'real' or 'complex'")
+
+    @property
+    def variables(self):
+        return frozenset(_variables(self.expression))
+
+    def evaluate(self, values=None, *, tolerance=1e-12):
+        tolerance = _condition_tolerance(tolerance)
+        values = _condition_values(values)
+        if not self.variables.issubset(values):
+            return None
+        try:
+            value = complex(_evaluate(self.expression, values))
+        except (ArithmeticError, KeyError, TypeError, ValueError, OverflowError):
+            return False
+        if not math.isfinite(value.real) or not math.isfinite(value.imag):
+            return False
+        return self.domain == "complex" or abs(value.imag) <= tolerance * max(1.0, abs(value))
+
+    def substitute(self, values):
+        values = _condition_values(values)
+        result = DefinedCondition(_substitute(self.expression, values), self.domain)
+        evaluated = result.evaluate({}, tolerance=0.0)
+        return result if evaluated is None else TruthCondition(evaluated)
+
+    def __str__(self):
+        return f"{self.expression} is defined in the {self.domain} domain"
+
+
+@dataclass(frozen=True)
+class BetweenCondition(Condition):
+    expression: SymbolicExpression
+    lower: SymbolicExpression
+    upper: SymbolicExpression
+    lower_closed: bool = True
+    upper_closed: bool = True
+    display: Optional[str] = field(default=None, compare=False)
+
+    def __post_init__(self):
+        if any(not isinstance(value, SymbolicExpression) for value in (self.expression, self.lower, self.upper)):
+            raise TypeError("BetweenCondition values must be symbolic expressions")
+        if not isinstance(self.lower_closed, bool) or not isinstance(self.upper_closed, bool):
+            raise TypeError("BetweenCondition closure flags must be booleans")
+        if self.display is not None and (not isinstance(self.display, str) or not self.display):
+            raise ValueError("BetweenCondition display must be nonempty text")
+
+    @property
+    def variables(self):
+        return frozenset(_variables(self.expression) | _variables(self.lower) | _variables(self.upper))
+
+    def evaluate(self, values=None, *, tolerance=1e-12):
+        tolerance = _condition_tolerance(tolerance)
+        values = _condition_values(values)
+        lower_relation = ">=" if self.lower_closed else ">"
+        upper_relation = "<=" if self.upper_closed else "<"
+        first = RelationCondition(self.expression, lower_relation, self.lower).evaluate(values, tolerance=tolerance)
+        second = RelationCondition(self.expression, upper_relation, self.upper).evaluate(values, tolerance=tolerance)
+        return False if False in (first, second) else None if None in (first, second) else True
+
+    def substitute(self, values):
+        values = _condition_values(values)
+        result = BetweenCondition(
+            _substitute(self.expression, values), _substitute(self.lower, values), _substitute(self.upper, values),
+            self.lower_closed, self.upper_closed,
+        )
+        evaluated = result.evaluate({}, tolerance=0.0)
+        return result if evaluated is None else TruthCondition(evaluated)
+
+    def __str__(self):
+        if self.display:
+            return self.display
+        lower = "<=" if self.lower_closed else "<"
+        upper = "<=" if self.upper_closed else "<"
+        return f"{self.lower} {lower} {self.expression} {upper} {self.upper}"
+
+
+@dataclass(frozen=True)
+class OpaqueCondition(Condition):
+    """Compatibility wrapper for conditions serialized by older releases."""
+
+    text: str
+
+    def __post_init__(self):
+        if not isinstance(self.text, str) or not self.text:
+            raise ValueError("OpaqueCondition text must be a nonempty string")
+
+    def evaluate(self, values=None, *, tolerance=1e-12):
+        _condition_tolerance(tolerance)
+        _condition_values(values)
+        if self.text == "True":
+            return True
+        if self.text == "False":
+            return False
+        return None
+
+    def substitute(self, values):
+        _condition_values(values)
+        return self
+
+    def __str__(self):
+        return self.text
+
+
+@dataclass(frozen=True)
+class CompoundCondition(Condition):
+    operator: str
+    conditions: Tuple[Condition, ...]
+
+    def __post_init__(self):
+        conditions = tuple(self.conditions)
+        if self.operator not in {"and", "or", "not"}:
+            raise ValueError("Compound condition operator must be 'and', 'or', or 'not'")
+        if not conditions or any(not isinstance(value, Condition) for value in conditions):
+            raise TypeError("Compound conditions must contain predicates")
+        if self.operator == "not" and len(conditions) != 1:
+            raise ValueError("A 'not' condition must contain exactly one predicate")
+        object.__setattr__(self, "conditions", conditions)
+
+    @property
+    def variables(self):
+        return frozenset().union(*(condition.variables for condition in self.conditions))
+
+    def evaluate(self, values=None, *, tolerance=1e-12):
+        tolerance = _condition_tolerance(tolerance)
+        values = _condition_values(values)
+        results = tuple(condition.evaluate(values, tolerance=tolerance) for condition in self.conditions)
+        if self.operator == "not":
+            return None if results[0] is None else not results[0]
+        if self.operator == "and":
+            return False if False in results else None if None in results else True
+        return True if True in results else None if None in results else False
+
+    def substitute(self, values):
+        values = _condition_values(values)
+        return simplify_condition(CompoundCondition(
+            self.operator, tuple(condition.substitute(values) for condition in self.conditions)
+        ))
+
+    def __str__(self):
+        if self.operator == "not":
+            return f"not ({self.conditions[0]})"
+        separator = f" {self.operator} "
+        return separator.join(f"({condition})" for condition in self.conditions)
+
+
+def parse_condition(text):
+    """Parse a simple relational or domain predicate.
+
+    This intentionally accepts only atomic predicates.  Boolean composition is
+    represented explicitly with :class:`CompoundCondition`, avoiding ambiguous
+    precedence in user-provided condition strings.
+    """
+    if not isinstance(text, str) or not text.strip():
+        raise EquationParseError("Condition must be nonempty text")
+    text = text.strip()
+    if text in {"True", "False"}:
+        return TruthCondition(text == "True")
+    defined = re.fullmatch(r"(.+?)\s+is defined in the\s+(real|complex)\s+domain", text)
+    if defined:
+        return DefinedCondition(parse_symbolic(defined.group(1)), defined.group(2))
+    chained = re.fullmatch(r"(.+?)\s*(<=|<)\s*(.+?)\s*(<=|<)\s*(.+)", text)
+    if chained:
+        lower, lower_operator, expression, upper_operator, upper = chained.groups()
+        return BetweenCondition(
+            parse_symbolic(expression), parse_symbolic(lower), parse_symbolic(upper),
+            lower_operator == "<=", upper_operator == "<=", text,
+        )
+    relation = re.fullmatch(r"(.+?)\s*(<=|>=|!=|=|<|>)\s*(.+)", text)
+    if relation:
+        left, operator, right = relation.groups()
+        return RelationCondition(parse_symbolic(left), operator, parse_symbolic(right), text)
+    raise EquationParseError("Condition must be an atomic relation or domain predicate")
+
+
+def _coerce_condition(value):
+    if isinstance(value, Condition):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            return parse_condition(value)
+        except (EquationParseError, UnsupportedExpressionError, TypeError, ValueError):
+            return OpaqueCondition(value)
+    raise ValueError("conditions must contain predicates or nonempty strings")
+
+
+def simplify_condition(condition, values=None, *, tolerance=1e-12):
+    """Simplify a predicate structurally and with optional assignments."""
+    tolerance = _condition_tolerance(tolerance)
+    condition = _coerce_condition(condition)
+    if values:
+        condition = condition.substitute(values)
+    if isinstance(condition, RelationCondition):
+        result = condition.evaluate({}, tolerance=tolerance)
+        return condition if result is None else TruthCondition(result)
+    if isinstance(condition, DefinedCondition):
+        result = condition.evaluate({}, tolerance=tolerance)
+        return condition if result is None else TruthCondition(result)
+    if isinstance(condition, BetweenCondition):
+        lower, upper = _numeric_value(condition.lower), _numeric_value(condition.upper)
+        if lower is not None and upper is not None and not isinstance(lower, complex) and not isinstance(upper, complex):
+            if lower > upper or lower == upper and (not condition.lower_closed or not condition.upper_closed):
+                return TruthCondition(False)
+        result = condition.evaluate({}, tolerance=tolerance)
+        return condition if result is None else TruthCondition(result)
+    if not isinstance(condition, CompoundCondition):
+        return condition
+    simplified = tuple(simplify_condition(item, tolerance=tolerance) for item in condition.conditions)
+    if condition.operator == "not":
+        item = simplified[0]
+        return TruthCondition(not item.value) if isinstance(item, TruthCondition) else CompoundCondition("not", (item,))
+    flat = []
+    for item in simplified:
+        if isinstance(item, CompoundCondition) and item.operator == condition.operator:
+            flat.extend(item.conditions)
+        else:
+            flat.append(item)
+    if condition.operator == "and":
+        if any(isinstance(item, TruthCondition) and not item.value for item in flat):
+            return TruthCondition(False)
+        flat = [item for item in flat if not isinstance(item, TruthCondition)]
+    else:
+        if any(isinstance(item, TruthCondition) and item.value for item in flat):
+            return TruthCondition(True)
+        flat = [item for item in flat if not isinstance(item, TruthCondition)]
+    unique = tuple(dict.fromkeys(flat))
+    if not unique:
+        return TruthCondition(condition.operator == "and")
+    return unique[0] if len(unique) == 1 else CompoundCondition(condition.operator, unique)
+
+
+_RELATION_NEGATIONS = {"=": "!=", "!=": "=", ">": "<=", ">=": "<", "<": ">=", "<=": ">"}
+
+
+def _relation_implies(given, target):
+    if given.left != target.left:
+        return False
+    given_right, target_right = _numeric_value(given.right), _numeric_value(target.right)
+    if given_right is None or target_right is None or isinstance(given_right, complex) or isinstance(target_right, complex):
+        return given == target
+    given_right, target_right = float(given_right), float(target_right)
+    if given.relation == "=":
+        probe = RelationCondition(ExactNumber(str(given_right)), target.relation, ExactNumber(str(target_right)))
+        return bool(probe.evaluate({}, tolerance=0.0))
+    if given.relation == "!=":
+        return target.relation == "!=" and given_right == target_right
+    if given.relation == ">":
+        return (
+            target.relation in {">", ">="} and given_right >= target_right
+            or target.relation == "!=" and target_right <= given_right
+        )
+    if given.relation == ">=":
+        return (
+            target.relation == ">=" and given_right >= target_right
+            or target.relation == ">" and given_right > target_right
+            or target.relation == "!=" and target_right < given_right
+        )
+    if given.relation == "<":
+        return (
+            target.relation in {"<", "<="} and given_right <= target_right
+            or target.relation == "!=" and target_right >= given_right
+        )
+    return (
+        target.relation == "<=" and given_right <= target_right
+        or target.relation == "<" and given_right < target_right
+        or target.relation == "!=" and target_right > given_right
+    )
+
+
+@dataclass(frozen=True)
+class AssumptionSet:
+    """Canonical immutable conjunction of structural conditions."""
+
+    conditions: Tuple[Condition, ...] = ()
+
+    def __post_init__(self):
+        flattened = []
+        for raw in self.conditions:
+            condition = simplify_condition(raw)
+            if isinstance(condition, CompoundCondition) and condition.operator == "and":
+                flattened.extend(condition.conditions)
+            elif isinstance(condition, TruthCondition) and condition.value:
+                continue
+            else:
+                flattened.append(condition)
+        object.__setattr__(self, "conditions", tuple(dict.fromkeys(flattened)))
+
+    def __iter__(self):
+        return iter(self.conditions)
+
+    def __len__(self):
+        return len(self.conditions)
+
+    def __bool__(self):
+        return bool(self.conditions)
+
+    def __contains__(self, value):
+        if isinstance(value, str):
+            return value in self.rendered
+        return value in self.conditions
+
+    @property
+    def rendered(self):
+        return tuple(str(condition) for condition in self.conditions)
+
+    @property
+    def variables(self):
+        return frozenset().union(*(condition.variables for condition in self.conditions)) if self.conditions else frozenset()
+
+    @property
+    def substitutions(self):
+        """Known symbol values implied by explicit equality predicates."""
+        result = {}
+        for condition in self.conditions:
+            if not isinstance(condition, RelationCondition) or condition.relation != "=":
+                continue
+            if isinstance(condition.left, Symbol) and condition.left.name not in _variables(condition.right):
+                result[condition.left.name] = condition.right
+            elif isinstance(condition.right, Symbol) and condition.right.name not in _variables(condition.left):
+                result[condition.right.name] = condition.left
+        # Resolve finite acyclic chains such as ``a = b, b = 2``.  Cycles are
+        # retained symbolically rather than expanded indefinitely.
+        for _ in range(len(result)):
+            changed = False
+            for name, expression in tuple(result.items()):
+                replacements = {key: value for key, value in result.items() if key != name}
+                candidate = _substitute(expression, replacements)
+                if name not in _variables(candidate) and candidate != expression:
+                    result[name] = candidate
+                    changed = True
+            if not changed:
+                break
+        return MappingProxyType(result)
+
+    @property
+    def contradictory(self):
+        if any(isinstance(condition, TruthCondition) and not condition.value for condition in self.conditions):
+            return True
+        for condition in self.conditions:
+            if isinstance(condition, CompoundCondition) and condition.operator == "not" and condition.conditions[0] in self.conditions:
+                return True
+        relations = [condition for condition in self.conditions if isinstance(condition, RelationCondition)]
+        for first in relations:
+            for second in relations:
+                if first.left == second.left and first.right == second.right and _RELATION_NEGATIONS[first.relation] == second.relation:
+                    return True
+        # Detect incompatible exact numeric bounds on the same expression.
+        grouped = {}
+        for relation in relations:
+            right = _numeric_value(relation.right)
+            if right is None or isinstance(right, complex):
+                continue
+            grouped.setdefault(relation.left, []).append((relation.relation, float(right)))
+        for bounds in grouped.values():
+            equals = {value for relation, value in bounds if relation == "="}
+            excluded = {value for relation, value in bounds if relation == "!="}
+            if len(equals) > 1 or equals & excluded:
+                return True
+            lower_bounds = [(value, relation == ">") for relation, value in bounds if relation in {">", ">="}]
+            upper_bounds = [(value, relation == "<") for relation, value in bounds if relation in {"<", "<="}]
+            lower = None if not lower_bounds else (
+                max(value for value, _ in lower_bounds),
+                any(strict for value, strict in lower_bounds if value == max(item[0] for item in lower_bounds)),
+            )
+            upper = None if not upper_bounds else (
+                min(value for value, _ in upper_bounds),
+                any(strict for value, strict in upper_bounds if value == min(item[0] for item in upper_bounds)),
+            )
+            if lower and upper and (lower[0] > upper[0] or lower[0] == upper[0] and (lower[1] or upper[1])):
+                return True
+            if equals:
+                value = next(iter(equals))
+                if lower and (value < lower[0] or value == lower[0] and lower[1]):
+                    return True
+                if upper and (value > upper[0] or value == upper[0] and upper[1]):
+                    return True
+        return False
+
+    def merge(self, *others):
+        combined = list(self.conditions)
+        for other in others:
+            combined.extend(_coerce_assumption_set(other).conditions)
+        return AssumptionSet(tuple(combined))
+
+    def substitute(self, values, *, tolerance=1e-12):
+        values = _condition_values(values)
+        tolerance = _condition_tolerance(tolerance)
+        return AssumptionSet(tuple(simplify_condition(condition.substitute(values), tolerance=tolerance) for condition in self.conditions))
+
+    def evaluate(self, values=None, *, tolerance=1e-12):
+        values = _condition_values(values)
+        tolerance = _condition_tolerance(tolerance)
+        if self.contradictory:
+            return False
+        results = tuple(condition.evaluate(values, tolerance=tolerance) for condition in self.conditions)
+        return False if False in results else None if None in results else True
+
+    def entails(self, condition):
+        condition = simplify_condition(condition)
+        if condition in self.conditions or isinstance(condition, TruthCondition) and condition.value:
+            return True
+        if self.contradictory:
+            return True
+        if isinstance(condition, CompoundCondition):
+            if condition.operator == "and":
+                return all(self.entails(item) for item in condition.conditions)
+            if condition.operator == "or":
+                return any(self.entails(item) for item in condition.conditions)
+        if isinstance(condition, RelationCondition):
+            relations = [item for item in self.conditions if isinstance(item, RelationCondition)]
+            if any(_relation_implies(item, condition) for item in relations):
+                return True
+            # x >= c together with x != c entails x > c (and symmetrically).
+            if condition.relation in {">", "<"}:
+                weak = ">=" if condition.relation == ">" else "<="
+                boundary = RelationCondition(condition.left, weak, condition.right)
+                excluded = RelationCondition(condition.left, "!=", condition.right)
+                if self.entails(boundary) and self.entails(excluded):
+                    return True
+        return False
+
+    def refutes(self, condition):
+        condition = simplify_condition(condition)
+        if isinstance(condition, TruthCondition):
+            return not condition.value
+        negated = negate_condition(condition)
+        return self.entails(negated)
+
+    def to_dict(self):
+        return {"type": "assumptions", "conditions": [condition.to_dict() for condition in self.conditions]}
+
+    @classmethod
+    def from_dict(cls, data):
+        if data.get("type") != "assumptions":
+            raise ValueError("Invalid assumption-set payload")
+        return cls(tuple(_condition_from_dict(item) for item in data.get("conditions", ())))
+
+    def __str__(self):
+        return " and ".join(self.rendered) if self.conditions else "True"
+
+
+def _coerce_assumption_set(values):
+    if isinstance(values, AssumptionSet):
+        return values
+    return AssumptionSet(tuple(_coerce_condition(value) for value in values or ()))
+
+
+def _normalize_user_assumptions(values):
+    def user_condition(value):
+        if isinstance(value, Condition):
+            return value
+        if isinstance(value, str):
+            return parse_condition(value)
+        raise TypeError("each assumption must be a Condition or atomic condition string")
+
+    if values is None:
+        return AssumptionSet()
+    if isinstance(values, AssumptionSet):
+        return values
+    if isinstance(values, (Condition, str)):
+        return AssumptionSet((user_condition(values),))
+    if isinstance(values, Mapping):
+        conditions = []
+        for name, value in values.items():
+            symbol = name if isinstance(name, Symbol) else Symbol(name)
+            if isinstance(value, str) and value in {"real", "complex"}:
+                conditions.append(DefinedCondition(symbol, value))
+            else:
+                conditions.append(RelationCondition(symbol, "=", _coerce(value)))
+        return AssumptionSet(tuple(conditions))
+    try:
+        return AssumptionSet(tuple(user_condition(value) for value in values))
+    except TypeError as error:
+        raise TypeError("assumptions must be predicates, strings, a mapping, or an iterable") from error
+
+
+def _condition_to_dict(condition):
+    if isinstance(condition, TruthCondition):
+        return {"type": "truth", "value": condition.value}
+    if isinstance(condition, RelationCondition):
+        return {"type": "relation", "left": condition.left.to_dict(), "relation": condition.relation, "right": condition.right.to_dict(), "display": condition.display}
+    if isinstance(condition, DefinedCondition):
+        return {"type": "defined", "expression": condition.expression.to_dict(), "domain": condition.domain}
+    if isinstance(condition, BetweenCondition):
+        return {"type": "between", "expression": condition.expression.to_dict(), "lower": condition.lower.to_dict(), "upper": condition.upper.to_dict(), "lower_closed": condition.lower_closed, "upper_closed": condition.upper_closed, "display": condition.display}
+    if isinstance(condition, OpaqueCondition):
+        return {"type": "opaque", "text": condition.text}
+    if isinstance(condition, CompoundCondition):
+        return {"type": "compound", "operator": condition.operator, "conditions": [item.to_dict() for item in condition.conditions]}
+    raise TypeError(f"Unsupported condition {type(condition).__name__}")
+
+
+def negate_condition(condition):
+    """Return the structural logical negation of one predicate."""
+    condition = simplify_condition(condition)
+    if isinstance(condition, TruthCondition):
+        return TruthCondition(not condition.value)
+    if isinstance(condition, RelationCondition):
+        return RelationCondition(condition.left, _RELATION_NEGATIONS[condition.relation], condition.right)
+    if isinstance(condition, CompoundCondition) and condition.operator == "not":
+        return condition.conditions[0]
+    return CompoundCondition("not", (condition,))
+
+
+def _condition_from_dict(data):
+    kind = data.get("type")
+    if kind == "truth":
+        return TruthCondition(data["value"])
+    if kind == "relation":
+        return RelationCondition(symbolic_from_dict(data["left"]), data["relation"], symbolic_from_dict(data["right"]), data.get("display"))
+    if kind == "defined":
+        return DefinedCondition(symbolic_from_dict(data["expression"]), data["domain"])
+    if kind == "between":
+        return BetweenCondition(symbolic_from_dict(data["expression"]), symbolic_from_dict(data["lower"]), symbolic_from_dict(data["upper"]), data.get("lower_closed", True), data.get("upper_closed", True), data.get("display"))
+    if kind == "opaque":
+        return OpaqueCondition(data["text"])
+    if kind == "compound":
+        return CompoundCondition(data["operator"], tuple(_condition_from_dict(item) for item in data["conditions"]))
+    raise ValueError(f"Unknown condition type {kind!r}")
+
+
+def condition_from_dict(data):
+    """Restore a structural condition from :meth:`Condition.to_dict` data."""
+    return _condition_from_dict(data)
+
+
 def _coerce(value):
     if isinstance(value, SymbolicExpression):
         return value
@@ -815,14 +1468,20 @@ class UnionSolutionSet(SolutionSet):
 class ConditionalSolutionSet(SolutionSet):
     solution_set: SolutionSet
     conditions: Tuple[str, ...]
+    _assumptions: AssumptionSet = field(init=False, repr=False, compare=False)
 
     def __post_init__(self):
         if not isinstance(self.solution_set, SolutionSet):
             raise TypeError("Conditional solution must wrap a solution set")
-        conditions = tuple(self.conditions)
-        if not conditions or any(not isinstance(value, str) or not value for value in conditions):
-            raise ValueError("Conditional solution conditions must be nonempty strings")
-        object.__setattr__(self, "conditions", conditions)
+        assumptions = _coerce_assumption_set(self.conditions)
+        if not assumptions:
+            raise ValueError("Conditional solution conditions must be nonempty")
+        object.__setattr__(self, "conditions", assumptions.rendered)
+        object.__setattr__(self, "_assumptions", assumptions)
+
+    @property
+    def assumptions(self):
+        return self._assumptions
 
 
 @dataclass(frozen=True)
@@ -869,13 +1528,20 @@ class SolutionStep:
     after: Any
     explanation: str
     conditions: Tuple[str, ...] = ()
+    _assumptions: AssumptionSet = field(init=False, repr=False, compare=False)
 
     def __post_init__(self):
         if not isinstance(self.rule, str) or not isinstance(self.explanation, str):
             raise TypeError("Solution step rule and explanation must be strings")
+        assumptions = _coerce_assumption_set(self.conditions)
         object.__setattr__(self, "before", _step_value(self.before))
         object.__setattr__(self, "after", _step_value(self.after))
-        object.__setattr__(self, "conditions", tuple(self.conditions))
+        object.__setattr__(self, "conditions", assumptions.rendered)
+        object.__setattr__(self, "_assumptions", assumptions)
+
+    @property
+    def assumptions(self):
+        return self._assumptions
 
     def equivalent_at(self, values, tolerance=1e-10):
         """Replay an equation-to-equation step at one admissible assignment."""
@@ -897,6 +1563,7 @@ class EquationSolution:
     steps: Tuple[SolutionStep, ...] = ()
     message: str = ""
     evaluations: int = 0
+    _assumptions: AssumptionSet = field(init=False, repr=False, compare=False)
 
     def __post_init__(self):
         if not isinstance(self.variable, str) or not self.variable:
@@ -911,9 +1578,8 @@ class EquationSolution:
             raise TypeError("exact and complete must be booleans")
         if isinstance(self.evaluations, bool) or not isinstance(self.evaluations, int) or self.evaluations < 0:
             raise ValueError("evaluations must be a nonnegative integer")
-        conditions, residuals, steps = tuple(self.conditions), tuple(self.residuals), tuple(self.steps)
-        if any(not isinstance(value, str) or not value for value in conditions):
-            raise ValueError("conditions must contain nonempty strings")
+        assumptions = _coerce_assumption_set(self.conditions)
+        conditions, residuals, steps = assumptions.rendered, tuple(self.residuals), tuple(self.steps)
         if any(value is not None and (isinstance(value, bool) or not isinstance(value, (int, float, np.number)) or not math.isfinite(float(value)) or value < 0) for value in residuals):
             raise ValueError("residuals must contain nonnegative finite values or None")
         if any(not isinstance(value, SolutionStep) for value in steps):
@@ -923,6 +1589,16 @@ class EquationSolution:
         object.__setattr__(self, "conditions", conditions)
         object.__setattr__(self, "residuals", residuals)
         object.__setattr__(self, "steps", steps)
+        object.__setattr__(self, "_assumptions", assumptions)
+
+    @property
+    def assumptions(self):
+        """Structural predicates qualifying this solution.
+
+        ``conditions`` remains the backward-compatible tuple of display
+        strings; this property is the machine-readable reasoning model.
+        """
+        return self._assumptions
 
     @property
     def solutions(self):
@@ -945,6 +1621,7 @@ class EquationSolution:
             "variable": self.variable, "solution_set": self.solution_set.to_dict(),
             "status": self.status, "method": self.method, "exact": self.exact,
             "complete": self.complete, "conditions": list(self.conditions),
+            "assumptions": self.assumptions.to_dict(),
             "residuals": list(self.residuals),
             "steps": [_step_to_dict(step) for step in self.steps],
             "message": self.message, "evaluations": self.evaluations,
@@ -954,7 +1631,11 @@ class EquationSolution:
     def from_dict(cls, data):
         data = dict(data)
         data["solution_set"] = _solution_set_from_dict(data["solution_set"])
-        data["conditions"] = tuple(data.get("conditions", ()))
+        assumptions = data.pop("assumptions", None)
+        data["conditions"] = (
+            AssumptionSet.from_dict(assumptions).conditions
+            if assumptions is not None else tuple(data.get("conditions", ()))
+        )
         data["residuals"] = tuple(
             None if isinstance(value, (int, float, np.number)) and not isinstance(value, (bool, np.bool_)) and math.isnan(float(value)) else value
             for value in data.get("residuals", ())
@@ -973,6 +1654,7 @@ def _step_to_dict(step):
         "after": _step_value_to_dict(step.after),
         "explanation": step.explanation,
         "conditions": list(step.conditions),
+        "assumptions": step.assumptions.to_dict(),
     }
 
 
@@ -1000,7 +1682,8 @@ def _step_from_dict(item):
     result = dict(item)
     result["before"] = _step_value_from_dict(result["before"])
     result["after"] = _step_value_from_dict(result["after"])
-    result["conditions"] = tuple(result.get("conditions", ()))
+    assumptions = result.pop("assumptions", None)
+    result["conditions"] = AssumptionSet.from_dict(assumptions).conditions if assumptions is not None else tuple(result.get("conditions", ()))
     return SolutionStep(**result)
 
 
@@ -1036,7 +1719,7 @@ def _solution_set_to_dict(value):
     if isinstance(value, IntervalSolutionSet): return {"type": "interval", "lower": _encode_value(value.lower), "upper": _encode_value(value.upper), "lower_closed": value.lower_closed, "upper_closed": value.upper_closed}
     if isinstance(value, ParametricSolutionSet): return {"type": "parametric", "variable": value.variable, "expression": value.expression.to_dict(), "parameter": value.parameter, "parameter_domain": value.parameter_domain}
     if isinstance(value, UnionSolutionSet): return {"type": "union", "sets": [item.to_dict() for item in value.sets]}
-    if isinstance(value, ConditionalSolutionSet): return {"type": "conditional", "solution_set": value.solution_set.to_dict(), "conditions": list(value.conditions)}
+    if isinstance(value, ConditionalSolutionSet): return {"type": "conditional", "solution_set": value.solution_set.to_dict(), "conditions": list(value.conditions), "assumptions": value.assumptions.to_dict()}
     raise TypeError(f"Unsupported solution set {type(value).__name__}")
 
 
@@ -1060,7 +1743,10 @@ def _solution_set_from_dict(data):
     if kind == "interval": return IntervalSolutionSet(_decode_value(data["lower"]), _decode_value(data["upper"]), data["lower_closed"], data["upper_closed"])
     if kind == "parametric": return ParametricSolutionSet(data["variable"], symbolic_from_dict(data["expression"]), data["parameter"], data["parameter_domain"])
     if kind == "union": return UnionSolutionSet(tuple(_solution_set_from_dict(item) for item in data["sets"]))
-    if kind == "conditional": return ConditionalSolutionSet(_solution_set_from_dict(data["solution_set"]), tuple(data["conditions"]))
+    if kind == "conditional":
+        assumptions = data.get("assumptions")
+        conditions = AssumptionSet.from_dict(assumptions).conditions if assumptions is not None else tuple(data["conditions"])
+        return ConditionalSolutionSet(_solution_set_from_dict(data["solution_set"]), conditions)
     raise ValueError(f"Unknown solution set type {kind!r}")
 
 
@@ -1342,35 +2028,31 @@ def _collapse_guarded_zeros(expression):
     return expression
 
 
-def _condition_text(expression, relation, variable):
+def _condition_predicate(expression, relation, variable):
+    relation_operator, reference = {
+        "!= 0": ("!=", ZERO),
+        "> 0": (">", ZERO),
+        ">= 0": (">=", ZERO),
+        "<= 1": ("<=", ONE),
+        ">= -1": (">=", NEG_ONE),
+        "!= 1": ("!=", ONE),
+    }[relation]
     numeric = _numeric_value(expression)
     if numeric is not None:
-        value = complex(numeric)
-        if relation == "!= 0":
-            return None if value != 0 else "False"
-        if abs(value.imag) > 1e-12:
-            return "False"
-        real = value.real
-        valid = {
-            "> 0": real > 0,
-            ">= 0": real >= 0,
-            "<= 1": real <= 1,
-            ">= -1": real >= -1,
-            "!= 1": real != 1,
-        }[relation]
-        return None if valid else "False"
+        predicate = RelationCondition(expression, relation_operator, reference)
+        return None if predicate.evaluate({}, tolerance=0.0) else TruthCondition(False)
     rendered = str(expression)
     parsed = _poly_fraction(expression, variable)
     if parsed is not None and parsed[1] == {0: Rational(1)}:
         rendered = _poly_string(parsed[0], variable)
-    return f"{rendered} {relation}"
+    return RelationCondition(expression, relation_operator, reference, f"{rendered} {relation}")
 
 
 def _domain_conditions(expression, domain, variable):
     conditions = []
 
     def add(value, relation):
-        condition = _condition_text(value, relation, variable)
+        condition = _condition_predicate(value, relation, variable)
         if condition is not None and condition not in conditions:
             conditions.append(condition)
 
@@ -1384,7 +2066,7 @@ def _domain_conditions(expression, domain, variable):
                 if domain == "real" and exponent.denominator % 2 == 0:
                     add(value.base, ">= 0")
             else:
-                condition = f"{value} is defined in the {domain} domain"
+                condition = DefinedCondition(value, domain)
                 if condition not in conditions:
                     conditions.append(condition)
             return
@@ -1411,17 +2093,23 @@ def _domain_conditions(expression, domain, variable):
             for factor in value.factors: visit(factor)
 
     visit(expression)
-    return tuple(conditions)
+    return AssumptionSet(tuple(conditions))
 
 
 def _merge_conditions(*groups):
-    return tuple(dict.fromkeys(condition for group in groups for condition in group))
+    result = AssumptionSet()
+    for group in groups:
+        result = result.merge(group)
+    return result
 
 
 def _render_condition(expression, relation, variable):
     parsed = _poly_fraction(expression, variable)
     rendered = _poly_string(parsed[0], variable) if parsed is not None and parsed[1] == {0: Rational(1)} else str(expression)
-    return f"{rendered} {relation}"
+    predicate = _condition_predicate(expression, relation, variable)
+    # Keep historically exposed tautologies such as ``2 > 0`` in the display
+    # conditions while structural domain collection is free to discard them.
+    return predicate or OpaqueCondition(f"{rendered} {relation}")
 
 
 def _in_interval(value, interval):
@@ -1638,8 +2326,13 @@ def _filter_parametric(solution_set, interval):
     return FiniteSolutionSet(tuple(ordered)) if ordered else EMPTY
 
 
-def _interval_condition(value, interval):
-    return f"{interval[0]:g} <= {value} <= {interval[1]:g}"
+def _interval_conditions(value, interval):
+    expression = value if isinstance(value, SymbolicExpression) else _coerce(value)
+    lower, upper = _coerce(interval[0]), _coerce(interval[1])
+    return (BetweenCondition(
+        expression, lower, upper, True, True,
+        f"{interval[0]:g} <= {value} <= {interval[1]:g}",
+    ),)
 
 
 def _apply_interval(solution_set, interval):
@@ -1675,7 +2368,8 @@ def _apply_interval(solution_set, interval):
     if isinstance(solution_set, IntervalSolutionSet):
         lower_numeric, upper_numeric = _numeric_value(solution_set.lower), _numeric_value(solution_set.upper)
         if lower_numeric is None or upper_numeric is None:
-            return ConditionalSolutionSet(solution_set, (_interval_condition(solution_set.lower, interval), _interval_condition(solution_set.upper, interval)))
+            conditions = _interval_conditions(solution_set.lower, interval) + _interval_conditions(solution_set.upper, interval)
+            return ConditionalSolutionSet(solution_set, conditions)
         lower, upper = max(float(lower_numeric), interval[0]), min(float(upper_numeric), interval[1])
         if lower > upper:
             return EMPTY
@@ -1687,7 +2381,7 @@ def _apply_interval(solution_set, interval):
             if numeric is None:
                 symbolic_parts.append(ConditionalSolutionSet(
                     FiniteSolutionSet((value,), (multiplicity,)),
-                    (_interval_condition(value, interval),),
+                    _interval_conditions(value, interval),
                 ))
             elif not isinstance(numeric, complex) and interval[0] - 1e-12 <= numeric <= interval[1] + 1e-12:
                 known_values.append(value); known_multiplicities.append(multiplicity)
@@ -1697,6 +2391,68 @@ def _apply_interval(solution_set, interval):
         if not parts:
             return EMPTY
         return parts[0] if len(parts) == 1 else UnionSolutionSet(tuple(parts))
+    raise TypeError(f"Unsupported solution set {type(solution_set).__name__}")
+
+
+def _apply_assumptions(solution_set, assumptions):
+    """Resolve conditional branches when caller assumptions prove a choice."""
+    assumptions = _coerce_assumption_set(assumptions)
+    if assumptions.contradictory or isinstance(solution_set, EmptySolutionSet):
+        return EMPTY
+    if isinstance(solution_set, ConditionalSolutionSet):
+        branch = solution_set.assumptions
+        if any(assumptions.refutes(condition) for condition in branch.conditions):
+            return EMPTY
+        unresolved = tuple(condition for condition in branch.conditions if not assumptions.entails(condition))
+        nested = _apply_assumptions(solution_set.solution_set, assumptions.merge(branch))
+        if isinstance(nested, EmptySolutionSet) or not unresolved:
+            return nested
+        return ConditionalSolutionSet(nested, unresolved)
+    if isinstance(solution_set, UnionSolutionSet):
+        parts = []
+        for subset in solution_set.sets:
+            resolved = _apply_assumptions(subset, assumptions)
+            if isinstance(resolved, EmptySolutionSet):
+                continue
+            if isinstance(resolved, UnionSolutionSet):
+                parts.extend(resolved.sets)
+            else:
+                parts.append(resolved)
+        return EMPTY if not parts else parts[0] if len(parts) == 1 else UnionSolutionSet(tuple(parts))
+    return solution_set
+
+
+def _substitute_solution_set(solution_set, values):
+    """Apply known parameter values without mutating a solution-set tree."""
+    if not values or isinstance(solution_set, (EmptySolutionSet, UniversalSolutionSet)):
+        return solution_set
+
+    def substitute_value(value):
+        return value.substitute(values) if isinstance(value, SymbolicExpression) else value
+
+    if isinstance(solution_set, FiniteSolutionSet):
+        return FiniteSolutionSet(tuple(substitute_value(value) for value in solution_set.values), solution_set.multiplicities)
+    if isinstance(solution_set, IntervalSolutionSet):
+        return IntervalSolutionSet(
+            substitute_value(solution_set.lower), substitute_value(solution_set.upper),
+            solution_set.lower_closed, solution_set.upper_closed,
+        )
+    if isinstance(solution_set, ParametricSolutionSet):
+        safe_values = {name: value for name, value in values.items() if name != solution_set.parameter}
+        return ParametricSolutionSet(
+            solution_set.variable, solution_set.expression.substitute(safe_values),
+            solution_set.parameter, solution_set.parameter_domain,
+        )
+    if isinstance(solution_set, UnionSolutionSet):
+        parts = tuple(_substitute_solution_set(item, values) for item in solution_set.sets)
+        parts = tuple(item for item in parts if not isinstance(item, EmptySolutionSet))
+        return EMPTY if not parts else parts[0] if len(parts) == 1 else UnionSolutionSet(parts)
+    if isinstance(solution_set, ConditionalSolutionSet):
+        branch = solution_set.assumptions.substitute(values)
+        if branch.contradictory:
+            return EMPTY
+        nested = _substitute_solution_set(solution_set.solution_set, values)
+        return nested if not branch else ConditionalSolutionSet(nested, branch.conditions)
     raise TypeError(f"Unsupported solution set {type(solution_set).__name__}")
 
 
@@ -1766,17 +2522,25 @@ def _equation_input(equation):
     raise TypeError("equation must be a string, Equation, or (left, right) expression pair")
 
 
-def _candidate_valid(left, right, variable, candidate, domain, tolerance):
+def _candidate_valid(left, right, variable, candidate, domain, tolerance, assumptions=AssumptionSet()):
+    numeric = _numeric_value(candidate)
+    assignments = {
+        name: (_numeric_value(value) if _numeric_value(value) is not None else value)
+        for name, value in assumptions.substitutions.items()
+    }
+    if numeric is not None:
+        assignments[variable] = numeric
+    if numeric is not None and assumptions.evaluate(assignments, tolerance=tolerance) is False:
+        return False, math.inf
     if isinstance(candidate, RootOf):
         return True, None
-    numeric = _numeric_value(candidate)
     if numeric is None:
         return True, None
     if domain == "real" and isinstance(numeric, complex):
         return False, math.inf
     try:
-        first = complex(_evaluate(left, {variable: numeric}))
-        second = complex(_evaluate(right, {variable: numeric}))
+        first = complex(_evaluate(left, assignments))
+        second = complex(_evaluate(right, assignments))
     except (ArithmeticError, ValueError, OverflowError):
         return False, math.inf
     if not all(math.isfinite(value) for value in (first.real, first.imag, second.real, second.imag)):
@@ -1785,12 +2549,28 @@ def _candidate_valid(left, right, variable, candidate, domain, tolerance):
     return residual <= max(tolerance * 100, 1e-8), float(residual)
 
 
-def _verify_finite(solution_set, left, right, variable, domain, tolerance):
+def _verify_finite(solution_set, left, right, variable, domain, tolerance, assumptions=AssumptionSet()):
+    """Verify finite branches against the equation and active assumptions."""
+    assumptions = _coerce_assumption_set(assumptions)
+    if assumptions.contradictory:
+        return EMPTY, ()
+    if isinstance(solution_set, ConditionalSolutionSet):
+        combined = assumptions.merge(solution_set.assumptions)
+        verified, residuals = _verify_finite(solution_set.solution_set, left, right, variable, domain, tolerance, combined)
+        return (EMPTY if isinstance(verified, EmptySolutionSet) else ConditionalSolutionSet(verified, solution_set.assumptions.conditions)), residuals
+    if isinstance(solution_set, UnionSolutionSet):
+        parts, residuals = [], []
+        for subset in solution_set.sets:
+            verified, subset_residuals = _verify_finite(subset, left, right, variable, domain, tolerance, assumptions)
+            if not isinstance(verified, EmptySolutionSet):
+                parts.append(verified)
+                residuals.extend(subset_residuals)
+        return (EMPTY if not parts else parts[0] if len(parts) == 1 else UnionSolutionSet(tuple(parts))), tuple(residuals)
     if not isinstance(solution_set, FiniteSolutionSet):
         return solution_set, ()
     kept, multiplicities, residuals = [], [], []
     for value, multiplicity in zip(solution_set.values, solution_set.multiplicities):
-        valid, residual = _candidate_valid(left, right, variable, value, domain, tolerance)
+        valid, residual = _candidate_valid(left, right, variable, value, domain, tolerance, assumptions)
         if valid:
             kept.append(value); multiplicities.append(multiplicity); residuals.append(residual)
     return (FiniteSolutionSet(tuple(kept), tuple(multiplicities)) if kept else EMPTY), tuple(residuals)
@@ -1802,9 +2582,13 @@ def _symbolic_dispatch(left, right, variable, domain, interval, trace):
     rational = _poly_fraction(residual, variable)
     if rational is not None:
         numerator, denominator = rational
-        conditions = ()
+        conditions = AssumptionSet()
         if denominator != {0: Rational(1)}:
-            conditions = (f"{_poly_string(denominator, variable)} != 0",)
+            denominator_expression = _polynomial_expression(denominator, variable)
+            conditions = AssumptionSet((RelationCondition(
+                denominator_expression, "!=", ZERO,
+                f"{_poly_string(denominator, variable)} != 0",
+            ),))
             trace("clear_denominators", f"{residual} = 0", f"{_poly_string(numerator, variable)} = 0", "Clear denominators while retaining their exclusions.", conditions)
         solution_set, complete = _solve_polynomial_exact(numerator, variable, domain, interval)
         if isinstance(solution_set, FiniteSolutionSet) and denominator != {0: Rational(1)}:
@@ -1825,19 +2609,22 @@ def _symbolic_dispatch(left, right, variable, domain, interval, trace):
         if coefficient_value is not None and coefficient_value != 0:
             result = FiniteSolutionSet((root,)) if _in_interval(root, interval) else EMPTY
             trace("solve_symbolic_linear", f"{residual} = 0", str(result), "Divide by the known nonzero symbolic coefficient.")
-            return result, (), True, "symbolic"
+            return result, AssumptionSet(), True, "symbolic"
         branches = UnionSolutionSet((
-            ConditionalSolutionSet(FiniteSolutionSet((root,)), (f"{coefficient} != 0",)),
-            ConditionalSolutionSet(UniversalSolutionSet(domain), (f"{coefficient} = 0", f"{constant} = 0")),
+            ConditionalSolutionSet(FiniteSolutionSet((root,)), (RelationCondition(coefficient, "!=", ZERO),)),
+            ConditionalSolutionSet(UniversalSolutionSet(domain), (
+                RelationCondition(coefficient, "=", ZERO),
+                RelationCondition(constant, "=", ZERO),
+            )),
         ))
         trace("solve_conditional_linear", f"{residual} = 0", str(branches), "Divide by a symbolic coefficient only on its nonzero branch; retain the identity branch.")
-        return branches, (), True, "symbolic"
+        return branches, AssumptionSet(), True, "symbolic"
 
     # Non-polynomial complex inversion requires explicit logarithm branches and
     # other multivalued-function machinery.  Never return a principal branch as
     # though it were the complete complex solution.
     if domain == "complex":
-        return None, (), False, "symbolic"
+        return None, AssumptionSet(), False, "symbolic"
 
     left_logs, right_logs = _log_terms(left), _log_terms(right)
     if left_logs and right_logs and left_logs[0] == right_logs[0]:
@@ -1847,7 +2634,7 @@ def _symbolic_dispatch(left, right, variable, domain, interval, trace):
         parsed = _poly_fraction(combined, variable)
         if parsed is not None:
             result, complete = _solve_polynomial_exact(parsed[0], variable, domain, interval)
-            restrictions = tuple(_render_condition(argument, "> 0", variable) for argument in left_logs[1] + right_logs[1])
+            restrictions = AssumptionSet(tuple(_render_condition(argument, "> 0", variable) for argument in left_logs[1] + right_logs[1]))
             trace("combine_logarithms", f"{left} = {right}", f"{left_argument} = {right_argument}", "Combine logarithms with the same base and retain every argument-domain restriction.", restrictions)
             return result, restrictions, complete, "symbolic"
 
@@ -1859,18 +2646,18 @@ def _symbolic_dispatch(left, right, variable, domain, interval, trace):
             affine = _affine_symbolic(argument, variable)
             numeric = _numeric_value(constant)
             if numeric is not None and (isinstance(numeric, complex) or numeric <= 0):
-                return EMPTY, (), True, "symbolic"
+                return EMPTY, AssumptionSet(), True, "symbolic"
             if affine is not None and affine[0] != ZERO:
                 coefficient, offset = affine
                 inverse = _function("ln", constant)
                 root = _mul(_add(inverse, _neg(offset)), _pow(coefficient, NEG_ONE))
                 result = FiniteSolutionSet((root,))
-                condition = () if numeric is not None else (f"{constant} > 0",)
+                condition = AssumptionSet() if numeric is not None else AssumptionSet((RelationCondition(constant, ">", ZERO),))
                 trace("invert_exponential", f"{function} = {constant}", f"{argument} = {inverse}", "Apply the natural logarithm and retain positivity of the right side.", condition)
                 return result, condition, True, "symbolic"
         if function.name == "abs" and isinstance(constant, ExactNumber):
             if constant.value < 0:
-                return EMPTY, (), True, "symbolic"
+                return EMPTY, AssumptionSet(), True, "symbolic"
             roots = []
             for target in (constant, ExactNumber(-constant.value)):
                 root = _solve_affine_equal(argument, target, variable)
@@ -1879,30 +2666,32 @@ def _symbolic_dispatch(left, right, variable, domain, interval, trace):
             if roots:
                 result = FiniteSolutionSet(tuple(roots))
                 trace("split_absolute", f"abs({argument}) = {constant}", str(result), "Split an absolute-value equation into its positive and negative branches.")
-                return result, (), True, "symbolic"
+                return result, AssumptionSet(), True, "symbolic"
         if function.name == "sqrt":
             if isinstance(constant, ExactNumber) and constant.value < 0 and domain == "real":
-                return EMPTY, (), True, "symbolic"
+                return EMPTY, AssumptionSet(), True, "symbolic"
             squared = _add(argument, _neg(_pow(constant, ExactNumber(2))))
             parsed = _poly_fraction(squared, variable)
             if parsed is not None and parsed[1] == {0: Rational(1)}:
                 result, complete = _solve_polynomial_exact(parsed[0], variable, domain, interval)
-                trace("isolate_radical", f"sqrt({argument}) = {constant}", f"{squared} = 0", "Square the isolated principal radical; candidates will be checked in the original equation.", (f"{constant} >= 0",) if domain == "real" else ())
-                return result, ((f"{constant} >= 0",) if domain == "real" else ()), complete, "symbolic"
+                conditions = AssumptionSet((RelationCondition(constant, ">=", ZERO),)) if domain == "real" else AssumptionSet()
+                trace("isolate_radical", f"sqrt({argument}) = {constant}", f"{squared} = 0", "Square the isolated principal radical; candidates will be checked in the original equation.", conditions)
+                return result, conditions, complete, "symbolic"
         if function.name in {"ln", "log"} and len(function.arguments) in {1, 2}:
             affine = _affine(argument, variable)
             if affine and affine[0] and not _variables(constant):
                 inverse = _function("exp", constant) if function.name == "ln" or len(function.arguments) == 1 else _pow(function.arguments[0], constant)
                 root = ExactNumber(-affine[1] / affine[0]) if inverse == ZERO else _mul(ExactNumber(1 / affine[0]), _add(inverse, ExactNumber(-affine[1])))
                 result = FiniteSolutionSet((root,)) if _in_interval(root, interval) else EMPTY
-                condition = f"{argument} > 0"
-                trace("invert_logarithm", f"{function} = {constant}", f"{argument} = {inverse}", "Apply the matching exponential function and preserve the logarithm domain.", (condition,))
-                return result, (condition,), True, "symbolic"
+                condition = _render_condition(argument, "> 0", variable)
+                conditions = AssumptionSet((condition,))
+                trace("invert_logarithm", f"{function} = {constant}", f"{argument} = {inverse}", "Apply the matching exponential function and preserve the logarithm domain.", conditions)
+                return result, conditions, True, "symbolic"
         if function.name in {"sin", "cos", "tan"} and not _variables(constant):
             affine, phase = _affine(argument, variable), _trig_phase(function.name, constant)
             numeric = _numeric_value(constant)
             if function.name in {"sin", "cos"} and numeric is not None and (isinstance(numeric, complex) or not -1 <= numeric <= 1):
-                return EMPTY, (), True, "symbolic"
+                return EMPTY, AssumptionSet(), True, "symbolic"
             if phase is None:
                 phase = _function({"sin": "asin", "cos": "acos", "tan": "atan"}[function.name], constant)
             if affine and affine[0] and phase is not None:
@@ -1923,7 +2712,7 @@ def _symbolic_dispatch(left, right, variable, domain, interval, trace):
                     families = _parameter_family(variable, a, b, phase, PI)
                 result = _filter_parametric(families, interval)
                 trace("invert_trigonometric", f"{function} = {constant}", str(result), "Return the complete integer-parameterized periodic family." if interval is None else "Enumerate the exact family over the requested interval.")
-                return result, (), True, "symbolic"
+                return result, AssumptionSet(), True, "symbolic"
 
     # exp(affine)=constant is represented as a function; constant-base powers
     # are represented by Power.
@@ -1934,13 +2723,13 @@ def _symbolic_dispatch(left, right, variable, domain, interval, trace):
         if affine and affine[0] and not _variables(power.base) and not _variables(constant):
             base_value, constant_value = _numeric_value(power.base), _numeric_value(constant)
             if base_value is None or constant_value is None or isinstance(base_value, complex) or isinstance(constant_value, complex):
-                return None, (), False, "symbolic"
+                return None, AssumptionSet(), False, "symbolic"
             if base_value == 1:
-                return (UniversalSolutionSet(domain) if constant_value == 1 else EMPTY), (), True, "symbolic"
+                return (UniversalSolutionSet(domain) if constant_value == 1 else EMPTY), AssumptionSet(), True, "symbolic"
             if base_value <= 0:
-                return None, (), False, "symbolic"
+                return None, AssumptionSet(), False, "symbolic"
             if constant_value <= 0:
-                return EMPTY, (), True, "symbolic"
+                return EMPTY, AssumptionSet(), True, "symbolic"
             if isinstance(constant, Power) and constant.base == power.base and not _variables(constant.exponent):
                 target = constant.exponent
             elif power.base == constant:
@@ -1950,8 +2739,8 @@ def _symbolic_dispatch(left, right, variable, domain, interval, trace):
             root = _mul(ExactNumber(1 / affine[0]), _add(target, ExactNumber(-affine[1])))
             result = FiniteSolutionSet((root,)) if _in_interval(root, interval) else EMPTY
             trace("invert_exponential", f"{power} = {constant}", str(result), "Apply logarithms to isolate the exponent.")
-            return result, (), True, "symbolic"
-    return None, (), False, "symbolic"
+            return result, AssumptionSet(), True, "symbolic"
+    return None, AssumptionSet(), False, "symbolic"
 
 
 def _poly_string(polynomial, variable):
@@ -1966,6 +2755,17 @@ def _poly_string(polynomial, variable):
     return " + ".join(terms).replace("+ -", "- ") or "0"
 
 
+def _polynomial_expression(polynomial, variable):
+    """Build a structural expression from an exact polynomial mapping."""
+    symbol = Symbol(variable)
+    terms = []
+    for degree, coefficient in polynomial.items():
+        coefficient = ExactNumber(coefficient)
+        factor = ONE if degree == 0 else symbol if degree == 1 else _pow(symbol, ExactNumber(degree))
+        terms.append(coefficient if degree == 0 else factor if coefficient == ONE else _mul(coefficient, factor))
+    return _add(*terms) if terms else ZERO
+
+
 def _poly_eval_numeric(polynomial, value):
     result = 0j
     for coefficient in _coefficient_list(polynomial):
@@ -1973,15 +2773,18 @@ def _poly_eval_numeric(polynomial, value):
     return result
 
 
-def _numeric_isolate(left, right, variable, interval, tolerance, max_iterations):
+def _numeric_isolate(left, right, variable, interval, tolerance, max_iterations, assignments=None):
     lower, upper = interval
     evaluations = 0
+    assignments = dict(assignments or {})
 
     def evaluate(x):
         nonlocal evaluations
         evaluations += 1
         try:
-            value = complex(_evaluate(left, {variable: x}) - _evaluate(right, {variable: x}))
+            values = dict(assignments)
+            values[variable] = x
+            value = complex(_evaluate(left, values) - _evaluate(right, values))
             if abs(value.imag) > 1e-8 or not math.isfinite(value.real):
                 return math.nan
             return value.real
@@ -2043,9 +2846,9 @@ def _numeric_isolate(left, right, variable, interval, tolerance, max_iterations)
     return FiniteSolutionSet(tuple(unique)) if unique else EMPTY, residuals, evaluations
 
 
-def solve_equation(equation, variable=None, *, domain="real", interval=None,
-                   method="auto", numeric_fallback=True, tolerance=1e-10,
-                   max_iterations=1000, steps=False) -> EquationSolution:
+def _solve_equation_impl(equation, variable=None, *, domain="real", interval=None,
+                         method="auto", numeric_fallback=True, tolerance=1e-10,
+                         max_iterations=1000, steps=False, assumptions=None) -> EquationSolution:
     """Solve one equation with native symbolic rules and bounded fallback."""
     if domain not in {"real", "complex"}:
         raise ValueError("domain must be 'real' or 'complex'")
@@ -2064,6 +2867,7 @@ def solve_equation(equation, variable=None, *, domain="real", interval=None,
         raise ValueError("numeric solving requires a finite interval")
     if method == "numeric" and domain != "real":
         raise ValueError("bounded numerical fallback currently supports the real domain")
+    user_assumptions = _normalize_user_assumptions(assumptions)
     source_variables = _source_variables(equation)
     left, right = _equation_input(equation)
     variables = sorted(_variables(left) | _variables(right) | source_variables)
@@ -2078,9 +2882,16 @@ def solve_equation(equation, variable=None, *, domain="real", interval=None,
     original_conditions = _merge_conditions(
         _domain_conditions(left, domain, variable),
         _domain_conditions(right, domain, variable),
+        user_assumptions,
     )
-    if "False" in original_conditions:
-        return EquationSolution(variable, EMPTY, "solved", "symbolic", True, True, message="The original equation is undefined in the requested domain.")
+    if original_conditions.contradictory:
+        return EquationSolution(variable, EMPTY, "solved", "symbolic", True, True, conditions=original_conditions, message="The equation assumptions or original domain restrictions are contradictory.")
+    parameter_substitutions = {
+        name: value for name, value in original_conditions.substitutions.items()
+        if name != variable
+    }
+    working_left = _substitute(left, parameter_substitutions)
+    working_right = _substitute(right, parameter_substitutions)
     if variable not in variables:
         residual = _numeric_value(_add(left, _neg(right)))
         solution_set = UniversalSolutionSet(domain) if residual == 0 else EMPTY
@@ -2095,19 +2906,59 @@ def solve_equation(equation, variable=None, *, domain="real", interval=None,
     solution_set = conditions = None
     complete = False
     if method != "numeric":
-        solution_set, conditions, complete, used_method = _symbolic_dispatch(left, right, variable, domain, interval, trace)
+        solution_set, conditions, complete, used_method = _symbolic_dispatch(working_left, working_right, variable, domain, interval, trace)
         if solution_set is not None:
             solution_set = _apply_interval(solution_set, interval)
-            solution_set, residuals = _verify_finite(solution_set, left, right, variable, domain, tolerance)
             conditions = _merge_conditions(original_conditions, conditions)
+            solution_set = _substitute_solution_set(solution_set, conditions.substitutions)
+            solution_set = _apply_assumptions(solution_set, conditions)
+            solution_set, residuals = _verify_finite(solution_set, left, right, variable, domain, tolerance, conditions)
             return EquationSolution(variable, solution_set, "solved", used_method, True, complete, conditions, residuals, tuple(recorded), "Exact symbolic solution.")
         if method == "symbolic" or not numeric_fallback or interval is None:
-            return EquationSolution(variable, EMPTY, "unresolved", "symbolic", False, False, steps=tuple(recorded), message="No supported complete symbolic transformation was found." + (" Supply a finite interval to enable numerical fallback." if interval is None and numeric_fallback else ""))
+            return EquationSolution(variable, EMPTY, "unresolved", "symbolic", False, False, conditions=original_conditions, steps=tuple(recorded), message="No supported complete symbolic transformation was found." + (" Supply a finite interval to enable numerical fallback." if interval is None and numeric_fallback else ""))
     if interval is None:
-        return EquationSolution(variable, EMPTY, "unresolved", "symbolic", False, False, steps=tuple(recorded), message="Numerical fallback requires a finite interval.")
-    solution_set, residuals, evaluations = _numeric_isolate(left, right, variable, interval, float(tolerance), int(max_iterations))
+        return EquationSolution(variable, EMPTY, "unresolved", "symbolic", False, False, conditions=original_conditions, steps=tuple(recorded), message="Numerical fallback requires a finite interval.")
+    numeric_parameters = {
+        name: (_numeric_value(value) if _numeric_value(value) is not None else value)
+        for name, value in original_conditions.substitutions.items()
+    }
+    solution_set, residuals, evaluations = _numeric_isolate(
+        left, right, variable, interval, float(tolerance), int(max_iterations),
+        numeric_parameters,
+    )
+    solution_set, residuals = _verify_finite(
+        solution_set, left, right, variable, domain, tolerance, original_conditions,
+    )
     trace("numeric_isolation", f"{left} = {right}", str(solution_set), "Isolate and refine real roots over the requested finite interval.")
     return EquationSolution(variable, solution_set, "solved", "numeric" if method == "numeric" else "hybrid", False, False, conditions=original_conditions, residuals=residuals, steps=tuple(recorded), message="Approximate roots found over the requested interval; completeness is not guaranteed for arbitrary functions.", evaluations=evaluations)
+
+
+def solve_equation(equation, variable=None, *, domain="real", interval=None,
+                   method="auto", numeric_fallback=True, tolerance=1e-10,
+                   max_iterations=1000, steps=False) -> EquationSolution:
+    """Solve one equation while preserving the unified API contract."""
+    return _solve_equation_impl(
+        equation, variable, domain=domain, interval=interval, method=method,
+        numeric_fallback=numeric_fallback, tolerance=tolerance,
+        max_iterations=max_iterations, steps=steps,
+    )
+
+
+def solve_equation_assuming(equation, assumptions, variable=None, *, domain="real",
+                            interval=None, method="auto", numeric_fallback=True,
+                            tolerance=1e-10, max_iterations=1000,
+                            steps=False) -> EquationSolution:
+    """Solve an equation under explicit structural assumptions.
+
+    ``assumptions`` accepts an :class:`AssumptionSet`, one condition, an
+    iterable of conditions/atomic condition strings, or a mapping of symbols
+    to exact values or domains.
+    """
+    return _solve_equation_impl(
+        equation, variable, domain=domain, interval=interval, method=method,
+        numeric_fallback=numeric_fallback, tolerance=tolerance,
+        max_iterations=max_iterations, steps=steps, assumptions=assumptions,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2386,9 +3237,12 @@ __all__ = [
     "Multiply", "Power", "SymbolicFunction", "RootOf", "parse_symbolic",
     "to_symbolic", "to_legacy_expression", "simplify_symbolic",
     "structurally_equal", "differentiate_symbolic",
+    "Condition", "TruthCondition", "RelationCondition", "DefinedCondition",
+    "BetweenCondition", "OpaqueCondition", "CompoundCondition", "AssumptionSet",
+    "parse_condition", "condition_from_dict", "simplify_condition", "negate_condition",
     "SolutionSet", "EmptySolutionSet", "UniversalSolutionSet",
     "FiniteSolutionSet", "IntervalSolutionSet", "ParametricSolutionSet",
     "UnionSolutionSet", "ConditionalSolutionSet", "EquationState", "SolutionStep",
     "EquationSolution", "EquationSystemSolution", "symbolic_from_dict",
-    "solve_equation", "solve_equation_system",
+    "solve_equation", "solve_equation_assuming", "solve_equation_system",
 ]
