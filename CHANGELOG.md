@@ -11,6 +11,20 @@
   exponential, logarithmic, and canonical trigonometric equations.
 - Added `solve_equation_system()` for exact rational linear systems and
   explicit local numerical fallback for nonlinear systems.
+- Preserved denominator, logarithm, radical, trigonometric, and power-domain
+  restrictions through cancellation and identity simplification.
+- Added `exp` inversion, general affine inverse-trigonometric families, and
+  exact radical special angles; impossible real trigonometric values now return
+  an empty solution set.
+- Applied finite intervals consistently to universal, finite, periodic, union,
+  and conditional solution sets, and rejected real intervals in complex mode.
+- Replaced tolerance-based real `RootOf` classification with exact Sturm
+  isolation and made algebraic solution dictionaries strict-JSON compatible.
+- Made native-to-legacy conversion fail safely when the legacy expression model
+  cannot preserve semantics.
+- Enforced parser depth on unary and power recursion, strengthened immutable
+  result validation, and prevented real nonlinear-system fallback from
+  discarding imaginary residual components.
 
 - Preserved the 1.x equation APIs while stabilizing quadratic, cubic, quartic,
   polynomial, linear-system, and polynomial-system solving.

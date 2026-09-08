@@ -43,7 +43,7 @@ __all__ = [
     'structurally_equal', 'differentiate_symbolic',
     'SolutionSet', 'EmptySolutionSet', 'UniversalSolutionSet',
     'FiniteSolutionSet', 'IntervalSolutionSet', 'ParametricSolutionSet',
-    'UnionSolutionSet', 'ConditionalSolutionSet', 'SolutionStep',
+    'UnionSolutionSet', 'ConditionalSolutionSet', 'EquationState', 'SolutionStep',
     'EquationSolution', 'EquationSystemSolution', 'symbolic_from_dict',
     'solve_equation', 'solve_equation_system',
     # Functions

@@ -205,16 +205,31 @@ with `variable=`; other variables are treated as parameters.
 
 The native symbolic engine supports exact constant, linear, rational,
 quadratic, factorable polynomial, algebraic `RootOf`, isolated square-root,
-absolute-value, common exponential/logarithmic, and canonical affine
-trigonometric equations. It uses exact rational arithmetic and checks finite
-candidates against the original equation to reject invalid denominator and
-squaring candidates.
+absolute-value, `exp`, common constant-base exponential/logarithmic, and affine
+trigonometric equations. Exact special angles are preferred; other real
+constant right sides use `asin`, `acos`, or `atan` in complete periodic
+families. It uses exact rational arithmetic and checks finite candidates against
+the original equation to reject invalid denominator and squaring candidates.
+
+Restrictions belong to the original expression, not merely its simplified
+form. For example, `0/x = 0` returns the universal real solution with `x != 0`,
+and `ln(x) = ln(x)` retains `x > 0`. Intervals are intersected with every
+solution-set shape, including identities and conditional parameter branches.
+A real interval cannot be combined with `domain="complex"`.
 
 `EquationSolution` reports the `solution_set`, `status`, `method`, `exact`,
 `complete`, domain conditions, normalized residuals, optional structured steps,
 and numerical evaluation count. Solution sets can be empty, universal, finite,
 interval, conditional, unions, or integer-parameterized families. All result
-and symbolic expression types support deterministic `to_dict()` round trips.
+and symbolic expression types support deterministic `to_dict()` round trips
+and strict JSON encoding. Real irreducible polynomial roots use exact Sturm
+isolation intervals; numerical values obtained from `RootOf.evaluate()` are
+approximations of those certified algebraic roots.
+
+Equation-to-equation derivation stages store immutable `EquationState` objects,
+not presentation-only strings. `step.equivalent_at(values)` can replay a stage
+at an admissible assignment; terminal solution-set and system-summary stages
+remain explicitly typed or textual as appropriate.
 
 With `method="symbolic"`, an unsupported family returns a structured unresolved
 result. With `method="numeric"`, or automatic fallback after symbolic rules are
@@ -226,4 +241,14 @@ was found.
 `solve_equation_system()` performs exact rational row reduction for square or
 rectangular linear systems, including parametric underdetermined results.
 Nonlinear systems remain explicitly local and approximate: set
-`numeric_fallback=True` and provide `initial` values to use damped Newton.
+`numeric_fallback=True` and provide `initial` values to use damped Newton. The
+fallback is real-only and rejects non-real or non-finite residual evaluations
+instead of silently discarding imaginary components. `steps=True` records the
+normalization and exact row-reduction or local-Newton stages.
+
+The native expression grammar uses multi-character identifiers (`xy` is one
+symbol). This intentionally differs from the legacy polynomial parser, where
+concatenated one-letter names historically mean multiplication. Conversion back
+to a legacy expression is therefore limited to trees the legacy model can
+preserve; functions, constants such as `pi`, negative powers, and other unsafe
+trees raise `UnsupportedExpressionError`.

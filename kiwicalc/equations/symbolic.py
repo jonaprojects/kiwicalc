@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from fractions import Fraction as Rational
 from functools import reduce
 from itertools import product
+from types import MappingProxyType
 from typing import Any, Iterable, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
@@ -99,6 +100,12 @@ class SymbolicConstant(SymbolicExpression):
 class Add(SymbolicExpression):
     terms: Tuple[SymbolicExpression, ...]
 
+    def __post_init__(self):
+        terms = tuple(self.terms)
+        if not terms or any(not isinstance(term, SymbolicExpression) for term in terms):
+            raise TypeError("Add terms must be a nonempty sequence of symbolic expressions")
+        object.__setattr__(self, "terms", terms)
+
     def __str__(self):
         text = ""
         for index, term in enumerate(self.terms):
@@ -114,6 +121,12 @@ class Add(SymbolicExpression):
 class Multiply(SymbolicExpression):
     factors: Tuple[SymbolicExpression, ...]
 
+    def __post_init__(self):
+        factors = tuple(self.factors)
+        if not factors or any(not isinstance(factor, SymbolicExpression) for factor in factors):
+            raise TypeError("Multiply factors must be a nonempty sequence of symbolic expressions")
+        object.__setattr__(self, "factors", factors)
+
     def __str__(self):
         def render(item):
             return f"({item})" if isinstance(item, Add) else str(item)
@@ -124,6 +137,10 @@ class Multiply(SymbolicExpression):
 class Power(SymbolicExpression):
     base: SymbolicExpression
     exponent: SymbolicExpression
+
+    def __post_init__(self):
+        if not isinstance(self.base, SymbolicExpression) or not isinstance(self.exponent, SymbolicExpression):
+            raise TypeError("Power base and exponent must be symbolic expressions")
 
     def __str__(self):
         base = f"({self.base})" if isinstance(self.base, (Add, Multiply)) else str(self.base)
@@ -136,6 +153,16 @@ class SymbolicFunction(SymbolicExpression):
     name: str
     arguments: Tuple[SymbolicExpression, ...]
 
+    def __post_init__(self):
+        arguments = tuple(self.arguments)
+        if self.name not in _FUNCTIONS:
+            raise ValueError(f"Unsupported symbolic function {self.name!r}")
+        if not arguments or any(not isinstance(argument, SymbolicExpression) for argument in arguments):
+            raise TypeError("Function arguments must be a nonempty sequence of symbolic expressions")
+        if self.name == "log" and len(arguments) not in {1, 2} or self.name != "log" and len(arguments) != 1:
+            raise ValueError(f"Invalid number of arguments for {self.name}")
+        object.__setattr__(self, "arguments", arguments)
+
     def __str__(self):
         return f"{self.name}({', '.join(map(str, self.arguments))})"
 
@@ -145,6 +172,21 @@ class RootOf(SymbolicExpression):
     coefficients: Tuple[ExactNumber, ...]
     index: int
     interval: Optional[Tuple[float, float]] = None
+
+    def __post_init__(self):
+        coefficients = tuple(self.coefficients)
+        if len(coefficients) < 2 or any(not isinstance(value, ExactNumber) for value in coefficients):
+            raise TypeError("RootOf coefficients must contain at least two exact numbers")
+        if coefficients[0] == ZERO:
+            raise ValueError("RootOf leading coefficient cannot be zero")
+        degree = len(coefficients) - 1
+        if isinstance(self.index, bool) or not isinstance(self.index, int) or not 0 <= self.index < degree:
+            raise ValueError("RootOf index must identify a polynomial root")
+        interval = None if self.interval is None else tuple(self.interval)
+        if interval is not None and (len(interval) != 2 or not all(isinstance(value, (int, float)) and math.isfinite(value) for value in interval) or interval[0] >= interval[1]):
+            raise ValueError("RootOf interval must be an increasing finite pair")
+        object.__setattr__(self, "coefficients", coefficients)
+        object.__setattr__(self, "interval", interval)
 
     def __str__(self):
         return f"RootOf(({', '.join(map(str, self.coefficients))}), {self.index})"
@@ -186,6 +228,10 @@ def _add(*items):
     for base, coefficient in grouped.items():
         if coefficient:
             flat.append(base if coefficient == 1 else _mul(ExactNumber(coefficient), base))
+        elif _requires_domain_guard(base):
+            # Cancellation is algebraically zero only where the original term
+            # is defined.  Keep a guarded zero so its domain survives parsing.
+            flat.append(Multiply((ZERO, base)))
     flat.sort(key=str)
     if number:
         flat.insert(0, ExactNumber(number))
@@ -209,13 +255,35 @@ def _mul(*items):
             else:
                 flat.append(value)
     if not number:
-        return ZERO
+        guarded = sorted((value for value in flat if _requires_domain_guard(value)), key=str)
+        return Multiply((ZERO, *guarded)) if guarded else ZERO
     flat.sort(key=str)
     if number != 1 or not flat:
         flat.insert(0, ExactNumber(number))
     if len(flat) == 1:
         return flat[0]
     return Multiply(tuple(flat))
+
+
+def _requires_domain_guard(expression):
+    """Whether evaluating *expression* can be undefined on its natural domain."""
+    if isinstance(expression, Power):
+        if isinstance(expression.exponent, ExactNumber):
+            exponent = expression.exponent.value
+            if exponent < 0 or exponent.denominator % 2 == 0:
+                return True
+        else:
+            return True
+        return _requires_domain_guard(expression.base)
+    if isinstance(expression, SymbolicFunction):
+        if expression.name in {"sqrt", "ln", "log", "tan", "asin", "acos"}:
+            return True
+        return any(_requires_domain_guard(argument) for argument in expression.arguments)
+    if isinstance(expression, Add):
+        return any(_requires_domain_guard(term) for term in expression.terms)
+    if isinstance(expression, Multiply):
+        return any(_requires_domain_guard(factor) for factor in expression.factors)
+    return False
 
 
 def _pow(base, exponent):
@@ -286,6 +354,10 @@ def _exact_trig_value(name, coefficient):
     sine, cosine = sin_values.get(coefficient), cos_values.get(coefficient)
     if sine is None or cosine is None or cosine == ZERO:
         return None
+    if sine == cosine:
+        return ONE
+    if sine == _neg(cosine):
+        return NEG_ONE
     if isinstance(sine, ExactNumber) and isinstance(cosine, ExactNumber):
         return ExactNumber(sine.value / cosine.value)
     return _mul(sine, _pow(cosine, NEG_ONE))
@@ -335,6 +407,33 @@ def _evaluate(expression, values):
     if isinstance(expression, Power):
         return _evaluate(expression.base, values) ** _evaluate(expression.exponent, values)
     if isinstance(expression, RootOf):
+        if expression.interval is not None:
+            lower = Rational.from_float(float(expression.interval[0]))
+            upper = Rational.from_float(float(expression.interval[1]))
+            coefficients = [value.value for value in expression.coefficients]
+
+            def evaluate_exact(point):
+                result = Rational(0)
+                for coefficient in coefficients:
+                    result = result * point + coefficient
+                return result
+
+            lower_value = evaluate_exact(lower)
+            if lower_value == 0:
+                return float(lower)
+            upper_value = evaluate_exact(upper)
+            if upper_value == 0:
+                return float(upper)
+            for _ in range(160):
+                midpoint = (lower + upper) / 2
+                middle_value = evaluate_exact(midpoint)
+                if middle_value == 0:
+                    return float(midpoint)
+                if (lower_value < 0) != (middle_value < 0):
+                    upper, upper_value = midpoint, middle_value
+                else:
+                    lower, lower_value = midpoint, middle_value
+            return float((lower + upper) / 2)
         roots = np.roots([float(value.value) for value in expression.coefficients])
         roots = sorted(roots, key=lambda root: (root.real, root.imag))
         return complex(roots[expression.index])
@@ -412,6 +511,14 @@ class _ExpressionParser:
             raise UnsupportedExpressionError("Symbolic expression exceeds the node limit")
         return value
 
+    def push_depth(self):
+        self.depth += 1
+        if self.depth > self.max_depth:
+            raise UnsupportedExpressionError("Symbolic expression exceeds the nesting limit")
+
+    def pop_depth(self):
+        self.depth -= 1
+
     def parse(self):
         result = self.sum()
         if self.current.kind != "eof":
@@ -433,7 +540,7 @@ class _ExpressionParser:
                 operation = self.take().value
                 other = self.unary()
                 result = self.node(_mul(result, other) if operation == "*" else _mul(result, _pow(other, NEG_ONE)))
-            elif self.current.kind in {"number", "identifier"} or self.current.value == "(":
+            elif self.current.kind == "identifier" or self.current.value == "(":
                 result = self.node(_mul(result, self.unary()))
             else:
                 return result
@@ -441,7 +548,11 @@ class _ExpressionParser:
     def unary(self):
         if self.current.value in {"+", "-"}:
             operation = self.take().value
-            value = self.unary()
+            self.push_depth()
+            try:
+                value = self.unary()
+            finally:
+                self.pop_depth()
             return value if operation == "+" else self.node(_neg(value))
         return self.power()
 
@@ -449,7 +560,12 @@ class _ExpressionParser:
         result = self.primary()
         if self.current.value in {"^", "**"}:
             self.take()
-            result = self.node(_pow(result, self.unary()))
+            self.push_depth()
+            try:
+                exponent = self.unary()
+            finally:
+                self.pop_depth()
+            result = self.node(_pow(result, exponent))
         return result
 
     def primary(self):
@@ -464,12 +580,12 @@ class _ExpressionParser:
             return self.node(_function("abs", value))
         if token.value == "(":
             self.take()
-            self.depth += 1
-            if self.depth > self.max_depth:
-                raise UnsupportedExpressionError("Symbolic expression exceeds the nesting limit")
-            value = self.sum()
-            self.take(")")
-            self.depth -= 1
+            self.push_depth()
+            try:
+                value = self.sum()
+                self.take(")")
+            finally:
+                self.pop_depth()
             return value
         if token.kind == "identifier":
             name = self.take().value
@@ -512,10 +628,29 @@ def to_legacy_expression(value):
     value = to_symbolic(value)
     if value.variables and any(len(name) != 1 for name in value.variables):
         raise UnsupportedExpressionError("The legacy expression parser cannot preserve multi-character variables")
+    if not _legacy_expression_supported(value):
+        raise UnsupportedExpressionError("The legacy expression model cannot preserve this native expression")
     try:
         return create(str(value))
     except Exception as error:
         raise UnsupportedExpressionError("The legacy expression model cannot represent this native expression") from error
+
+
+def _legacy_expression_supported(value):
+    if isinstance(value, (ExactNumber, Symbol)):
+        return True
+    if isinstance(value, Add):
+        return all(_legacy_expression_supported(term) for term in value.terms)
+    if isinstance(value, Multiply):
+        return all(_legacy_expression_supported(factor) for factor in value.factors)
+    if isinstance(value, Power):
+        return (
+            _legacy_expression_supported(value.base)
+            and isinstance(value.exponent, ExactNumber)
+            and value.exponent.denominator == 1
+            and value.exponent.numerator >= 0
+        )
+    return False
 
 
 def simplify_symbolic(value):
@@ -593,6 +728,9 @@ class EmptySolutionSet(SolutionSet):
 @dataclass(frozen=True)
 class UniversalSolutionSet(SolutionSet):
     domain: str = "real"
+    def __post_init__(self):
+        if self.domain not in {"real", "complex"}:
+            raise ValueError("Universal solution domain must be 'real' or 'complex'")
     def __str__(self): return "Reals" if self.domain == "real" else "Complexes"
 
 
@@ -603,12 +741,26 @@ class FiniteSolutionSet(SolutionSet):
 
     def __post_init__(self):
         object.__setattr__(self, "values", tuple(self.values))
+        if any(not _valid_solution_value(value) for value in self.values):
+            raise TypeError("finite solutions must be immutable numeric or symbolic values")
         multiplicities = tuple(self.multiplicities) or (1,) * len(self.values)
-        if len(multiplicities) != len(self.values) or any(value < 1 for value in multiplicities):
+        if len(multiplicities) != len(self.values) or any(isinstance(value, bool) or not isinstance(value, int) or value < 1 for value in multiplicities):
             raise ValueError("multiplicities must contain one positive integer per solution")
         object.__setattr__(self, "multiplicities", multiplicities)
 
     def __str__(self): return "{" + ", ".join(map(str, self.values)) + "}"
+
+
+def _valid_solution_value(value):
+    if isinstance(value, SymbolicExpression):
+        return True
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, float, complex, np.number, Rational)):
+        return False
+    try:
+        numeric = complex(value)
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return math.isfinite(numeric.real) and math.isfinite(numeric.imag)
 
 
 @dataclass(frozen=True)
@@ -618,6 +770,14 @@ class IntervalSolutionSet(SolutionSet):
     lower_closed: bool = True
     upper_closed: bool = True
 
+    def __post_init__(self):
+        if not isinstance(self.lower_closed, bool) or not isinstance(self.upper_closed, bool):
+            raise TypeError("Interval closure flags must be booleans")
+        lower, upper = _numeric_value(self.lower), _numeric_value(self.upper)
+        if lower is not None and upper is not None:
+            if isinstance(lower, complex) or isinstance(upper, complex) or lower > upper:
+                raise ValueError("Interval bounds must be ordered real values")
+
 
 @dataclass(frozen=True)
 class ParametricSolutionSet(SolutionSet):
@@ -626,6 +786,16 @@ class ParametricSolutionSet(SolutionSet):
     parameter: str = "n"
     parameter_domain: str = "integers"
 
+    def __post_init__(self):
+        if not isinstance(self.variable, str) or not self.variable:
+            raise ValueError("Parametric solution variable must be a nonempty string")
+        if not isinstance(self.parameter, str) or not self.parameter or self.parameter == self.variable:
+            raise ValueError("Parametric solution parameter must be a distinct nonempty string")
+        if not isinstance(self.expression, SymbolicExpression):
+            raise TypeError("Parametric solution expression must be symbolic")
+        if self.parameter_domain != "integers":
+            raise ValueError("Only integer-parameterized families are currently supported")
+
     def __str__(self): return f"{self.variable} = {self.expression}, {self.parameter} in Z"
 
 
@@ -633,7 +803,11 @@ class ParametricSolutionSet(SolutionSet):
 class UnionSolutionSet(SolutionSet):
     sets: Tuple[SolutionSet, ...]
 
-    def __post_init__(self): object.__setattr__(self, "sets", tuple(self.sets))
+    def __post_init__(self):
+        sets = tuple(self.sets)
+        if not sets or any(not isinstance(value, SolutionSet) for value in sets):
+            raise TypeError("A union must contain one or more solution sets")
+        object.__setattr__(self, "sets", sets)
     def __str__(self): return " union ".join(map(str, self.sets))
 
 
@@ -642,14 +816,72 @@ class ConditionalSolutionSet(SolutionSet):
     solution_set: SolutionSet
     conditions: Tuple[str, ...]
 
+    def __post_init__(self):
+        if not isinstance(self.solution_set, SolutionSet):
+            raise TypeError("Conditional solution must wrap a solution set")
+        conditions = tuple(self.conditions)
+        if not conditions or any(not isinstance(value, str) or not value for value in conditions):
+            raise ValueError("Conditional solution conditions must be nonempty strings")
+        object.__setattr__(self, "conditions", conditions)
+
+
+@dataclass(frozen=True)
+class EquationState:
+    """Immutable structural equation used by derivation records."""
+
+    left: SymbolicExpression
+    right: SymbolicExpression
+
+    def __post_init__(self):
+        if not isinstance(self.left, SymbolicExpression) or not isinstance(self.right, SymbolicExpression):
+            raise TypeError("EquationState sides must be symbolic expressions")
+
+    @property
+    def residual(self):
+        return _add(self.left, _neg(self.right))
+
+    def satisfied_by(self, values, tolerance=1e-10):
+        residual = complex(_evaluate(self.residual, values))
+        return math.isfinite(residual.real) and math.isfinite(residual.imag) and abs(residual) <= tolerance
+
+    def __str__(self):
+        return f"{self.left} = {self.right}"
+
+
+def _step_value(value):
+    if isinstance(value, (EquationState, SolutionSet)):
+        return value
+    if not isinstance(value, str):
+        raise TypeError("Solution step states must be text, equations, or solution sets")
+    if value.count("=") == 1:
+        try:
+            left, right = _split_symbolic_equation(value)
+            return EquationState(left, right)
+        except (EquationParseError, UnsupportedExpressionError, TypeError, ValueError):
+            pass
+    return value
+
 
 @dataclass(frozen=True)
 class SolutionStep:
     rule: str
-    before: str
-    after: str
+    before: Any
+    after: Any
     explanation: str
     conditions: Tuple[str, ...] = ()
+
+    def __post_init__(self):
+        if not isinstance(self.rule, str) or not isinstance(self.explanation, str):
+            raise TypeError("Solution step rule and explanation must be strings")
+        object.__setattr__(self, "before", _step_value(self.before))
+        object.__setattr__(self, "after", _step_value(self.after))
+        object.__setattr__(self, "conditions", tuple(self.conditions))
+
+    def equivalent_at(self, values, tolerance=1e-10):
+        """Replay an equation-to-equation step at one admissible assignment."""
+        if not isinstance(self.before, EquationState) or not isinstance(self.after, EquationState):
+            raise TypeError("This step does not contain two equation states")
+        return self.before.satisfied_by(values, tolerance) == self.after.satisfied_by(values, tolerance)
 
 
 @dataclass(frozen=True)
@@ -665,6 +897,32 @@ class EquationSolution:
     steps: Tuple[SolutionStep, ...] = ()
     message: str = ""
     evaluations: int = 0
+
+    def __post_init__(self):
+        if not isinstance(self.variable, str) or not self.variable:
+            raise ValueError("Solution variable must be a nonempty string")
+        if not isinstance(self.solution_set, SolutionSet):
+            raise TypeError("solution_set must be a SolutionSet")
+        if self.status not in {"solved", "unresolved"}:
+            raise ValueError("Equation solution status must be 'solved' or 'unresolved'")
+        if self.method not in {"symbolic", "numeric", "hybrid"}:
+            raise ValueError("Equation solution method is invalid")
+        if any(not isinstance(value, bool) for value in (self.exact, self.complete)):
+            raise TypeError("exact and complete must be booleans")
+        if isinstance(self.evaluations, bool) or not isinstance(self.evaluations, int) or self.evaluations < 0:
+            raise ValueError("evaluations must be a nonnegative integer")
+        conditions, residuals, steps = tuple(self.conditions), tuple(self.residuals), tuple(self.steps)
+        if any(not isinstance(value, str) or not value for value in conditions):
+            raise ValueError("conditions must contain nonempty strings")
+        if any(value is not None and (isinstance(value, bool) or not isinstance(value, (int, float, np.number)) or not math.isfinite(float(value)) or value < 0) for value in residuals):
+            raise ValueError("residuals must contain nonnegative finite values or None")
+        if any(not isinstance(value, SolutionStep) for value in steps):
+            raise TypeError("steps must contain SolutionStep values")
+        if not isinstance(self.message, str):
+            raise TypeError("message must be a string")
+        object.__setattr__(self, "conditions", conditions)
+        object.__setattr__(self, "residuals", residuals)
+        object.__setattr__(self, "steps", steps)
 
     @property
     def solutions(self):
@@ -697,7 +955,10 @@ class EquationSolution:
         data = dict(data)
         data["solution_set"] = _solution_set_from_dict(data["solution_set"])
         data["conditions"] = tuple(data.get("conditions", ()))
-        data["residuals"] = tuple(data.get("residuals", ()))
+        data["residuals"] = tuple(
+            None if isinstance(value, (int, float, np.number)) and not isinstance(value, (bool, np.bool_)) and math.isnan(float(value)) else value
+            for value in data.get("residuals", ())
+        )
         data["steps"] = tuple(_step_from_dict(item) for item in data.get("steps", ()))
         return cls(**data)
 
@@ -706,13 +967,39 @@ EMPTY = EmptySolutionSet()
 
 
 def _step_to_dict(step):
-    result = dict(step.__dict__)
-    result["conditions"] = list(step.conditions)
-    return result
+    return {
+        "rule": step.rule,
+        "before": _step_value_to_dict(step.before),
+        "after": _step_value_to_dict(step.after),
+        "explanation": step.explanation,
+        "conditions": list(step.conditions),
+    }
+
+
+def _step_value_to_dict(value):
+    if isinstance(value, EquationState):
+        return {"kind": "equation", "left": value.left.to_dict(), "right": value.right.to_dict()}
+    if isinstance(value, SolutionSet):
+        return {"kind": "solution_set", "value": value.to_dict()}
+    return {"kind": "text", "value": value}
+
+
+def _step_value_from_dict(value):
+    if not isinstance(value, Mapping) or "kind" not in value:
+        return value  # Backward compatibility with the initial text-only format.
+    if value["kind"] == "equation":
+        return EquationState(symbolic_from_dict(value["left"]), symbolic_from_dict(value["right"]))
+    if value["kind"] == "solution_set":
+        return _solution_set_from_dict(value["value"])
+    if value["kind"] == "text":
+        return value["value"]
+    raise ValueError(f"Unknown solution-step state kind {value['kind']!r}")
 
 
 def _step_from_dict(item):
     result = dict(item)
+    result["before"] = _step_value_from_dict(result["before"])
+    result["after"] = _step_value_from_dict(result["after"])
     result["conditions"] = tuple(result.get("conditions", ()))
     return SolutionStep(**result)
 
@@ -906,6 +1193,78 @@ def _poly_gcd(first, second):
     return _poly_monic(first)
 
 
+def _sturm_sequence(polynomial):
+    """Return the exact Sturm chain for a square-free rational polynomial."""
+    first = _poly_monic(polynomial)
+    second = _poly_clean({degree - 1: degree * coefficient for degree, coefficient in first.items() if degree})
+    sequence = [first]
+    if not second:
+        return sequence
+    sequence.append(second)
+    while second:
+        _, remainder = _poly_divmod(first, second)
+        remainder = {degree: -coefficient for degree, coefficient in remainder.items()}
+        if not remainder:
+            break
+        sequence.append(remainder)
+        first, second = second, remainder
+    return sequence
+
+
+def _sign_variations(values):
+    signs = [1 if value > 0 else -1 for value in values if value]
+    return sum(first != second for first, second in zip(signs, signs[1:]))
+
+
+def _sturm_variations(sequence, point):
+    return _sign_variations(_poly_eval(polynomial, point) for polynomial in sequence)
+
+
+def _real_root_bound(polynomial):
+    degree = max(polynomial)
+    leading = abs(polynomial[degree])
+    largest = max((abs(coefficient) / leading for power, coefficient in polynomial.items() if power != degree), default=Rational(0))
+    return largest.numerator // largest.denominator + 2
+
+
+def _isolate_real_roots(polynomial, *, max_splits=20000):
+    """Return disjoint rational intervals, each containing exactly one root."""
+    sequence = _sturm_sequence(polynomial)
+    bound = Rational(_real_root_bound(polynomial))
+
+    def count(lower, upper):
+        return _sturm_variations(sequence, lower) - _sturm_variations(sequence, upper)
+
+    total = count(-bound, bound)
+    pending = [(-bound, bound, total)] if total else []
+    isolated, splits = [], 0
+    while pending:
+        lower, upper, roots = pending.pop()
+        if roots == 1:
+            isolated.append((lower, upper))
+            continue
+        midpoint = (lower + upper) / 2
+        if _poly_eval(polynomial, midpoint) == 0:
+            # Rational roots are normally extracted before Sturm isolation.
+            # Retain a small exact bracket if one reaches this defensive path.
+            width = (upper - lower) / 4
+            isolated.append((midpoint - width, midpoint + width))
+            left_count = count(lower, midpoint - width)
+            right_count = count(midpoint + width, upper)
+            if left_count: pending.append((lower, midpoint - width, left_count))
+            if right_count: pending.append((midpoint + width, upper, right_count))
+        else:
+            left_count = count(lower, midpoint)
+            right_count = roots - left_count
+            if left_count: pending.append((lower, midpoint, left_count))
+            if right_count: pending.append((midpoint, upper, right_count))
+        splits += 1
+        if splits > max_splits:
+            raise UnsupportedExpressionError("Exact real-root isolation exceeded its transformation limit")
+    isolated.sort(key=lambda bounds: bounds[0])
+    return tuple(isolated)
+
+
 def _square_free_factors(polynomial):
     polynomial = _poly_monic(polynomial)
     if max(polynomial, default=0) <= 1:
@@ -968,6 +1327,103 @@ def _numeric_value(value):
         return None
 
 
+def _collapse_guarded_zeros(expression):
+    """Drop domain-preserving zero factors after restrictions were collected."""
+    if isinstance(expression, Multiply):
+        if any(factor == ZERO for factor in expression.factors):
+            return ZERO
+        return _mul(*(_collapse_guarded_zeros(factor) for factor in expression.factors))
+    if isinstance(expression, Add):
+        return _add(*(_collapse_guarded_zeros(term) for term in expression.terms))
+    if isinstance(expression, Power):
+        return _pow(_collapse_guarded_zeros(expression.base), _collapse_guarded_zeros(expression.exponent))
+    if isinstance(expression, SymbolicFunction):
+        return _function(expression.name, *(_collapse_guarded_zeros(argument) for argument in expression.arguments))
+    return expression
+
+
+def _condition_text(expression, relation, variable):
+    numeric = _numeric_value(expression)
+    if numeric is not None:
+        value = complex(numeric)
+        if relation == "!= 0":
+            return None if value != 0 else "False"
+        if abs(value.imag) > 1e-12:
+            return "False"
+        real = value.real
+        valid = {
+            "> 0": real > 0,
+            ">= 0": real >= 0,
+            "<= 1": real <= 1,
+            ">= -1": real >= -1,
+            "!= 1": real != 1,
+        }[relation]
+        return None if valid else "False"
+    rendered = str(expression)
+    parsed = _poly_fraction(expression, variable)
+    if parsed is not None and parsed[1] == {0: Rational(1)}:
+        rendered = _poly_string(parsed[0], variable)
+    return f"{rendered} {relation}"
+
+
+def _domain_conditions(expression, domain, variable):
+    conditions = []
+
+    def add(value, relation):
+        condition = _condition_text(value, relation, variable)
+        if condition is not None and condition not in conditions:
+            conditions.append(condition)
+
+    def visit(value):
+        if isinstance(value, Power):
+            visit(value.base); visit(value.exponent)
+            if isinstance(value.exponent, ExactNumber):
+                exponent = value.exponent.value
+                if exponent < 0:
+                    add(value.base, "!= 0")
+                if domain == "real" and exponent.denominator % 2 == 0:
+                    add(value.base, ">= 0")
+            else:
+                condition = f"{value} is defined in the {domain} domain"
+                if condition not in conditions:
+                    conditions.append(condition)
+            return
+        if isinstance(value, SymbolicFunction):
+            for argument in value.arguments:
+                visit(argument)
+            argument = value.arguments[-1]
+            if value.name == "sqrt" and domain == "real":
+                add(argument, ">= 0")
+            elif value.name in {"ln", "log"}:
+                add(argument, "> 0" if domain == "real" else "!= 0")
+                if value.name == "log" and len(value.arguments) == 2:
+                    base = value.arguments[0]
+                    add(base, "> 0" if domain == "real" else "!= 0")
+                    add(base, "!= 1")
+            elif value.name == "tan":
+                add(_function("cos", argument), "!= 0")
+            elif value.name in {"asin", "acos"} and domain == "real":
+                add(argument, ">= -1"); add(argument, "<= 1")
+            return
+        if isinstance(value, Add):
+            for term in value.terms: visit(term)
+        elif isinstance(value, Multiply):
+            for factor in value.factors: visit(factor)
+
+    visit(expression)
+    return tuple(conditions)
+
+
+def _merge_conditions(*groups):
+    return tuple(dict.fromkeys(condition for group in groups for condition in group))
+
+
+def _render_condition(expression, relation, variable):
+    parsed = _poly_fraction(expression, variable)
+    rendered = _poly_string(parsed[0], variable) if parsed is not None and parsed[1] == {0: Rational(1)} else str(expression)
+    return f"{rendered} {relation}"
+
+
 def _in_interval(value, interval):
     if interval is None:
         return True
@@ -1027,18 +1483,29 @@ def _solve_polynomial_exact(polynomial, variable, domain, interval=None):
                 roots.extend((first, second)); multiplicities.extend((1, 1))
     elif degree > 2:
         coefficients = tuple(ExactNumber(value) for value in _coefficient_list(remaining))
-        approximations = sorted(np.roots([float(value.value) for value in coefficients]), key=lambda root: (root.real, root.imag))
-        for index, approximation in enumerate(approximations):
-            if domain == "complex" or abs(approximation.imag) <= 1e-10:
-                roots.append(RootOf(coefficients, index, (float(approximation.real - 1e-7), float(approximation.real + 1e-7)) if abs(approximation.imag) <= 1e-10 else None))
+        if domain == "real":
+            for index, bounds in enumerate(_isolate_real_roots(remaining)):
+                lower, upper = map(float, bounds)
+                if not math.isfinite(lower) or not math.isfinite(upper):
+                    raise UnsupportedExpressionError("A certified root interval exceeds floating-point range")
+                roots.append(RootOf(coefficients, index, (lower, upper)))
                 multiplicities.append(1)
+        else:
+            # The fundamental theorem of algebra certifies the number of
+            # complex roots.  RootOf keeps the exact polynomial; numerical
+            # approximation is used only to display/evaluate its stable index.
+            roots.extend(RootOf(coefficients, index) for index in range(degree))
+            multiplicities.extend([1] * degree)
     kept = [(root, multiplicity) for root, multiplicity in zip(roots, multiplicities) if _in_interval(root, interval)]
     kept.sort(key=lambda pair: (complex(_numeric_value(pair[0]) or 0).real, complex(_numeric_value(pair[0]) or 0).imag, str(pair[0])))
     return FiniteSolutionSet(tuple(root for root, _ in kept), tuple(multiplicity for _, multiplicity in kept)) if kept else EMPTY, True
 
 
 def _affine(expression, variable):
-    parsed = _poly_fraction(expression, variable, max_degree=1)
+    try:
+        parsed = _poly_fraction(expression, variable, max_degree=1)
+    except UnsupportedExpressionError:
+        return None
     if parsed is None or parsed[1] != {0: Rational(1)} or max(parsed[0], default=0) > 1:
         return None
     return parsed[0].get(1, Rational(0)), parsed[0].get(0, Rational(0))
@@ -1101,18 +1568,38 @@ def _log_terms(expression):
 
 
 def _trig_phase(name, value):
+    half_sqrt2 = _mul(ExactNumber(1, 2), _function("sqrt", ExactNumber(2)))
+    half_sqrt3 = _mul(ExactNumber(1, 2), _function("sqrt", ExactNumber(3)))
     table = {
-        "sin": {Rational(-1): _neg(_mul(ExactNumber(1, 2), PI)), Rational(-1, 2): _neg(_mul(ExactNumber(1, 6), PI)), Rational(0): ZERO, Rational(1, 2): _mul(ExactNumber(1, 6), PI), Rational(1): _mul(ExactNumber(1, 2), PI)},
-        "cos": {Rational(-1): PI, Rational(-1, 2): _mul(ExactNumber(2, 3), PI), Rational(0): _mul(ExactNumber(1, 2), PI), Rational(1, 2): _mul(ExactNumber(1, 3), PI), Rational(1): ZERO},
-        "tan": {Rational(-1): _neg(_mul(ExactNumber(1, 4), PI)), Rational(0): ZERO, Rational(1): _mul(ExactNumber(1, 4), PI)},
+        "sin": {
+            NEG_ONE: _neg(_mul(ExactNumber(1, 2), PI)),
+            ExactNumber(-1, 2): _neg(_mul(ExactNumber(1, 6), PI)),
+            _neg(half_sqrt2): _neg(_mul(ExactNumber(1, 4), PI)),
+            _neg(half_sqrt3): _neg(_mul(ExactNumber(1, 3), PI)),
+            ZERO: ZERO, ExactNumber(1, 2): _mul(ExactNumber(1, 6), PI),
+            half_sqrt2: _mul(ExactNumber(1, 4), PI),
+            half_sqrt3: _mul(ExactNumber(1, 3), PI),
+            ONE: _mul(ExactNumber(1, 2), PI),
+        },
+        "cos": {
+            NEG_ONE: PI, ExactNumber(-1, 2): _mul(ExactNumber(2, 3), PI),
+            _neg(half_sqrt2): _mul(ExactNumber(3, 4), PI),
+            _neg(half_sqrt3): _mul(ExactNumber(5, 6), PI),
+            ZERO: _mul(ExactNumber(1, 2), PI),
+            ExactNumber(1, 2): _mul(ExactNumber(1, 3), PI),
+            half_sqrt2: _mul(ExactNumber(1, 4), PI),
+            half_sqrt3: _mul(ExactNumber(1, 6), PI), ONE: ZERO,
+        },
+        "tan": {NEG_ONE: _neg(_mul(ExactNumber(1, 4), PI)), ZERO: ZERO, ONE: _mul(ExactNumber(1, 4), PI)},
     }
     return table.get(name, {}).get(value)
 
 
 def _parameter_family(variable, a, b, phase, period, sign=1):
-    n = Symbol("n")
-    numerator = _add(_mul(ExactNumber(sign), phase), _mul(period, n), ExactNumber(-b))
-    return ParametricSolutionSet(variable, _mul(ExactNumber(1 / a), numerator))
+    parameter = next(name for name in ("n", "k", "m", "j", "_n") if name != variable)
+    index = Symbol(parameter)
+    numerator = _add(_mul(ExactNumber(sign), phase), _mul(period, index), ExactNumber(-b))
+    return ParametricSolutionSet(variable, _mul(ExactNumber(1 / a), numerator), parameter)
 
 
 def _exact_log_ratio(base, value):
@@ -1151,6 +1638,68 @@ def _filter_parametric(solution_set, interval):
     return FiniteSolutionSet(tuple(ordered)) if ordered else EMPTY
 
 
+def _interval_condition(value, interval):
+    return f"{interval[0]:g} <= {value} <= {interval[1]:g}"
+
+
+def _apply_interval(solution_set, interval):
+    """Intersect every supported solution-set shape with a real interval."""
+    if interval is None or isinstance(solution_set, EmptySolutionSet):
+        return solution_set
+    if isinstance(solution_set, UniversalSolutionSet):
+        return IntervalSolutionSet(interval[0], interval[1])
+    if isinstance(solution_set, ParametricSolutionSet):
+        return _filter_parametric(solution_set, interval)
+    if isinstance(solution_set, UnionSolutionSet):
+        parts = []
+        for subset in solution_set.sets:
+            bounded = _apply_interval(subset, interval)
+            if isinstance(bounded, EmptySolutionSet):
+                continue
+            if isinstance(bounded, UnionSolutionSet):
+                parts.extend(bounded.sets)
+            else:
+                parts.append(bounded)
+        if not parts:
+            return EMPTY
+        return parts[0] if len(parts) == 1 else UnionSolutionSet(tuple(parts))
+    if isinstance(solution_set, ConditionalSolutionSet):
+        bounded = _apply_interval(solution_set.solution_set, interval)
+        if isinstance(bounded, EmptySolutionSet):
+            return EMPTY
+        conditions = solution_set.conditions
+        if isinstance(bounded, ConditionalSolutionSet):
+            conditions = _merge_conditions(conditions, bounded.conditions)
+            bounded = bounded.solution_set
+        return ConditionalSolutionSet(bounded, conditions)
+    if isinstance(solution_set, IntervalSolutionSet):
+        lower_numeric, upper_numeric = _numeric_value(solution_set.lower), _numeric_value(solution_set.upper)
+        if lower_numeric is None or upper_numeric is None:
+            return ConditionalSolutionSet(solution_set, (_interval_condition(solution_set.lower, interval), _interval_condition(solution_set.upper, interval)))
+        lower, upper = max(float(lower_numeric), interval[0]), min(float(upper_numeric), interval[1])
+        if lower > upper:
+            return EMPTY
+        return IntervalSolutionSet(lower, upper, solution_set.lower_closed, solution_set.upper_closed)
+    if isinstance(solution_set, FiniteSolutionSet):
+        known_values, known_multiplicities, symbolic_parts = [], [], []
+        for value, multiplicity in zip(solution_set.values, solution_set.multiplicities):
+            numeric = _numeric_value(value)
+            if numeric is None:
+                symbolic_parts.append(ConditionalSolutionSet(
+                    FiniteSolutionSet((value,), (multiplicity,)),
+                    (_interval_condition(value, interval),),
+                ))
+            elif not isinstance(numeric, complex) and interval[0] - 1e-12 <= numeric <= interval[1] + 1e-12:
+                known_values.append(value); known_multiplicities.append(multiplicity)
+        parts = list(symbolic_parts)
+        if known_values:
+            parts.insert(0, FiniteSolutionSet(tuple(known_values), tuple(known_multiplicities)))
+        if not parts:
+            return EMPTY
+        return parts[0] if len(parts) == 1 else UnionSolutionSet(tuple(parts))
+    raise TypeError(f"Unsupported solution set {type(solution_set).__name__}")
+
+
 def _validate_interval(interval):
     if interval is None:
         return None
@@ -1166,6 +1715,35 @@ def _validate_interval(interval):
     if lower >= upper:
         raise ValueError("interval lower bound must be smaller than its upper bound")
     return lower, upper
+
+
+def _source_variables(equation):
+    """Discover identifiers before canonicalization can cancel them."""
+    if isinstance(equation, str):
+        parts = equation.split("=")
+        names = set()
+        for part in parts:
+            for token in _tokenize(part):
+                if token.kind == "identifier" and token.value not in _FUNCTIONS | {"pi", "e", "i"}:
+                    names.add(token.value)
+        return names
+    if isinstance(equation, Sequence) and not isinstance(equation, (str, bytes)):
+        names = set()
+        for value in equation:
+            if isinstance(value, str):
+                names.update(_source_variables(value))
+            elif isinstance(value, SymbolicExpression):
+                names.update(_variables(value))
+            else:
+                names.update(getattr(value, "variables", ()))
+        return names
+    names = getattr(equation, "variables", None)
+    if names is not None:
+        return set(names)
+    try:
+        return _source_variables(str(equation))
+    except (EquationParseError, UnsupportedExpressionError):
+        return set()
 
 
 def _equation_input(equation):
@@ -1190,10 +1768,10 @@ def _equation_input(equation):
 
 def _candidate_valid(left, right, variable, candidate, domain, tolerance):
     if isinstance(candidate, RootOf):
-        return True, math.nan
+        return True, None
     numeric = _numeric_value(candidate)
     if numeric is None:
-        return True, math.nan
+        return True, None
     if domain == "real" and isinstance(numeric, complex):
         return False, math.inf
     try:
@@ -1219,7 +1797,7 @@ def _verify_finite(solution_set, left, right, variable, domain, tolerance):
 
 
 def _symbolic_dispatch(left, right, variable, domain, interval, trace):
-    residual = _add(left, _neg(right))
+    residual = _collapse_guarded_zeros(_add(left, _neg(right)))
     trace("normalize", f"{left} = {right}", f"{residual} = 0", "Move all terms to the left side.")
     rational = _poly_fraction(residual, variable)
     if rational is not None:
@@ -1255,6 +1833,12 @@ def _symbolic_dispatch(left, right, variable, domain, interval, trace):
         trace("solve_conditional_linear", f"{residual} = 0", str(branches), "Divide by a symbolic coefficient only on its nonzero branch; retain the identity branch.")
         return branches, (), True, "symbolic"
 
+    # Non-polynomial complex inversion requires explicit logarithm branches and
+    # other multivalued-function machinery.  Never return a principal branch as
+    # though it were the complete complex solution.
+    if domain == "complex":
+        return None, (), False, "symbolic"
+
     left_logs, right_logs = _log_terms(left), _log_terms(right)
     if left_logs and right_logs and left_logs[0] == right_logs[0]:
         left_argument = _mul(*left_logs[1])
@@ -1263,7 +1847,7 @@ def _symbolic_dispatch(left, right, variable, domain, interval, trace):
         parsed = _poly_fraction(combined, variable)
         if parsed is not None:
             result, complete = _solve_polynomial_exact(parsed[0], variable, domain, interval)
-            restrictions = tuple(f"{argument} > 0" for argument in left_logs[1] + right_logs[1])
+            restrictions = tuple(_render_condition(argument, "> 0", variable) for argument in left_logs[1] + right_logs[1])
             trace("combine_logarithms", f"{left} = {right}", f"{left_argument} = {right_argument}", "Combine logarithms with the same base and retain every argument-domain restriction.", restrictions)
             return result, restrictions, complete, "symbolic"
 
@@ -1271,6 +1855,19 @@ def _symbolic_dispatch(left, right, variable, domain, interval, trace):
     if function_side:
         function, constant = function_side
         argument = function.arguments[-1]
+        if function.name == "exp" and not _variables(constant):
+            affine = _affine_symbolic(argument, variable)
+            numeric = _numeric_value(constant)
+            if numeric is not None and (isinstance(numeric, complex) or numeric <= 0):
+                return EMPTY, (), True, "symbolic"
+            if affine is not None and affine[0] != ZERO:
+                coefficient, offset = affine
+                inverse = _function("ln", constant)
+                root = _mul(_add(inverse, _neg(offset)), _pow(coefficient, NEG_ONE))
+                result = FiniteSolutionSet((root,))
+                condition = () if numeric is not None else (f"{constant} > 0",)
+                trace("invert_exponential", f"{function} = {constant}", f"{argument} = {inverse}", "Apply the natural logarithm and retain positivity of the right side.", condition)
+                return result, condition, True, "symbolic"
         if function.name == "abs" and isinstance(constant, ExactNumber):
             if constant.value < 0:
                 return EMPTY, (), True, "symbolic"
@@ -1301,19 +1898,24 @@ def _symbolic_dispatch(left, right, variable, domain, interval, trace):
                 condition = f"{argument} > 0"
                 trace("invert_logarithm", f"{function} = {constant}", f"{argument} = {inverse}", "Apply the matching exponential function and preserve the logarithm domain.", (condition,))
                 return result, (condition,), True, "symbolic"
-        if function.name in {"sin", "cos", "tan"} and isinstance(constant, ExactNumber):
-            affine, phase = _affine(argument, variable), _trig_phase(function.name, constant.value)
+        if function.name in {"sin", "cos", "tan"} and not _variables(constant):
+            affine, phase = _affine(argument, variable), _trig_phase(function.name, constant)
+            numeric = _numeric_value(constant)
+            if function.name in {"sin", "cos"} and numeric is not None and (isinstance(numeric, complex) or not -1 <= numeric <= 1):
+                return EMPTY, (), True, "symbolic"
+            if phase is None:
+                phase = _function({"sin": "asin", "cos": "acos", "tan": "atan"}[function.name], constant)
             if affine and affine[0] and phase is not None:
                 a, b = affine
                 if function.name == "sin":
-                    if constant.value == 0:
+                    if constant == ZERO:
                         families = _parameter_family(variable, a, b, ZERO, PI)
-                    elif abs(constant.value) == 1:
+                    elif constant in {NEG_ONE, ONE}:
                         families = _parameter_family(variable, a, b, phase, _mul(ExactNumber(2), PI))
                     else:
                         families = UnionSolutionSet((_parameter_family(variable, a, b, phase, _mul(ExactNumber(2), PI)), _parameter_family(variable, a, b, _add(PI, _neg(phase)), _mul(ExactNumber(2), PI))))
                 elif function.name == "cos":
-                    if abs(constant.value) == 1:
+                    if constant in {NEG_ONE, ONE}:
                         families = _parameter_family(variable, a, b, phase, _mul(ExactNumber(2), PI))
                     else:
                         families = UnionSolutionSet((_parameter_family(variable, a, b, phase, _mul(ExactNumber(2), PI)), _parameter_family(variable, a, b, phase, _mul(ExactNumber(2), PI), sign=-1)))
@@ -1330,6 +1932,15 @@ def _symbolic_dispatch(left, right, variable, domain, interval, trace):
         power, constant = power_side
         affine = _affine(power.exponent, variable)
         if affine and affine[0] and not _variables(power.base) and not _variables(constant):
+            base_value, constant_value = _numeric_value(power.base), _numeric_value(constant)
+            if base_value is None or constant_value is None or isinstance(base_value, complex) or isinstance(constant_value, complex):
+                return None, (), False, "symbolic"
+            if base_value == 1:
+                return (UniversalSolutionSet(domain) if constant_value == 1 else EMPTY), (), True, "symbolic"
+            if base_value <= 0:
+                return None, (), False, "symbolic"
+            if constant_value <= 0:
+                return EMPTY, (), True, "symbolic"
             if isinstance(constant, Power) and constant.base == power.base and not _variables(constant.exponent):
                 target = constant.exponent
             elif power.base == constant:
@@ -1338,8 +1949,8 @@ def _symbolic_dispatch(left, right, variable, domain, interval, trace):
                 target = _exact_log_ratio(power.base, constant) or _mul(_function("ln", constant), _pow(_function("ln", power.base), NEG_ONE))
             root = _mul(ExactNumber(1 / affine[0]), _add(target, ExactNumber(-affine[1])))
             result = FiniteSolutionSet((root,)) if _in_interval(root, interval) else EMPTY
-            trace("invert_exponential", f"{power} = {constant}", str(result), "Apply logarithms to isolate the exponent.", (f"{power.base} > 0", f"{power.base} != 1", f"{constant} > 0"))
-            return result, (f"{power.base} > 0", f"{power.base} != 1", f"{constant} > 0"), True, "symbolic"
+            trace("invert_exponential", f"{power} = {constant}", str(result), "Apply logarithms to isolate the exponent.")
+            return result, (), True, "symbolic"
     return None, (), False, "symbolic"
 
 
@@ -1447,12 +2058,15 @@ def solve_equation(equation, variable=None, *, domain="real", interval=None,
     if not isinstance(tolerance, (int, float, np.number)) or not np.isfinite(tolerance) or tolerance <= 0:
         raise ValueError("tolerance must be positive and finite")
     interval = _validate_interval(interval)
+    if domain == "complex" and interval is not None:
+        raise ValueError("interval is a real domain constraint and cannot be used with domain='complex'")
     if method == "numeric" and interval is None:
         raise ValueError("numeric solving requires a finite interval")
     if method == "numeric" and domain != "real":
         raise ValueError("bounded numerical fallback currently supports the real domain")
+    source_variables = _source_variables(equation)
     left, right = _equation_input(equation)
-    variables = sorted(_variables(left) | _variables(right))
+    variables = sorted(_variables(left) | _variables(right) | source_variables)
     if variable is None:
         if len(variables) != 1:
             raise AmbiguousVariableError(f"Specify variable= explicitly; found {variables or 'no variables'}")
@@ -1461,10 +2075,17 @@ def solve_equation(equation, variable=None, *, domain="real", interval=None,
         variable = variable.name
     if not isinstance(variable, str) or not variable:
         raise TypeError("variable must be a non-empty string or named variable")
+    original_conditions = _merge_conditions(
+        _domain_conditions(left, domain, variable),
+        _domain_conditions(right, domain, variable),
+    )
+    if "False" in original_conditions:
+        return EquationSolution(variable, EMPTY, "solved", "symbolic", True, True, message="The original equation is undefined in the requested domain.")
     if variable not in variables:
         residual = _numeric_value(_add(left, _neg(right)))
         solution_set = UniversalSolutionSet(domain) if residual == 0 else EMPTY
-        return EquationSolution(variable, solution_set, "solved", "symbolic", True, True, message="The equation is constant with respect to the target variable.")
+        solution_set = _apply_interval(solution_set, interval)
+        return EquationSolution(variable, solution_set, "solved", "symbolic", True, True, original_conditions, message="The equation is constant with respect to the target variable.")
     recorded = []
 
     def trace(rule, before, after, explanation, conditions=()):
@@ -1476,15 +2097,17 @@ def solve_equation(equation, variable=None, *, domain="real", interval=None,
     if method != "numeric":
         solution_set, conditions, complete, used_method = _symbolic_dispatch(left, right, variable, domain, interval, trace)
         if solution_set is not None:
+            solution_set = _apply_interval(solution_set, interval)
             solution_set, residuals = _verify_finite(solution_set, left, right, variable, domain, tolerance)
-            return EquationSolution(variable, solution_set, "solved", used_method, True, complete, tuple(conditions), residuals, tuple(recorded), "Exact symbolic solution.")
+            conditions = _merge_conditions(original_conditions, conditions)
+            return EquationSolution(variable, solution_set, "solved", used_method, True, complete, conditions, residuals, tuple(recorded), "Exact symbolic solution.")
         if method == "symbolic" or not numeric_fallback or interval is None:
             return EquationSolution(variable, EMPTY, "unresolved", "symbolic", False, False, steps=tuple(recorded), message="No supported complete symbolic transformation was found." + (" Supply a finite interval to enable numerical fallback." if interval is None and numeric_fallback else ""))
     if interval is None:
         return EquationSolution(variable, EMPTY, "unresolved", "symbolic", False, False, steps=tuple(recorded), message="Numerical fallback requires a finite interval.")
     solution_set, residuals, evaluations = _numeric_isolate(left, right, variable, interval, float(tolerance), int(max_iterations))
     trace("numeric_isolation", f"{left} = {right}", str(solution_set), "Isolate and refine real roots over the requested finite interval.")
-    return EquationSolution(variable, solution_set, "solved", "numeric" if method == "numeric" else "hybrid", False, False, residuals=residuals, steps=tuple(recorded), message="Approximate roots found over the requested interval; completeness is not guaranteed for arbitrary functions.", evaluations=evaluations)
+    return EquationSolution(variable, solution_set, "solved", "numeric" if method == "numeric" else "hybrid", False, False, conditions=original_conditions, residuals=residuals, steps=tuple(recorded), message="Approximate roots found over the requested interval; completeness is not guaranteed for arbitrary functions.", evaluations=evaluations)
 
 
 # ---------------------------------------------------------------------------
@@ -1505,8 +2128,33 @@ class EquationSystemSolution:
     message: str = ""
 
     def __post_init__(self):
-        object.__setattr__(self, "variables", tuple(self.variables))
-        object.__setattr__(self, "solutions", tuple(dict(item) for item in self.solutions))
+        variables = tuple(self.variables)
+        parameters = tuple(self.parameters)
+        solutions = tuple(dict(item) for item in self.solutions)
+        if not variables or any(not isinstance(name, str) or not name for name in variables) or len(set(variables)) != len(variables):
+            raise ValueError("system variables must contain distinct nonempty names")
+        if self.status not in {"solved", "unresolved", "inconsistent"}:
+            raise ValueError("system solution status is invalid")
+        if self.method not in {"symbolic", "numeric", "hybrid"}:
+            raise ValueError("system solution method is invalid")
+        if any(not isinstance(value, bool) for value in (self.exact, self.complete)):
+            raise TypeError("exact and complete must be booleans")
+        if any(set(item) != set(variables) or any(not _valid_solution_value(value) for value in item.values()) for item in solutions):
+            raise ValueError("every solution mapping must contain one immutable value per variable")
+        if any(not isinstance(name, str) or not name for name in parameters) or len(set(parameters)) != len(parameters):
+            raise ValueError("system parameters must contain distinct nonempty names")
+        residuals, recorded = tuple(self.residuals), tuple(self.steps)
+        if any(isinstance(value, bool) or not isinstance(value, (int, float, np.number)) or not math.isfinite(float(value)) or value < 0 for value in residuals):
+            raise ValueError("system residuals must contain nonnegative finite values")
+        if any(not isinstance(value, SolutionStep) for value in recorded):
+            raise TypeError("system steps must contain SolutionStep values")
+        if not isinstance(self.message, str):
+            raise TypeError("message must be a string")
+        object.__setattr__(self, "variables", variables)
+        object.__setattr__(self, "solutions", tuple(MappingProxyType(item) for item in solutions))
+        object.__setattr__(self, "parameters", parameters)
+        object.__setattr__(self, "residuals", residuals)
+        object.__setattr__(self, "steps", recorded)
 
     def to_dict(self):
         return {
@@ -1631,16 +2279,28 @@ def solve_equation_system(equations, variables=None, *, domain="real",
                           numeric_fallback=False, initial=None, tolerance=1e-10,
                           max_iterations=1000, steps=False) -> EquationSystemSolution:
     """Solve an exact linear system, or explicitly fall back to local Newton."""
+    if isinstance(equations, (str, bytes)):
+        raise TypeError("equations must be a nonempty sequence of equations")
+    if not isinstance(numeric_fallback, (bool, np.bool_)) or not isinstance(steps, (bool, np.bool_)):
+        raise TypeError("numeric_fallback and steps must be booleans")
+    if isinstance(max_iterations, (bool, np.bool_)) or not isinstance(max_iterations, (int, np.integer)) or max_iterations < 1:
+        raise ValueError("max_iterations must be a positive integer")
+    if not isinstance(tolerance, (int, float, np.number)) or not np.isfinite(tolerance) or tolerance <= 0:
+        raise ValueError("tolerance must be positive and finite")
     equations = list(equations)
     if not equations:
         raise ValueError("At least one equation is required")
     if domain not in {"real", "complex"}:
         raise ValueError("domain must be 'real' or 'complex'")
+    if domain == "complex" and numeric_fallback:
+        raise ValueError("nonlinear numerical fallback currently supports the real domain")
     sides = [_equation_input(equation) for equation in equations]
     discovered = sorted(set().union(*(_variables(left) | _variables(right) for left, right in sides)))
     if variables is None:
         variables = discovered
     else:
+        if isinstance(variables, (str, bytes)):
+            raise ValueError("variables must be a sequence of distinct non-empty names")
         variables = [value.name if hasattr(value, "name") else value for value in variables]
     if not variables or len(set(variables)) != len(variables) or any(not isinstance(value, str) or not value for value in variables):
         raise ValueError("variables must contain distinct non-empty names")
@@ -1652,8 +2312,19 @@ def solve_equation_system(equations, variables=None, *, domain="real",
             break
         rows.append(parsed[0] + [-parsed[1]])
     recorded = ()
+    if steps:
+        recorded = (SolutionStep(
+            "normalize_system", str(tuple(equations)),
+            str(tuple(f"{left} = {right}" for left, right in sides)),
+            "Normalize every equation before solving.",
+        ),)
     if rows is not None:
         reduced, pivots = _rref(rows, len(variables))
+        if steps:
+            recorded += (SolutionStep(
+                "rational_row_reduction", str(rows), str(reduced),
+                "Compute exact reduced row-echelon form using rational arithmetic.",
+            ),)
         if any(not any(row[:-1]) and row[-1] for row in reduced):
             return EquationSystemSolution(tuple(variables), (), "inconsistent", "symbolic", True, True, message="The exact row reduction contains a contradiction.")
         free = [column for column in range(len(variables)) if column not in pivots]
@@ -1670,7 +2341,12 @@ def solve_equation_system(equations, variables=None, *, domain="real",
         return EquationSystemSolution(tuple(variables), (ordered,), "solved", "symbolic", True, True, parameters, steps=recorded, message="Exact rational row reduction." if not free else "Exact parametric solution for an underdetermined system.")
     triangular = _solve_triangular_system(sides, variables, domain, float(tolerance))
     if triangular is not None:
-        return EquationSystemSolution(tuple(variables), triangular, "solved", "symbolic", True, True, message="Exact triangular polynomial substitution.")
+        if steps:
+            recorded += (SolutionStep(
+                "triangular_substitution", str(tuple(f"{left} = {right}" for left, right in sides)), str(triangular),
+                "Solve one variable at a time and substitute each exact branch.",
+            ),)
+        return EquationSystemSolution(tuple(variables), triangular, "solved", "symbolic", True, True, steps=recorded, message="Exact triangular polynomial substitution.")
     if not numeric_fallback:
         return EquationSystemSolution(tuple(variables), (), "unresolved", "symbolic", False, False, message="The native symbolic system solver currently supports linear systems; enable numeric_fallback with initial values for a local nonlinear solution.")
     if initial is None:
@@ -1685,11 +2361,24 @@ def solve_equation_system(equations, variables=None, *, domain="real",
 
     def residual(*point):
         assignment = dict(zip(variables, point))
-        return [float(complex(_evaluate(left, assignment) - _evaluate(right, assignment)).real) for left, right in sides]
+        result = []
+        for left, right in sides:
+            value = complex(_evaluate(left, assignment) - _evaluate(right, assignment))
+            if not math.isfinite(value.real) or not math.isfinite(value.imag):
+                raise ValueError("Equation residual is not finite at the current approximation")
+            if abs(value.imag) > max(float(tolerance) * 10, 1e-12):
+                raise ValueError("Equation is not real-valued at the current approximation")
+            result.append(float(value.real))
+        return result
 
     information = solve_system(residual, initial_values, tolerance=tolerance, max_iterations=max_iterations, return_info=True)
     mapping = {name: float(value) for name, value in zip(variables, information.value)}
-    return EquationSystemSolution(tuple(variables), (mapping,), "solved" if information.converged else "unresolved", "numeric", False, False, residuals=(information.residual,), message=information.message)
+    if steps:
+        recorded += (SolutionStep(
+            "local_newton", str(dict(zip(variables, initial_values))), str(mapping),
+            "Apply damped Newton iteration from the supplied initial values.",
+        ),)
+    return EquationSystemSolution(tuple(variables), (mapping,), "solved" if information.converged else "unresolved", "numeric", False, False, residuals=(information.residual,), steps=recorded, message=information.message)
 
 
 __all__ = [
@@ -1699,7 +2388,7 @@ __all__ = [
     "structurally_equal", "differentiate_symbolic",
     "SolutionSet", "EmptySolutionSet", "UniversalSolutionSet",
     "FiniteSolutionSet", "IntervalSolutionSet", "ParametricSolutionSet",
-    "UnionSolutionSet", "ConditionalSolutionSet", "SolutionStep",
+    "UnionSolutionSet", "ConditionalSolutionSet", "EquationState", "SolutionStep",
     "EquationSolution", "EquationSystemSolution", "symbolic_from_dict",
     "solve_equation", "solve_equation_system",
 ]
