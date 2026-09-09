@@ -128,13 +128,16 @@ def test_parameter_substitution_enables_an_exact_inequality():
     ]
 
 
-def test_symbolic_coefficients_and_multivariable_forms_fail_closed():
+def test_symbolic_quadratic_parameters_solve_but_higher_degree_forms_fail_closed():
     symbolic = kw.solve_inequality("a*x^2-1>=0", variable="x")
-    multivariable = kw.solve_inequality("x^2+y^2<=1", variable="x")
+    higher_degree = kw.solve_inequality("y*x^3+x<=1", variable="x")
 
-    assert symbolic.status == "unresolved" and not symbolic.complete
-    assert multivariable.status == "unresolved" and not multivariable.complete
-    assert isinstance(symbolic.solution_set, kw.EmptySolutionSet)
+    assert symbolic.status == "solved" and symbolic.exact and symbolic.complete
+    assert isinstance(symbolic.solution_set, kw.UnionSolutionSet)
+    assert "a > 0" in str(symbolic.solution_set)
+    assert "a < 0" in str(symbolic.solution_set)
+    assert higher_degree.status == "unresolved" and not higher_degree.complete
+    assert isinstance(higher_degree.solution_set, kw.EmptySolutionSet)
 
 
 @pytest.mark.parametrize("text", ("x=1", "x<y<2", "<1", "x>"))

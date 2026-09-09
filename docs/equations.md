@@ -240,7 +240,7 @@ substitution `u=x^2`; every conditional outer root is passed back through the
 same solver. General symbolic cubic and quartic formulas remain deliberately
 unimplemented.
 
-### Exact polynomial and rational inequalities
+### Exact inequalities
 
 `solve_inequality()` returns the same immutable structured result and solution
 set types as `solve_equation()`:
@@ -249,18 +249,69 @@ set types as `solve_equation()`:
 outside = kw.solve_inequality("x^2 - 5*x + 6 >= 0", steps=True)
 between = kw.solve_inequality("x^2 - 2 < 0")
 rational = kw.solve_inequality("(x^2 - 1)/(x - 1) > 0")
+absolute = kw.solve_inequality("abs(2*x - 1) <= 3")
+radical = kw.solve_inequality("sqrt(x + 1) > x - 1")
+rational_power = kw.solve_inequality("x^(2/3) <= 4")
+reciprocal_root = kw.solve_inequality("x^(-1/2) >= 1/2")
+linear_parameters = kw.solve_inequality("a*x + b > 0", variable="x")
+quadratic_parameters = kw.solve_inequality(
+    "a*x^2 + b*x + c >= 0", variable="x",
+)
+scaled_rational = kw.solve_inequality(
+    "a*(x - 1)/(x + 2) > 0", variable="x",
+)
 ```
 
 The API supports `<`, `<=`, `>`, `>=`, and `!=` for exact real univariate
-polynomial or rational expressions. It cancels polynomial GCDs for sign
-analysis while retaining all original denominator holes. Exact roots and poles
-partition the real line; signs propagate by root/pole multiplicity, so repeated
-roots do not spuriously flip a sign. Unbounded intervals use `None` for their
-infinite endpoint and serialize deterministically.
+polynomial and rational expressions, isolated absolute values, principal square
+roots, and exact rational powers. Special expressions may appear on either side
+or inside a numeric affine wrapper, and their comparison target may itself be a
+rational expression. Comparisons between two absolute values, two square roots,
+or two compatible positive rational powers are also reduced exactly.
+
+Unknown coefficients are supported for linear and quadratic inequalities. The
+result is a union of conditional solution sets: linear inequalities branch on
+the leading coefficient's sign and retain the constant-equation case, while
+quadratics branch on the leading coefficient and discriminant and reduce
+`a = 0` to the complete linear/constant cases. For example,
+`a*x + b > 0` includes `x > -b/a if a > 0`, the reversed interval if
+`a < 0`, and all real numbers if `a = 0 and b > 0`. Supplying facts through
+`assumptions={"a": 2, "b": -4}` or `assumptions="a>0"` selects and simplifies
+the applicable branches.
+
+A parameter-only scalar may also multiply an otherwise exact rational
+expression. Its positive and negative branches preserve or reverse the
+relation, respectively; its zero branch still preserves every denominator
+hole. This support deliberately does not infer the ordering of moving symbolic
+zeros and poles in a general parameterized rational expression.
+
+Absolute values are reduced through their nonnegative range and exact square
+comparisons. Square-root reductions retain every radicand restriction and only
+square on branches where the comparison is order preserving. For a reduced
+power `p/q`, odd denominators use the real odd-root convention; even denominators
+use the nonnegative principal root and require a nonnegative base. Negative
+rational exponents retain the zero exclusion and currently require an exact
+constant on the other side.
+
+Every reduction terminates in the polynomial/rational sign-chart engine. It
+cancels polynomial GCDs for sign analysis while retaining all original
+denominator holes. Exact roots and poles partition the real line; signs propagate
+by root/pole multiplicity, so repeated roots do not spuriously flip a sign.
+Unbounded intervals use `None` for their infinite endpoint and serialize
+deterministically. With `steps=True`, results record the applicable
+`absolute_value_reduction`, `radical_reduction`,
+`rational_power_reduction`, or `parameterized_inequality_reduction` before the
+final `rational_sign_chart`.
 
 Symbolic coefficient values may be supplied through `assumptions={...}` before
-normalization. General parameter-dependent inequalities, multivariable
-inequalities, chained relations, and complex ordering remain unsupported.
+normalization. Multiple independent radical/absolute terms, unlike rational
+powers on both sides, negative rational powers against variable expressions,
+parameterized degree-three-or-higher polynomials, general parameter-dependent
+rational zeros/poles, simultaneous solution regions in two or more target
+variables, chained relations, and complex ordering remain unsupported and
+return a structured `unresolved` result where applicable. When `variable=` is
+explicit, every other identifier is treated as a parameter rather than another
+target variable.
 
 ### Repeated and nested square roots
 
@@ -312,6 +363,18 @@ and symbolic expression types support deterministic `to_dict()` round trips
 and strict JSON encoding. Real irreducible polynomial roots use exact Sturm
 isolation intervals; numerical values obtained from `RootOf.evaluate()` are
 approximations of those certified algebraic roots.
+
+Conditional sets format natively as readable mathematical branches. For
+example, `print(result.solution_set)` may produce:
+
+```text
+{1} if a != 0
+OR Reals if a = 0
+```
+
+Callers do not need to inspect dataclass representations or implement their own
+formatter. Ordinary unions without conditional branches retain their compact
+single-line `A union B` representation.
 
 ### Basic canonical-form contract
 

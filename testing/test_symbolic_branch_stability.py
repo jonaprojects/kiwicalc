@@ -117,6 +117,29 @@ def test_solution_set_and_result_invariants():
             kw.EquationSolution(**dict(base, **update))
 
 
+def test_conditional_solution_sets_have_native_human_readable_formatting():
+    conditional = kw.ConditionalSolutionSet(
+        kw.FiniteSolutionSet((1,)), ("a != 0", "b > 0"),
+    )
+    assert str(conditional) == "{1} if a != 0 and b > 0"
+
+    conditional_union = kw.ConditionalSolutionSet(
+        kw.UnionSolutionSet((
+            kw.FiniteSolutionSet((1,)), kw.FiniteSolutionSet((2,)),
+        )),
+        ("a > 0",),
+    )
+    assert str(conditional_union) == "({1} union {2}) if a > 0"
+
+    branches = kw.UnionSolutionSet((
+        conditional,
+        kw.ConditionalSolutionSet(kw.UniversalSolutionSet(), ("a = 0",)),
+    ))
+    assert str(branches) == (
+        "{1} if a != 0 and b > 0\nOR Reals if a = 0"
+    )
+
+
 def test_every_solution_set_serializes_deterministically():
     sets = (
         kw.EmptySolutionSet(), kw.UniversalSolutionSet("complex"),

@@ -1110,7 +1110,19 @@ def _evaluate(expression, values):
     if isinstance(expression, Multiply):
         return math.prod(_evaluate(item, values) for item in expression.factors)
     if isinstance(expression, Power):
-        return _evaluate(expression.base, values) ** _evaluate(expression.exponent, values)
+        base = _evaluate(expression.base, values)
+        if (
+            isinstance(expression.exponent, ExactNumber)
+            and expression.exponent.denominator % 2 == 1
+            and not isinstance(base, complex) and base < 0
+        ):
+            # Python's floating exponentiation chooses a complex principal value
+            # for a negative base. Exact odd-denominator powers instead have a
+            # unique real value, which is the convention used by the real solver.
+            exponent = expression.exponent.value
+            magnitude = abs(base) ** (exponent.numerator / exponent.denominator)
+            return -magnitude if exponent.numerator % 2 else magnitude
+        return base ** _evaluate(expression.exponent, values)
     if isinstance(expression, RootOf):
         if expression.interval is not None:
             lower = Rational.from_float(float(expression.interval[0]))
@@ -2186,7 +2198,13 @@ class UnionSolutionSet(SolutionSet):
         if not sets or any(not isinstance(value, SolutionSet) for value in sets):
             raise TypeError("A union must contain one or more solution sets")
         object.__setattr__(self, "sets", sets)
-    def __str__(self): return " union ".join(map(str, self.sets))
+    def __str__(self):
+        separator = (
+            "\nOR "
+            if any(isinstance(value, ConditionalSolutionSet) for value in self.sets)
+            else " union "
+        )
+        return separator.join(map(str, self.sets))
 
 
 @dataclass(frozen=True)
@@ -2207,6 +2225,12 @@ class ConditionalSolutionSet(SolutionSet):
     @property
     def assumptions(self):
         return self._assumptions
+
+    def __str__(self):
+        rendered = str(self.solution_set)
+        if isinstance(self.solution_set, UnionSolutionSet):
+            rendered = f"({rendered})"
+        return f"{rendered} if {' and '.join(self.conditions)}"
 
 
 @dataclass(frozen=True)
@@ -5271,6 +5295,11 @@ def _inequality_relation_holds(sign, operator):
     }[operator]
 
 
+def _reverse_inequality_operator(operator):
+    """Reverse an inequality when its sides are swapped or a sign is negated."""
+    return {"<": ">", "<=": ">=", ">": "<", ">=": "<=", "!=": "!="}[operator]
+
+
 def _inequality_critical_points(numerator, denominator, source_denominator,
                                 variable):
     points = {}
@@ -5295,16 +5324,12 @@ def _inequality_critical_points(numerator, denominator, source_denominator,
     return ordered
 
 
-def _inequality_solution_from_cells(points, region_signs, operator):
+def _solution_set_from_truth_cells(points, region_truth, point_truth):
     cells = []
     for index in range(len(points) + 1):
-        cells.append(_inequality_relation_holds(region_signs[index], operator))
+        cells.append(bool(region_truth[index]))
         if index < len(points):
-            point = points[index]
-            cells.append(
-                not point["hole"] and point["zero"]
-                and operator in {"<=", ">="}
-            )
+            cells.append(bool(point_truth[index]))
     parts, index = [], 0
     while index < len(cells):
         if not cells[index]:
@@ -5315,20 +5340,20 @@ def _inequality_solution_from_cells(points, region_signs, operator):
             index += 1
         end = index
         if start == end and start % 2 == 1:
-            parts.append(FiniteSolutionSet((points[start // 2]["value"],)))
+            parts.append(FiniteSolutionSet((points[start // 2],)))
         else:
             if start == 0:
                 lower, lower_closed = None, False
             elif start % 2:
-                lower, lower_closed = points[start // 2]["value"], True
+                lower, lower_closed = points[start // 2], True
             else:
-                lower, lower_closed = points[start // 2 - 1]["value"], False
+                lower, lower_closed = points[start // 2 - 1], False
             if end == len(cells) - 1:
                 upper, upper_closed = None, False
             elif end % 2:
-                upper, upper_closed = points[end // 2]["value"], True
+                upper, upper_closed = points[end // 2], True
             else:
-                upper, upper_closed = points[end // 2]["value"], False
+                upper, upper_closed = points[end // 2], False
             parts.append(IntervalSolutionSet(
                 lower, upper, lower_closed, upper_closed,
             ))
@@ -5336,61 +5361,129 @@ def _inequality_solution_from_cells(points, region_signs, operator):
     return EMPTY if not parts else parts[0] if len(parts) == 1 else UnionSolutionSet(tuple(parts))
 
 
-def solve_inequality(inequality, variable=None, *, domain="real",
-                     assumptions=None, steps=False) -> EquationSolution:
-    """Solve an exact univariate polynomial or rational inequality.
-
-    The first release is intentionally real-only and requires exact rational
-    coefficients after applying equality substitutions from ``assumptions``.
-    Critical points and removable holes are retained exactly.
-    """
-    if domain != "real":
-        raise ValueError("inequality solving currently supports only the real domain")
-    if not isinstance(steps, (bool, np.bool_)):
-        raise TypeError("steps must be boolean")
-    left, operator, right = _split_symbolic_inequality(inequality)
-    discovered = sorted(_variables(left) | _variables(right))
-    if variable is None:
-        if len(discovered) != 1:
-            raise AmbiguousVariableError(
-                f"Specify variable= explicitly; found {discovered or 'no variables'}"
-            )
-        variable = discovered[0]
-    elif hasattr(variable, "name"):
-        variable = variable.name
-    if not isinstance(variable, str) or not variable:
-        raise TypeError("variable must be a non-empty string or named variable")
-    user_assumptions = _normalize_user_assumptions(assumptions)
-    substitutions = {
-        name: value for name, value in user_assumptions.substitutions.items()
-        if name != variable
-    }
-    original_residual = _add(left, _neg(right))
-    residual = _substitute(original_residual, substitutions)
-    domain_conditions = _merge_conditions(
-        _domain_conditions(left, domain, variable),
-        _domain_conditions(right, domain, variable),
-        user_assumptions,
+def _inequality_solution_from_cells(points, region_signs, operator):
+    return _solution_set_from_truth_cells(
+        tuple(point["value"] for point in points),
+        tuple(_inequality_relation_holds(sign, operator) for sign in region_signs),
+        tuple(
+            not point["hole"] and point["zero"]
+            and operator in {"<=", ">="}
+            for point in points
+        ),
     )
-    if domain_conditions.contradictory:
-        return EquationSolution(
-            variable, EMPTY, "solved", "symbolic", True, True,
-            conditions=domain_conditions,
-            message="The inequality assumptions are contradictory.",
+
+
+def _solution_set_endpoints(solution_set):
+    if isinstance(solution_set, (EmptySolutionSet, UniversalSolutionSet)):
+        return ()
+    if isinstance(solution_set, FiniteSolutionSet):
+        return solution_set.values
+    if isinstance(solution_set, IntervalSolutionSet):
+        return tuple(value for value in (solution_set.lower, solution_set.upper) if value is not None)
+    if isinstance(solution_set, UnionSolutionSet):
+        return tuple(
+            value for subset in solution_set.sets
+            for value in _solution_set_endpoints(subset)
         )
+    raise UnsupportedExpressionError(
+        "Conditional solution sets cannot be combined as exact real intervals"
+    )
+
+
+def _same_real_value(first, second):
+    if first == second:
+        return True
+    first_value, second_value = _numeric_value(first), _numeric_value(second)
+    return (
+        first_value is not None and second_value is not None
+        and not isinstance(first_value, complex) and not isinstance(second_value, complex)
+        and float(first_value) == float(second_value)
+    )
+
+
+def _solution_set_contains(solution_set, value):
+    if isinstance(solution_set, EmptySolutionSet):
+        return False
+    if isinstance(solution_set, UniversalSolutionSet):
+        return True
+    if isinstance(solution_set, UnionSolutionSet):
+        return any(_solution_set_contains(subset, value) for subset in solution_set.sets)
+    if isinstance(solution_set, FiniteSolutionSet):
+        return any(_same_real_value(candidate, value) for candidate in solution_set.values)
+    if isinstance(solution_set, IntervalSolutionSet):
+        numeric = _numeric_value(value)
+        if numeric is None or isinstance(numeric, complex):
+            raise UnsupportedExpressionError("Could not order an exact solution-set endpoint")
+        numeric = float(numeric)
+        if solution_set.lower is not None:
+            lower = float(_numeric_value(solution_set.lower))
+            if numeric < lower or numeric == lower and not solution_set.lower_closed:
+                return False
+        if solution_set.upper is not None:
+            upper = float(_numeric_value(solution_set.upper))
+            if numeric > upper or numeric == upper and not solution_set.upper_closed:
+                return False
+        return True
+    raise UnsupportedExpressionError(
+        "Conditional solution sets cannot be combined as exact real intervals"
+    )
+
+
+def _combine_real_solution_sets(solution_sets, operation):
+    """Apply one-dimensional union/intersection to exact finite interval sets."""
+    solution_sets = tuple(solution_sets)
+    if not solution_sets:
+        return UniversalSolutionSet("real") if operation == "intersection" else EMPTY
+    endpoints = []
+    for solution_set in solution_sets:
+        for endpoint in _solution_set_endpoints(solution_set):
+            if not any(_same_real_value(endpoint, known) for known in endpoints):
+                endpoints.append(endpoint)
+    endpoints.sort(key=lambda value: (float(_numeric_value(value)), str(value)))
+
+    predicate = all if operation == "intersection" else any
+    point_truth = tuple(
+        predicate(_solution_set_contains(solution_set, point) for solution_set in solution_sets)
+        for point in endpoints
+    )
+    if not endpoints:
+        samples = (ExactNumber(0),)
+    else:
+        numeric = [float(_numeric_value(value)) for value in endpoints]
+        samples = (
+            numeric[0] - max(1.0, abs(numeric[0])),
+            *((first + second) / 2 for first, second in zip(numeric, numeric[1:])),
+            numeric[-1] + max(1.0, abs(numeric[-1])),
+        )
+    region_truth = tuple(
+        predicate(_solution_set_contains(solution_set, sample) for solution_set in solution_sets)
+        for sample in samples
+    )
+    return _solution_set_from_truth_cells(tuple(endpoints), region_truth, point_truth)
+
+
+def _combine_extended_inequality_results(results, operation):
+    if any(result is None for result in results):
+        return None
+    results = tuple(results)
+    try:
+        solution_set = _combine_real_solution_sets(
+            tuple(result[0] for result in results), operation,
+        )
+    except UnsupportedExpressionError:
+        return None
+    rules = tuple(rule for result in results for rule in result[1])
+    return solution_set, rules
+
+
+def _solve_rational_inequality(left, operator, right, variable):
+    residual = _add(left, _neg(right))
     try:
         parsed = _poly_fraction(residual, variable, max_degree=100)
     except UnsupportedExpressionError:
         parsed = None
     if parsed is None:
-        return EquationSolution(
-            variable, EMPTY, "unresolved", "symbolic", False, False,
-            conditions=domain_conditions,
-            message=(
-                "Exact inequalities currently require a univariate polynomial "
-                "or rational expression with rational coefficients."
-            ),
-        )
+        return None
     numerator, source_denominator = map(_poly_clean, parsed)
     if not source_denominator:
         raise ZeroDivisionError("inequality has an identically zero denominator")
@@ -5417,27 +5510,517 @@ def solve_inequality(inequality, variable=None, *, domain="real",
             -region_signs[index + 1]
             if points[index]["flip"] % 2 else region_signs[index + 1]
         )
-    solution_set = _inequality_solution_from_cells(
-        points, region_signs, operator,
+    return _inequality_solution_from_cells(points, region_signs, operator)
+
+
+def _conditional_inequality_branch(solution_set, conditions):
+    if isinstance(solution_set, EmptySolutionSet):
+        return EMPTY
+    assumptions = _coerce_assumption_set(conditions)
+    if assumptions.contradictory:
+        return EMPTY
+    return (
+        solution_set if not assumptions
+        else ConditionalSolutionSet(solution_set, assumptions.conditions)
     )
+
+
+def _combine_conditional_inequality_branches(branches):
+    flattened = []
+    for branch in branches:
+        if isinstance(branch, EmptySolutionSet):
+            continue
+        flattened.extend(branch.sets if isinstance(branch, UnionSolutionSet) else (branch,))
+    return EMPTY if not flattened else flattened[0] if len(flattened) == 1 else UnionSolutionSet(tuple(flattened))
+
+
+def _parameter_sign_cases(expression):
+    numeric = _numeric_value(expression)
+    if numeric is not None and not isinstance(numeric, complex):
+        return ((1 if numeric > 0 else -1 if numeric < 0 else 0, ()),)
+    return (
+        (1, (RelationCondition(expression, ">", ZERO),)),
+        (-1, (RelationCondition(expression, "<", ZERO),)),
+        (0, (RelationCondition(expression, "=", ZERO),)),
+    )
+
+
+def _linear_inequality_set(root, operator):
+    if operator == "<":
+        return IntervalSolutionSet(None, root, False, False)
+    if operator == "<=":
+        return IntervalSolutionSet(None, root, False, True)
+    if operator == ">":
+        return IntervalSolutionSet(root, None, False, False)
+    if operator == ">=":
+        return IntervalSolutionSet(root, None, True, False)
+    return UnionSolutionSet((
+        IntervalSolutionSet(None, root, False, False),
+        IntervalSolutionSet(root, None, False, False),
+    ))
+
+
+def _solve_parameterized_linear_inequality(coefficient, constant, operator,
+                                           domain, base_conditions=()):
+    branches = []
+    for sign, sign_conditions in _parameter_sign_cases(coefficient):
+        conditions = tuple(base_conditions) + tuple(sign_conditions)
+        if sign:
+            root = _mul(_neg(constant), _pow(coefficient, NEG_ONE))
+            relation = operator if sign > 0 else _reverse_inequality_operator(operator)
+            solution_set = _linear_inequality_set(root, relation)
+        else:
+            constant_condition = RelationCondition(constant, operator, ZERO)
+            solution_set = UniversalSolutionSet(domain)
+            conditions += (constant_condition,)
+        branches.append(_conditional_inequality_branch(solution_set, conditions))
+    return _combine_conditional_inequality_branches(branches)
+
+
+def _quadratic_inequality_set(a_sign, discriminant_sign, lower, upper,
+                              repeated_root, operator, domain):
+    if discriminant_sign < 0:
+        return (
+            UniversalSolutionSet(domain)
+            if _inequality_relation_holds(a_sign, operator) else EMPTY
+        )
+    if discriminant_sign == 0:
+        region = _inequality_relation_holds(a_sign, operator)
+        point = _inequality_relation_holds(0, operator)
+        return _solution_set_from_truth_cells(
+            (repeated_root,), (region, region), (point,),
+        )
+    outside = _inequality_relation_holds(a_sign, operator)
+    inside = _inequality_relation_holds(-a_sign, operator)
+    roots = _inequality_relation_holds(0, operator)
+    return _solution_set_from_truth_cells(
+        (lower, upper), (outside, inside, outside), (roots, roots),
+    )
+
+
+def _solve_parameterized_quadratic_inequality(a, b, c, operator, domain):
+    discriminant = _add(
+        _pow(b, ExactNumber(2)), _neg(_mul(ExactNumber(4), a, c)),
+    )
+    branches = []
+    for a_sign, a_conditions in _parameter_sign_cases(a):
+        if a_sign == 0:
+            branches.append(_solve_parameterized_linear_inequality(
+                b, c, operator, domain, a_conditions,
+            ))
+            continue
+        center = _mul(_neg(b), _pow(_mul(ExactNumber(2), a), NEG_ONE))
+        offset = _mul(
+            _function("sqrt", discriminant),
+            _pow(_mul(ExactNumber(2), a), NEG_ONE),
+        )
+        first, second = _add(center, _neg(offset)), _add(center, offset)
+        lower, upper = (first, second) if a_sign > 0 else (second, first)
+        for discriminant_sign, relation in ((1, ">"), (0, "="), (-1, "<")):
+            conditions = tuple(a_conditions) + (
+                RelationCondition(discriminant, relation, ZERO),
+            )
+            solution_set = _quadratic_inequality_set(
+                a_sign, discriminant_sign, lower, upper, center, operator, domain,
+            )
+            branches.append(_conditional_inequality_branch(solution_set, conditions))
+    return _combine_conditional_inequality_branches(branches)
+
+
+def _solve_parameterized_polynomial_inequality(left, operator, right,
+                                                variable, domain="real"):
+    residual = _add(left, _neg(right))
+    polynomial = _symbolic_polynomial_coefficients(
+        residual, variable, max_degree=2,
+    )
+    if polynomial is None:
+        return None
+    coefficients = tuple(polynomial.values())
+    if not set().union(*(_variables(value) for value in coefficients)):
+        return None
+    degree = max(polynomial, default=0)
+    if degree == 0:
+        condition = RelationCondition(polynomial.get(0, ZERO), operator, ZERO)
+        return _conditional_inequality_branch(
+            UniversalSolutionSet(domain), (condition,),
+        )
+    if degree == 1:
+        return _solve_parameterized_linear_inequality(
+            polynomial[1], polynomial.get(0, ZERO), operator, domain,
+        )
+    return _solve_parameterized_quadratic_inequality(
+        polynomial[2], polynomial.get(1, ZERO), polynomial.get(0, ZERO),
+        operator, domain,
+    )
+
+
+def _rational_expression_domain_set(expression, variable):
+    parsed = _poly_fraction(expression, variable, max_degree=100)
+    if parsed is None:
+        return None
+    denominator = _polynomial_expression(parsed[1], variable)
+    return _solve_rational_inequality(denominator, "!=", ZERO, variable)
+
+
+def _solve_parameter_scaled_rational_inequality(left, operator, right, variable):
+    residual = _add(left, _neg(right))
+    if not isinstance(residual, Multiply):
+        return None
+    parameter_factors, target_factors = [], []
+    for factor in residual.factors:
+        if variable not in _variables(factor) and _variables(factor):
+            parameter_factors.append(factor)
+        else:
+            target_factors.append(factor)
+    if not parameter_factors or not target_factors:
+        return None
+    parameter = _mul(*parameter_factors)
+    target = _mul(*target_factors)
+    positive = _solve_rational_inequality(target, operator, ZERO, variable)
+    negative = _solve_rational_inequality(
+        target, _reverse_inequality_operator(operator), ZERO, variable,
+    )
+    domain_set = _rational_expression_domain_set(target, variable)
+    if positive is None or negative is None or domain_set is None:
+        return None
+    branches = (
+        _conditional_inequality_branch(
+            positive, (RelationCondition(parameter, ">", ZERO),),
+        ),
+        _conditional_inequality_branch(
+            negative, (RelationCondition(parameter, "<", ZERO),),
+        ),
+        _conditional_inequality_branch(
+            domain_set,
+            (RelationCondition(parameter, "=", ZERO),),
+        ) if operator in {"<=", ">="} else EMPTY,
+    )
+    return _combine_conditional_inequality_branches(branches)
+
+
+def _inequality_special_nodes(expression, variable):
+    nodes = []
+
+    def visit(value):
+        supported = (
+            isinstance(value, SymbolicFunction) and value.name in {"abs", "sqrt"}
+            or isinstance(value, Power) and isinstance(value.exponent, ExactNumber)
+            and value.exponent.denominator != 1
+        )
+        if supported and variable in _variables(value):
+            nodes.append(value)
+            return
+        for child in _rewrite_children(value):
+            visit(child)
+
+    visit(expression)
+    return tuple(dict.fromkeys(nodes))
+
+
+def _isolate_inequality_special(left, operator, right, variable):
+    residual = _add(left, _neg(right))
+    nodes = _inequality_special_nodes(residual, variable)
+    if len(nodes) != 1 or _expression_occurrences(residual, nodes[0]) != 1:
+        return None
+    auxiliary = _fresh_substitution_symbol(residual)
+    replaced = _replace_subexpressions(residual, {nodes[0]: auxiliary})
+    affine = _affine_symbolic(replaced, auxiliary.name)
+    if affine is None:
+        return None
+    coefficient, constant = affine
+    coefficient_value = _numeric_value(coefficient)
+    if (
+        coefficient_value is None or isinstance(coefficient_value, complex)
+        or coefficient_value == 0 or variable in _variables(coefficient)
+    ):
+        return None
+    target = _mul(_neg(constant), _pow(coefficient, NEG_ONE))
+    relation = operator if coefficient_value > 0 else _reverse_inequality_operator(operator)
+    return nodes[0], relation, target
+
+
+def _solve_nonnegative_inequality(powered_left, right, powered_right,
+                                  operator, domain_result, variable, depth):
+    """Compare a known nonnegative expression through an exact integer power."""
+    def solve(first, relation, second):
+        return _solve_extended_inequality(first, relation, second, variable, depth + 1)
+
+    if operator == "<":
+        body = _combine_extended_inequality_results((
+            solve(right, ">", ZERO), solve(powered_left, "<", powered_right),
+        ), "intersection")
+    elif operator == "<=":
+        body = _combine_extended_inequality_results((
+            solve(right, ">=", ZERO), solve(powered_left, "<=", powered_right),
+        ), "intersection")
+    elif operator == ">":
+        nonnegative_branch = _combine_extended_inequality_results((
+            solve(right, ">=", ZERO), solve(powered_left, ">", powered_right),
+        ), "intersection")
+        body = _combine_extended_inequality_results((
+            solve(right, "<", ZERO), nonnegative_branch,
+        ), "union")
+    elif operator == ">=":
+        positive_branch = _combine_extended_inequality_results((
+            solve(right, ">", ZERO), solve(powered_left, ">=", powered_right),
+        ), "intersection")
+        body = _combine_extended_inequality_results((
+            solve(right, "<=", ZERO), positive_branch,
+        ), "union")
+    else:
+        nonnegative_branch = _combine_extended_inequality_results((
+            solve(right, ">=", ZERO), solve(powered_left, "!=", powered_right),
+        ), "intersection")
+        body = _combine_extended_inequality_results((
+            solve(right, "<", ZERO), nonnegative_branch,
+        ), "union")
+    return _combine_extended_inequality_results((domain_result, body), "intersection")
+
+
+def _solve_negative_rational_power(power, operator, right, variable, depth):
+    if not isinstance(right, ExactNumber):
+        return None
+    exponent = power.exponent.value
+    positive_power = _pow(
+        power.base, ExactNumber(-exponent.numerator, exponent.denominator),
+    )
+
+    def solve(first, relation, second):
+        return _solve_extended_inequality(first, relation, second, variable, depth + 1)
+
+    branches = []
+    for sign_relation, multiplied_relation in (
+        (">", operator), ("<", _reverse_inequality_operator(operator)),
+    ):
+        sign_set = solve(positive_power, sign_relation, ZERO)
+        if right.value == 0:
+            comparison = solve(ONE, multiplied_relation, ZERO)
+        else:
+            target = ExactNumber(1 / right.value)
+            relation = (
+                _reverse_inequality_operator(multiplied_relation)
+                if right.value > 0 else multiplied_relation
+            )
+            comparison = solve(positive_power, relation, target)
+        branches.append(_combine_extended_inequality_results(
+            (sign_set, comparison), "intersection",
+        ))
+    return _combine_extended_inequality_results(tuple(branches), "union")
+
+
+def _solve_extended_inequality(left, operator, right, variable, depth=0):
+    if depth > 32:
+        return None
+    rational = _solve_rational_inequality(left, operator, right, variable)
+    if rational is not None:
+        return rational, ()
+
+    parameterized = _solve_parameter_scaled_rational_inequality(
+        left, operator, right, variable,
+    )
+    if parameterized is None:
+        parameterized = _solve_parameterized_polynomial_inequality(
+            left, operator, right, variable,
+        )
+    if parameterized is not None:
+        return parameterized, ("parameterized_inequality_reduction",)
+
+    left_special = _inequality_special_nodes(left, variable)
+    right_special = _inequality_special_nodes(right, variable)
+    if (
+        len(left_special) == len(right_special) == 1
+        and left == left_special[0] and right == right_special[0]
+    ):
+        first, second = left_special[0], right_special[0]
+        if (
+            isinstance(first, SymbolicFunction) and isinstance(second, SymbolicFunction)
+            and first.name == second.name == "abs"
+        ):
+            result = _solve_extended_inequality(
+                _pow(first.arguments[-1], ExactNumber(2)), operator,
+                _pow(second.arguments[-1], ExactNumber(2)), variable, depth + 1,
+            )
+            return None if result is None else (result[0], ("absolute_value_reduction",) + result[1])
+        if (
+            isinstance(first, SymbolicFunction) and isinstance(second, SymbolicFunction)
+            and first.name == second.name == "sqrt"
+        ):
+            domains = (
+                _solve_extended_inequality(first.arguments[-1], ">=", ZERO, variable, depth + 1),
+                _solve_extended_inequality(second.arguments[-1], ">=", ZERO, variable, depth + 1),
+                _solve_extended_inequality(
+                    first.arguments[-1], operator, second.arguments[-1], variable, depth + 1,
+                ),
+            )
+            result = _combine_extended_inequality_results(domains, "intersection")
+            return None if result is None else (result[0], ("radical_reduction",) + result[1])
+        if (
+            isinstance(first, Power) and isinstance(second, Power)
+            and first.exponent == second.exponent
+            and first.exponent.numerator > 0
+        ):
+            exponent = first.exponent.value
+            domains = []
+            if exponent.denominator % 2 == 0:
+                domains.extend((
+                    _solve_extended_inequality(first.base, ">=", ZERO, variable, depth + 1),
+                    _solve_extended_inequality(second.base, ">=", ZERO, variable, depth + 1),
+                ))
+            comparison_left, comparison_right = first.base, second.base
+            if exponent.denominator % 2 == 1 and exponent.numerator % 2 == 0:
+                comparison_left = _pow(first.base, ExactNumber(exponent.numerator))
+                comparison_right = _pow(second.base, ExactNumber(exponent.numerator))
+            domains.append(_solve_extended_inequality(
+                comparison_left, operator, comparison_right, variable, depth + 1,
+            ))
+            result = _combine_extended_inequality_results(tuple(domains), "intersection")
+            return None if result is None else (result[0], ("rational_power_reduction",) + result[1])
+
+    isolated = _isolate_inequality_special(left, operator, right, variable)
+    if isolated is None:
+        return None
+    special, relation, target = isolated
+    if isinstance(special, SymbolicFunction) and special.name == "abs":
+        result = _solve_nonnegative_inequality(
+            _pow(special.arguments[-1], ExactNumber(2)), target,
+            _pow(target, ExactNumber(2)), relation,
+            (UniversalSolutionSet("real"), ()), variable, depth,
+        )
+        return None if result is None else (result[0], ("absolute_value_reduction",) + result[1])
+    if isinstance(special, SymbolicFunction) and special.name == "sqrt":
+        domain_result = _solve_extended_inequality(
+            special.arguments[-1], ">=", ZERO, variable, depth + 1,
+        )
+        result = _solve_nonnegative_inequality(
+            special.arguments[-1], target, _pow(target, ExactNumber(2)),
+            relation, domain_result, variable, depth,
+        )
+        return None if result is None else (result[0], ("radical_reduction",) + result[1])
+    if isinstance(special, Power) and isinstance(special.exponent, ExactNumber):
+        exponent = special.exponent.value
+        if exponent < 0:
+            result = _solve_negative_rational_power(
+                special, relation, target, variable, depth,
+            )
+        elif exponent.denominator % 2 == 1 and exponent.numerator % 2 == 1:
+            result = _solve_extended_inequality(
+                _pow(special.base, ExactNumber(exponent.numerator)), relation,
+                _pow(target, ExactNumber(exponent.denominator)), variable, depth + 1,
+            )
+        else:
+            domain_result = (
+                _solve_extended_inequality(
+                    special.base, ">=", ZERO, variable, depth + 1,
+                )
+                if exponent.denominator % 2 == 0
+                else (UniversalSolutionSet("real"), ())
+            )
+            result = _solve_nonnegative_inequality(
+                _pow(special.base, ExactNumber(exponent.numerator)), target,
+                _pow(target, ExactNumber(exponent.denominator)), relation,
+                domain_result, variable, depth,
+            )
+        return None if result is None else (result[0], ("rational_power_reduction",) + result[1])
+    return None
+
+
+def solve_inequality(inequality, variable=None, *, domain="real",
+                     assumptions=None, steps=False) -> EquationSolution:
+    """Solve a supported exact real univariate inequality.
+
+    Polynomial/rational sign charts are the terminal representation. Guarded
+    reductions additionally support absolute values, principal square roots,
+    exact rational powers, and parameterized linear/quadratic coefficients.
+    A parameter multiplying a rational target expression is also supported.
+    """
+    if domain != "real":
+        raise ValueError("inequality solving currently supports only the real domain")
+    if not isinstance(steps, (bool, np.bool_)):
+        raise TypeError("steps must be boolean")
+    left, operator, right = _split_symbolic_inequality(inequality)
+    discovered = sorted(_variables(left) | _variables(right))
+    if variable is None:
+        if len(discovered) != 1:
+            raise AmbiguousVariableError(
+                f"Specify variable= explicitly; found {discovered or 'no variables'}"
+            )
+        variable = discovered[0]
+    elif hasattr(variable, "name"):
+        variable = variable.name
+    if not isinstance(variable, str) or not variable:
+        raise TypeError("variable must be a non-empty string or named variable")
+    user_assumptions = _normalize_user_assumptions(assumptions)
+    substitutions = {
+        name: value for name, value in user_assumptions.substitutions.items()
+        if name != variable
+    }
+    substituted_left = _substitute(left, substitutions)
+    substituted_right = _substitute(right, substitutions)
+    domain_conditions = _merge_conditions(
+        _domain_conditions(left, domain, variable),
+        _domain_conditions(right, domain, variable),
+        user_assumptions,
+    )
+    if domain_conditions.contradictory:
+        return EquationSolution(
+            variable, EMPTY, "solved", "symbolic", True, True,
+            conditions=domain_conditions,
+            message="The inequality assumptions are contradictory.",
+        )
+    solved = _solve_extended_inequality(
+        substituted_left, operator, substituted_right, variable,
+    )
+    if solved is None:
+        return EquationSolution(
+            variable, EMPTY, "unresolved", "symbolic", False, False,
+            conditions=domain_conditions,
+            message=(
+                "Exact inequalities currently require a supported absolute-value, "
+                "radical, rational-power, polynomial, or rational form with "
+                "rational coefficients."
+            ),
+        )
+    solution_set, applied_rules = solved
     solution_set = _apply_assumptions(solution_set, domain_conditions)
     recorded = ()
     if steps:
-        normalized = f"{_polynomial_expression(numerator, variable)} / {_polynomial_expression(denominator, variable)} {operator} 0"
+        normalized = f"{substituted_left} {operator} {substituted_right}"
+        explanations = {
+            "absolute_value_reduction": (
+                "Use the nonnegative absolute-value range and compare exact squares."
+            ),
+            "radical_reduction": (
+                "Retain every radicand domain and compare exact powers only on a sign-safe branch."
+            ),
+            "rational_power_reduction": (
+                "Reduce the exact rational power by parity, monotonicity, and required domain branches."
+            ),
+            "parameterized_inequality_reduction": (
+                "Partition parameter space by coefficient signs, discriminants, and degenerate degree cases."
+            ),
+        }
+        transformations = tuple(dict.fromkeys(applied_rules))
         recorded = (
             SolutionStep(
                 "normalize_inequality", inequality, normalized,
-                "Move all terms to the left, normalize the exact rational form, and retain denominator exclusions.",
+                "Parse both sides exactly, apply known parameter values, and retain domain exclusions.",
             ),
+            *(SolutionStep(rule, normalized, solution_set, explanations[rule])
+              for rule in transformations),
             SolutionStep(
                 "rational_sign_chart", normalized, solution_set,
                 "Order every exact zero and pole, propagate signs by multiplicity, and assemble the satisfying intervals.",
             ),
         )
+    families = tuple(dict.fromkeys(applied_rules))
+    family_text = ", ".join(rule.replace("_reduction", "").replace("_", " ") for rule in families)
     return EquationSolution(
         variable, solution_set, "solved", "symbolic", True, True,
         conditions=domain_conditions, steps=recorded,
-        message="Exact real polynomial/rational inequality sign chart.",
+        message=(
+            f"Exact real {family_text} inequality reduction and rational sign chart."
+            if family_text else "Exact real polynomial/rational inequality sign chart."
+        ),
     )
 
 

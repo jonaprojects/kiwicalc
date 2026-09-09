@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Conditional solution sets now have native human-readable formatting, including
+  condition conjunctions, one-branch-per-line unions, and parenthesized nested
+  unions.
 - Added an immutable structural assumptions engine for native equation solving,
   including relational, interval, definedness, truth, and compound predicates;
   contradiction detection; substitution; three-valued evaluation; basic bound
@@ -67,6 +70,15 @@
 - Added `solve_inequality()` for exact real univariate polynomial and rational
   inequalities. Its multiplicity-aware sign chart preserves poles and cancelled
   denominator holes and returns serializable bounded or unbounded intervals.
+- Extended `solve_inequality()` with guarded exact reductions for affine-wrapped
+  absolute values, principal square roots, and positive or negative rational
+  powers. The solver preserves radicand and zero exclusions, applies parity and
+  monotonicity rules, supports compatible same-family comparisons, and fails
+  closed for unsupported compound forms.
+- Added complete parameterized linear and quadratic inequalities, including
+  coefficient-sign, discriminant, lower-degree, identity, and contradiction
+  branches. Parameter-scaled rational inequalities now reverse their relation
+  by scalar sign and preserve denominator holes when the scalar is zero.
 - Extended guarded radical solving to repeated additive and nested square roots
   through bounded expansion and original-equation candidate verification.
 - Added real Pythagorean, double-angle, and triple-angle reductions that feed
